@@ -4,6 +4,8 @@
 import { buildCircuit, CIRCUITS } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
+import { instantiate } from '../web/js/module.js';
+import { Inverter, Nand2, Nor2, And2, Or2, Xor2 } from '../web/js/gates.js';
 
 let failures = 0;
 let checks = 0;
@@ -415,6 +417,79 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   expect(c, 'subtract 9-4 sum bus', vals.S, 5);
   expect(c, 'Beff shows ~B', vals.Beff, 11);
   expect(c, 'readout text', c.readout(vals), '9 − 4 = 5');
+}
+
+// ── sub-circuit modules ──────────────────────────────────────────────────
+// Modules bind ports by name and offset their geometry, so a gate can be
+// instantiated in bulk instead of hand-placed. Composed gates (And2, Or2,
+// Xor2) are built from other modules, so these also cover nesting.
+{
+  const gate = (def, arity, fn) => {
+    for (let i = 0; i < (1 << arity); i++) {
+      const c = new Circuit(`mod-${def.name}`);
+      c.implicitGround = false;
+      const ins = [];
+      for (let k = 0; k < arity; k++) {
+        const n = c.net();
+        const s = c.addSwitch(`S${k}`, n, 'toggle', 0, 0, { from: 0, to: 1 });
+        s.on = !!((i >> k) & 1);
+        ins.push(n);
+      }
+      const bind = arity === 1 ? { a: ins[0] } : { a: ins[0], b: ins[1] };
+      const inst = instantiate(c, def, 0, 0, bind);
+      settle(c);
+      const bits = [];
+      for (let k = 0; k < arity; k++) bits.push((i >> k) & 1);
+      const want = String(fn(...bits));
+      expect(c, `${def.name}(${bits.join('')})`,
+        VALUE_CHAR[c.value[inst.nets.y]], want);
+      // a complementary gate always drives hard: never floating, never X
+      expect(c, `${def.name}(${bits.join('')}) driven hard`,
+        c.strength[inst.nets.y], STRONG);
+    }
+  };
+  gate(Inverter, 1, a => (a ? 0 : 1));
+  gate(Nand2, 2, (a, b) => (a && b ? 0 : 1));
+  gate(Nor2, 2, (a, b) => (a || b ? 0 : 1));
+  gate(And2, 2, (a, b) => (a && b ? 1 : 0));
+  gate(Or2, 2, (a, b) => (a || b ? 1 : 0));
+  gate(Xor2, 2, (a, b) => (a ^ b ? 1 : 0));
+}
+{
+  // Instances are independent: same definition, separate nets and devices.
+  const c = new Circuit('two-instances');
+  c.implicitGround = false;
+  const a = c.net(), b = c.net();
+  const s1 = c.addSwitch('A', a, 'toggle', 0, 0, { from: 0, to: 1 });
+  const s2 = c.addSwitch('B', b, 'toggle', 0, 0, { from: 0, to: 1 });
+  s1.on = true; s2.on = false;
+  const i1 = instantiate(c, Inverter, 0, 0, { a });
+  const i2 = instantiate(c, Inverter, 20, 0, { a: b });
+  settle(c);
+  expect(c, 'instance 1 independent', VALUE_CHAR[c.value[i1.nets.y]], '0');
+  expect(c, 'instance 2 independent', VALUE_CHAR[c.value[i2.nets.y]], '1');
+  expect(c, 'instances do not share nets', i1.nets.y !== i2.nets.y, true);
+  expect(c, 'device names namespaced',
+    new Set(c.transistors.map(t => t.name)).size, c.transistors.length);
+}
+{
+  // Geometry offsets: an instance placed at x lands there, and its extent
+  // covers the devices' drawn reach, not just their origins.
+  const c = new Circuit('placement');
+  c.implicitGround = false;
+  const inst = instantiate(c, Inverter, 100, 50, {});
+  const xs = c.transistors.map(t => t.x);
+  expect(c, 'instance offset applied', xs.every(x => x >= 100), true);
+  expect(c, 'instance has non-zero extent', inst.w > 0 && inst.h > 0, true);
+}
+{
+  // Binding an undeclared port is a typo that must not pass silently.
+  let threw = false;
+  try {
+    instantiate(new Circuit('bad'), Inverter, 0, 0, { nope: 3 });
+  } catch { threw = true; }
+  const c = new Circuit('bad');
+  expect(c, 'unknown port rejected', threw, true);
 }
 
 // ── static conduction tables ─────────────────────────────────────────────
