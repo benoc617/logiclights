@@ -307,6 +307,25 @@
       }
     },
     {
+      "id": "sequenced",
+      "group": "CMOS · Machines",
+      "name": "Sequenced Machine",
+      "desc": "The fetch machine with a control unit, and the difference is that this one separates the phases of an instruction. A ring counter generates FETCH, DECODE and EXEC, and the control unit ANDs each phase with the decoded instruction lines \\u2014 that AND is the whole idea of a hardwired control unit: \\u201cwe are in EXEC\\u201d AND \\u201cthis is a JUN\\u201d is exactly the signal that would load the program counter. Step it one edge at a time and watch the ring rotate, the instruction hold still across all three phases, and the control lines fire only in the phase that owns them. The instruction register is the piece that makes this work: it loads only during FETCH, holding its value through DECODE and EXEC. Without that gate it would follow the ROM on every edge \\u2014 and since the PC has already advanced by then, the control unit would be acting on one instruction while the register showed the next. What is still missing is the datapath. The control lines are generated and visible but nothing is wired to them yet: no accumulator, no register file, and the PC advances by counting rather than being loaded, so the loop you see is the 3-bit counter rolling over rather than the jump taking effect. Wiring those up is the next piece.",
+      "hints": {
+        "CLK": "the clock — one edge per phase, so three edges per instruction",
+        "RST": "back to FETCH at address 0 (synchronous \\u2014 costs one edge)",
+        "P": "the phase ring: FETCH, DECODE, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register",
+        "JMP": "the control unit is loading the PC \\u2014 a jump is happening"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase \\u00b7 blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

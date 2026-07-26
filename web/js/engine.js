@@ -215,10 +215,30 @@ export class Circuit {
 
   // Advance the clock if it is running and due. Returns true on a rising
   // edge, which is what the machine's state actually moves on.
+  //
+  // The clock will not move while the circuit is still settling, however
+  // long that takes. This is not politeness — it is a correctness
+  // requirement. Clocking a synchronous machine before its combinational
+  // logic has settled latches half-propagated values: a counter clocked
+  // mid-carry stores a number that is neither the old one nor the new one,
+  // and the count corrupts or sticks. Real hardware has the same
+  // constraint and meets it by choosing a clock period longer than the
+  // critical path; here the device delays are deliberately visible and
+  // adjustable, so the period cannot be fixed in advance and the clock has
+  // to wait for the circuit instead.
+  //
+  // A clock that has waited is reported through `stalled`, so the UI can
+  // say why it is running slower than the slider asks.
   tickClock(now) {
     const k = this.clock;
     if (!k || !k.running) return false;
     if (now < k.nextAt) return false;
+    if (this.nextEventAt() !== null) {
+      // still propagating — hold the edge and try again next frame
+      k.stalled = true;
+      return false;
+    }
+    k.stalled = false;
     k.nextAt = now + k.period / 2;
     return this.stepClock();
   }

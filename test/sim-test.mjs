@@ -9,6 +9,7 @@ import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
 import { InstructionDecoder } from '../web/js/decode.js';
+import { ringCounter } from '../web/js/sequencer.js';
 
 let failures = 0;
 let checks = 0;
@@ -1389,6 +1390,134 @@ function flipAndStep(c, label, on) {
     for (let i = 0; i < 16; i++) if (c.value[c.decoded[i]] === HI) hot++;
     expect(c, 'exactly one instruction decoded', hot, 1);
     tick();
+  }
+}
+
+// ── control sequencing ───────────────────────────────────────────────────
+// The ring counter generates the phases and the control unit gates the
+// datapath from them. Exactly one phase active at a time is the property
+// everything downstream depends on — two would fire conflicting control
+// lines in the same cycle.
+{
+  const c = buildCircuit('sequenced');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  const phase = () => [0, 1, 2].filter(i => c.value[c.phases[i]] === HI);
+
+  sw(c, 'RST', true); settle(c);
+  tick();                       // synchronous reset lands
+  expect(c, 'reset drops the ring into FETCH', JSON.stringify(phase()), '[0]');
+  sw(c, 'RST', false); settle(c);
+
+  // the ring rotates, one phase at a time, forever
+  for (let k = 0; k < 12; k++) {
+    expect(c, `exactly one phase active at step ${k}`, phase().length, 1);
+    tick();
+  }
+
+  // An instruction must hold still across all three of its phases. If the
+  // register followed the ROM on every edge it would show the *next*
+  // instruction by EXEC, since the PC advances during FETCH — the control
+  // unit would then act on the wrong one.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  // align to a FETCH boundary first — the register changes *during* FETCH,
+  // so a window that straddles one would see two different instructions
+  // and the test would be measuring its own misalignment
+  while (phase()[0] !== 0) tick();
+  tick();                      // step past the load itself
+  for (let instr = 0; instr < 4; instr++) {
+    const held = [];
+    for (let p = 0; p < 3; p++) { held.push(rd('IR', 8)); tick(); }
+    expect(c, `instruction ${instr} holds across its phases`,
+      held[0] === held[1] && held[1] === held[2], true);
+  }
+
+  // Control lines only fire in the phase that owns them: irLoad during
+  // FETCH, and never during EXEC.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  for (let k = 0; k < 9; k++) {
+    const p = phase()[0];
+    const irLoad = c.value[c.control.irLoad] === HI;
+    if (p === 0) expect(c, 'irLoad fires during FETCH', irLoad, true);
+    if (p === 2) expect(c, 'irLoad is silent during EXEC', irLoad, false);
+    tick();
+  }
+}
+{
+  // The ring counter on its own: it must never be empty and never hold two
+  // bits. Both failures are unrecoverable — an empty ring stops the machine
+  // forever, and a double ring fires two phases' control lines at once.
+  const c = new Circuit('ring');
+  c.implicitGround = false;
+  const clk = c.net(), nclk = c.net(), rst = c.net();
+  const sClk = c.addSwitch('CLK', clk, 'toggle', 0, 0, { from: 0, to: 1 });
+  const sRst = c.addSwitch('RST', rst, 'toggle', 0, 0, { from: 0, to: 1 });
+  instantiate(c, Inverter, 0, 120, { a: clk, y: nclk });
+  const R = instantiate(c, ringCounter(3), 0, 0, { clk, nclk, rst });
+  const tick = () => {
+    sClk.on = true; settle(c); sClk.on = false; settle(c);
+  };
+  sRst.on = true; settle(c); tick();
+  sRst.on = false; settle(c);
+  for (let k = 0; k < 9; k++) {
+    let hot = 0;
+    for (let i = 0; i < 3; i++) if (c.value[R.nets[`p${i}`]] === HI) hot++;
+    expect(c, `ring holds exactly one bit at step ${k}`, hot, 1);
+    tick();
+  }
+}
+
+// ── the clock must not outrun the circuit ────────────────────────────────
+// A synchronous machine clocked before its combinational logic has settled
+// latches half-propagated values: a counter clocked mid-carry stores a
+// number that is neither the old one nor the new one. Real hardware meets
+// this by choosing a period longer than the critical path; here the device
+// delays are visible and adjustable, so the clock has to wait instead.
+//
+// This was a real bug — free-running counters corrupted or stuck while
+// hand-stepping worked, because stepping always let the circuit settle.
+{
+  for (const period of [1200, 400, 100]) {
+    const c = buildCircuit('cmospc4');
+    sw(c, 'RST', true); sw(c, 'RUN', true);
+    c.clock.running = true;
+    c.clock.period = period;
+    let now = 0;
+    const counts = [];
+    let last = null;
+    for (let f = 0; f < 3000; f++) {
+      now += 16;
+      c.tickClock(now);
+      c.step(now);
+      if (f === 30) sw(c, 'RST', false);
+      // sample only when fully settled, which is the only moment the
+      // value means anything — mid-transition a CMOS stage is legitimately
+      // X while its two halves hand over
+      if (f > 60 && c.nextEventAt() === null) {
+        c.solve();
+        let v = 0, clean = true;
+        for (let i = 0; i < 4; i++) {
+          const b = lampV(c, `Q${i}`);
+          if (b === HI) v |= 1 << i;
+          else if (b !== LO) clean = false;
+        }
+        if (clean && v !== last) { counts.push(v); last = v; }
+      }
+    }
+    // Whatever the period, settled values must only ever step by one.
+    // A skip means an edge landed on a half-propagated carry.
+    let bad = 0;
+    for (let i = 1; i < counts.length; i++) {
+      if (counts[i] !== ((counts[i - 1] + 1) & 15)) bad++;
+    }
+    expect({ name: `clock@${period}` },
+      `counts monotonically at period ${period}`, bad, 0);
+    expect({ name: `clock@${period}` },
+      `actually counted at period ${period}`, counts.length > 4, true);
   }
 }
 

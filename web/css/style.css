@@ -147,6 +147,8 @@ select {
 }
 .clockctl button:hover { border-color: #4d5878; }
 .clockctl button.on { border-color: #ffb340; color: #ffc463; }
+/* the clock is waiting for the circuit to settle, not for the slider */
+.clockctl button.waiting { border-color: #4d7fd6; color: #8fb4f0; }
 .clockctl #clk-label { min-width: 4.5em; }
 .clockctl input { width: 90px; }
 
@@ -239,7 +241,8 @@ footer {
   right: 10px;
   z-index: 2;
   width: max-content;
-  max-width: min(420px, calc(100% - 20px));
+  /* wide enough for a 12-bit bus laid out in one row of cells */
+  max-width: min(520px, calc(100% - 20px));
   max-height: calc(100% - 20px);
   display: flex;
   flex-direction: column;
@@ -295,6 +298,7 @@ footer {
 .bus {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;      /* keeps the decimal readout on-screen for wide buses */
   gap: 8px;
   padding: 2px 0;
 }
@@ -308,6 +312,7 @@ footer {
 
 .bits {
   display: flex;
+  flex-wrap: wrap;      /* a 12-bit bus wraps rather than clipping */
   gap: 3px;
   margin-right: 2px;
 }
@@ -362,6 +367,7 @@ footer {
 }
 
 input.bin {
+  max-width: 14ch;
   border: 1px solid #333d52;
   border-radius: 6px;
   padding: 3px 6px;

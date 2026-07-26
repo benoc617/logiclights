@@ -13,6 +13,7 @@ import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
 import { romArray } from '../rom.js';
 import { InstructionDecoder, OPR_NAMES } from '../decode.js';
+import { ringCounter, ControlUnit, PHASES } from '../sequencer.js';
 import { buildRom8 } from './rom-circuit.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from '../regfile.js';
 import { mosScaffold, cmosInv, buildRing, w } from './mos-scaffold.js';
@@ -372,15 +373,18 @@ function buildFetch() {
   c.addClock(clkSw, { period: 1600 });
   instantiate(c, Inverter, 20, 40, { a: clkNet, y: nclk });
 
-  // The program counter. Three bits is all the demo ROM needs; the real
-  // 4004 PC is the 12-bit one in the Sequential group, and it is the same
-  // module at a different width.
+  // Boxes are derived from each block's measured extent rather than typed
+  // coordinates, because these blocks are wildly different shapes — the
+  // decoder is 350 units tall for its sixteen output lines while the
+  // counter is 386 wide and 64 tall. A uniform row would leave most of a
+  // block outside the box that names it.
   const PC = instantiate(c, counter(3), 40, 0,
     { clk: clkNet, nclk, en: run, rst }, { tag: 'pc' });
+  c.region('Program counter', 36, -6, 40 + PC.w + 4, PC.h + 6);
 
-  // The program store, addressed by the PC.
+  const xRom = 40 + PC.w + 30;
   const Rom = romArray(P0_PROGRAM, 8, 3);
-  const rom = instantiate(c, Rom, 150, 0,
+  const rom = instantiate(c, Rom, xRom, 0,
     { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
 
   // The instruction register: eight flip-flops capturing the fetched byte
@@ -388,20 +392,25 @@ function buildFetch() {
   // combinationally and flicker through garbage while the address settles
   // — the register is what makes the fetched instruction *stable* for a
   // whole cycle, which is the only reason the rest of a CPU can rely on it.
+  const xIr = xRom + rom.w + 30;
   const ir = [];
   for (let i = 0; i < 8; i++) {
     ir.push(c.net());
-    instantiate(c, DFlipFlop, 330, i * 26,
+    instantiate(c, DFlipFlop, xIr, i * 26,
       { d: rom.nets[`d${i}`], q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
   }
+  c.region('Instruction register', xIr - 6, -6, xIr + 70, 7 * 26 + 24);
 
+  const xDec = xIr + 190;
   const bind = {};
   for (let i = 0; i < 8; i++) bind[`i${i}`] = ir[i];
-  const dec = instantiate(c, InstructionDecoder, 420, 0, bind, { tag: 'dec' });
+  const dec = instantiate(c, InstructionDecoder, xDec, 0, bind, { tag: 'dec' });
+  c.region('Instruction decoder — one line per opcode',
+    xDec - 6, -6, xDec + dec.w + 4, dec.h + 6);
 
   const b = c.bounds();
   const xEnd = b.x1 + 10;
-  const yTop = -14, yBot = Math.max(b.y1 + 8, 40);
+  const yTop = -14, yBot = b.y1 + 8;
   w(c, VDD, [0, yTop], [xEnd, yTop]);
   w(c, VSS, [0, yBot], [xEnd, yBot]);
   c.label('+V', -1.6, yTop, 1.1, '#ffb340');
@@ -420,14 +429,160 @@ function buildFetch() {
   }
   c.addLamp('2BYTE', dec.nets.twoByte, xEnd - 5, 62, { short: 'TWO' });
 
-  c.region('Program counter', 34, -6, 140, 34);
-  c.region('Program ROM', 146, -6, 322, 34);
-  c.region('Instruction register', 324, -6, 404, 34);
-  c.region('Instruction decoder', 412, -6, b.x1 - 2, 34);
-
-  // published so the state grid can show which instruction is decoded
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.program = P0_PROGRAM;
+  return c;
+}
+
+
+// P0b — the sequenced machine. The fetch machine with a control unit, so
+// the phases of an instruction are separated and a jump actually jumps.
+//
+// The fetch machine advanced its PC on every clock edge, which works only
+// because every instruction in its program was one byte and none of them
+// did anything. Real execution needs phases: an instruction has to be
+// fetched, then decoded, then acted on, and those cannot happen at once
+// because the datapath can only do one thing per cycle.
+//
+// A ring counter generates the phases and the control unit ANDs them with
+// the decoded instruction lines. That AND is the whole idea of a hardwired
+// control unit — "we are in EXEC" AND "this is a JUN" is precisely the
+// signal that loads the program counter.
+//
+// The visible payoff is the loop: the program ends in a jump back to the
+// start, so this machine runs forever instead of falling off the end of the
+// ROM. That is the difference between a circuit that reads a program and
+// one that runs it.
+const P0B_PROGRAM = [
+  0x00,   // NOP
+  0xD5,   // LDM 5      — decoded; the accumulator is not built yet
+  0x60,   // INC 0
+  0xB0,   // XCH 0
+  0x00,   // NOP
+  0x00,   // NOP
+  0x00,   // NOP
+  0x40,   // JUN 0      — jump back to the top, so it loops
+];
+
+function buildSequenced() {
+  const c = new Circuit('Sequenced Machine');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addClock(clkSw, { period: 1400 });
+  instantiate(c, Inverter, 20, 40, { a: clkNet, y: nclk });
+
+  // Layout is in rows, because the blocks are wildly different shapes: the
+  // decoder is 350 units tall (sixteen output lines), the counter is 386
+  // wide and 64 tall. Packing them on one row would leave a strip of
+  // devices with a caption floating far above the things it names — so the
+  // control path sits on the top row and the datapath below it, each block
+  // boxed to its own measured extent.
+  const ROW2 = 150;   // y of the second row
+
+  // ── row 1: the control path ────────────────────────────────────────────
+  const ring = instantiate(c, ringCounter(3), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring — FETCH / DECODE / EXEC',
+    36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  // ── row 2: the datapath ────────────────────────────────────────────────
+  // The PC advances during FETCH, so by EXEC it already points at the next
+  // instruction — which is exactly why a jump has to *override* it rather
+  // than simply not incrementing.
+  const PC = instantiate(c, counter(3), 40, ROW2,
+    { clk: clkNet, nclk, en: ring.nets.p0, rst }, { tag: 'pc' });
+  c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const nFetch = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(P0B_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, xRom, ROW2,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  // The instruction register loads on the clock edge. Eight flip-flops
+  // stacked, so this block is tall and narrow where its neighbours are wide.
+  // The instruction register holds its value except during FETCH. A plain
+  // flip-flop would reload on every edge, so the register would follow the
+  // ROM through DECODE and EXEC — and since the PC has already advanced by
+  // then, it would be showing the *next* instruction while the control unit
+  // was still acting on this one. Each bit therefore gets a hold mux: take
+  // the ROM during FETCH, take your own output otherwise.
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register — loads only during FETCH',
+    xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
+
+  // ── decode and control, to the right of the register ───────────────────
+  // The decoder is the tallest block here (sixteen output lines), so it
+  // sets the height of this row rather than being stacked under it — that
+  // keeps the whole machine wide and short like the rest of the library.
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
+  c.region('Instruction decoder — one line per opcode',
+    xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
+
+  const ROW3 = ROW2;
+  const xCtrl = xDec + dec.w + 40;
+  const ctrl = instantiate(c, ControlUnit, xCtrl, ROW3, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1, pExec: ring.nets.p2,
+    twoByte: dec.nets.twoByte,
+    opJUN: dec.nets.op4, opLDM: dec.nets.op13,
+    opXCH: dec.nets.op11, opINC: dec.nets.op6,
+  }, { tag: 'ctrl' });
+  c.region('Control unit — phase AND instruction',
+    xCtrl - 6, ROW3 - 6, xCtrl + ctrl.w + 6, ROW3 + ctrl.h + 6);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5, { short: `P${i}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 20 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 36 + i * 4.5, { short: `IR${i}` });
+  }
+  c.addLamp('JUMP', ctrl.nets.pcLoad, xEnd - 5, 76, { short: 'JMP' });
+
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
+  c.control = {
+    pcInc: ctrl.nets.pcInc, pcLoad: ctrl.nets.pcLoad,
+    irLoad: ctrl.nets.irLoad, accLoad: ctrl.nets.accLoad,
+    regWrite: ctrl.nets.regWrite,
+  };
+  c.program = P0B_PROGRAM;
   return c;
 }
 
@@ -500,6 +655,28 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  sequenced: {
+    build: buildSequenced,
+    readout: v => {
+      const ph = PHASES[[0, 1, 2].find(i => (v.P >> i) & 1)] ?? '—';
+      const name = OPR_NAMES[(v.IR >> 4) & 15] || 'escape';
+      return `${ph}  ·  PC ${v.PC}  ·  IR 0x`
+        + `${v.IR.toString(16).toUpperCase().padStart(2, '0')} (${name})`
+        + `${v.JMP ? '  ← jumping' : ''}`;
+    },
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   fetch: {
     build: buildFetch,

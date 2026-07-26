@@ -41,6 +41,7 @@ const clkRun = document.getElementById('clk-run');
 const clkStep = document.getElementById('clk-step');
 const clkRate = document.getElementById('clk-rate');
 const clkLabel = document.getElementById('clk-label');
+let clkWasStalled = false;
 
 function clockPeriod() {
   // slider 0..100 → 4 s .. 60 ms, log scale. Slow enough at the top to
@@ -257,7 +258,24 @@ canvas.addEventListener('wheel', ev => {
 // ── main loop ────────────────────────────────────────────────────────────
 
 function frame(now) {
-  if (circuit.clock) circuit.tickClock(now);
+  if (circuit.clock) {
+    circuit.tickClock(now);
+    // Say so when the clock is waiting for the circuit rather than for the
+    // slider. Otherwise a machine running slower than the period asks for
+    // looks broken, when in fact it is doing the only correct thing: a
+    // synchronous machine clocked before its logic settles latches
+    // half-propagated values.
+    const stalled = !!circuit.clock.stalled && circuit.clock.running;
+    if (stalled !== clkWasStalled) {
+      clkWasStalled = stalled;
+      clkRun.classList.toggle('waiting', stalled);
+      clkLabel.textContent = stalled
+        ? 'waiting…'
+        : (circuit.clock.period >= 1000
+            ? `${(circuit.clock.period / 1000).toFixed(1)} s`
+            : `${circuit.clock.period} ms`);
+    }
+  }
   const clicks = circuit.step(now);
   if (clicks) sound.clicks(clicks);
   if (circuit.switchings) sound.zaps(circuit.switchings);
