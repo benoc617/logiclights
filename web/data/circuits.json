@@ -326,6 +326,25 @@
       }
     },
     {
+      "id": "accmachine",
+      "group": "CMOS · Machines",
+      "name": "Accumulator Machine",
+      "desc": "The first machine here whose state changes. Everything before it read a program and understood it; this one acts on what it read — LDM loads its operand nibble into the accumulator, so running the program visibly leaves a number behind. That is a small step and a large one: small because an accumulator is only a register with a load enable, large because it closes the loop. Decode produces a control line, the control line gates a register, the register holds the result. Every instruction after this is the same shape with a different destination. Watch accLoad in the state grid: it fires at EXEC of an LDM and at no other time, which is what stops the accumulator following the instruction register around.",
+      "hints": {
+        "CLK": "the clock — three edges per instruction, one per phase",
+        "RST": "back to FETCH at address 0 (synchronous — costs one edge)",
+        "P": "the phase ring: FETCH, DECODE, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register — the low nibble is LDM's immediate",
+        "ACC": "the accumulator: what the program has actually computed"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

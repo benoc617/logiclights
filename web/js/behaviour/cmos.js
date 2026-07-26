@@ -8,7 +8,7 @@
 import { Circuit, VDD, VSS, VALUE_CHAR } from '../engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from '../geometry.js';
 import { instantiate } from '../module.js';
-import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter } from '../gates.js';
+import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter, register } from '../gates.js';
 import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
 import { romArray } from '../rom.js';
@@ -586,6 +586,145 @@ function buildSequenced() {
   return c;
 }
 
+
+// P1 — the machine with an accumulator. The first one whose state changes.
+//
+// Everything up to here read a program and understood it. This one acts on
+// what it read: LDM loads its operand nibble into the accumulator, so
+// running the program visibly leaves a number behind.
+//
+// That is a small step and a large one. Small because an accumulator is
+// just a register with a load enable. Large because it closes the loop —
+// decode produces a control line, the control line gates a register, and
+// the register holds the result. Every instruction after this is the same
+// shape with a different destination.
+//
+// The program loads three different values in turn, so the accumulator
+// visibly changes and you can watch each LDM take effect at EXEC and only
+// at EXEC. The NOPs between them are there so the value sits still long
+// enough to read.
+const P1_PROGRAM = [
+  0xD3,   // LDM 3   → ACC = 3
+  0x00,   // NOP
+  0xDC,   // LDM 12  → ACC = 12
+  0x00,   // NOP
+  0xD5,   // LDM 5   → ACC = 5
+  0x00,   // NOP
+  0x00,   // NOP
+  0x00,   // NOP     (then the PC wraps and it runs again)
+];
+
+function buildAccumulator() {
+  const c = new Circuit('Accumulator Machine');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addClock(clkSw, { period: 1400 });
+  instantiate(c, Inverter, 20, 40, { a: clkNet, y: nclk });
+
+  const ROW2 = 150;
+  const ring = instantiate(c, ringCounter(3), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring — FETCH / DECODE / EXEC',
+    36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  const nFetch = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
+
+  const PC = instantiate(c, counter(3), 40, ROW2,
+    { clk: clkNet, nclk, en: ring.nets.p0, rst }, { tag: 'pc' });
+  c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(P1_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, xRom, ROW2,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  // instruction register, held stable across all three phases
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register — loads only during FETCH',
+    xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
+
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
+  c.region('Instruction decoder — one line per opcode',
+    xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
+
+  const xCtrl = xDec + dec.w + 40;
+  const ctrl = instantiate(c, ControlUnit, xCtrl, ROW2, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1, pExec: ring.nets.p2,
+    twoByte: dec.nets.twoByte,
+    opJUN: dec.nets.op4, opLDM: dec.nets.op13,
+    opXCH: dec.nets.op11, opINC: dec.nets.op6,
+  }, { tag: 'ctrl' });
+  c.region('Control unit — phase AND instruction',
+    xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
+
+  // The accumulator. Its data comes from the instruction's low nibble —
+  // which for LDM *is* the immediate value — and it loads when the control
+  // unit says so, which is EXEC of an LDM and no other time.
+  const xAcc = xCtrl + ctrl.w + 50;
+  const acc = instantiate(c, register(4), xAcc, ROW2, {
+    clk: clkNet, nclk, load: ctrl.nets.accLoad,
+    d0: ir[0], d1: ir[1], d2: ir[2], d3: ir[3],
+  }, { tag: 'acc' });
+  c.region('Accumulator — loads on EXEC of an LDM',
+    xAcc - 6, ROW2 - 6, xAcc + acc.w + 6, ROW2 + acc.h + 6);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5, { short: `P${i}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 20 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 36 + i * 4.5, { short: `IR${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`ACC${i}`, acc.nets[`q${i}`], xEnd - 5, 76 + i * 4.5, { short: `ACC${i}` });
+  }
+
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
+  c.control = {
+    pcInc: ctrl.nets.pcInc, pcLoad: ctrl.nets.pcLoad,
+    irLoad: ctrl.nets.irLoad, accLoad: ctrl.nets.accLoad,
+    regWrite: ctrl.nets.regWrite,
+  };
+  c.program = P1_PROGRAM;
+  return c;
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -655,6 +794,28 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  accmachine: {
+    build: buildAccumulator,
+    readout: v => {
+      const ph = PHASES[[0, 1, 2].find(i => (v.P >> i) & 1)] ?? '—';
+      const name = OPR_NAMES[(v.IR >> 4) & 15] || 'escape';
+      return `${ph}  ·  PC ${v.PC}  ·  ${name}`
+        + `${name === 'LDM' ? ` ${v.IR & 15}` : ''}`
+        + `  ·  ACC = ${v.ACC}`;
+    },
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   sequenced: {
     build: buildSequenced,

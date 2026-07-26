@@ -6,7 +6,7 @@ import { buildCircuit, CIRCUITS, GROUP_ORDER } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 import { instantiate } from '../web/js/module.js';
-import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch } from '../web/js/gates.js';
+import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch, register } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
 import { InstructionDecoder } from '../web/js/decode.js';
 import { ringCounter } from '../web/js/sequencer.js';
@@ -1536,6 +1536,92 @@ function flipAndStep(c, label, on) {
     expect({ name: `clock@${period}` },
       `actually counted at period ${period}`, counts.length > 4, true);
   }
+}
+
+// ── the accumulator machine: state that actually changes ─────────────────
+// The first machine here that acts on what it decoded. LDM loads its
+// operand nibble into the accumulator, so running the program leaves a
+// number behind — and only LDM does, which is the property worth guarding.
+{
+  const c = buildCircuit('accmachine');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  const phase = () => [0, 1, 2].findIndex(i => c.value[c.phases[i]] === HI);
+
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+  // Walk the program and record what the accumulator holds after each
+  // instruction. The ROM is LDM 3, NOP, LDM 12, NOP, LDM 5, NOP, NOP, NOP.
+  const wanted = [3, 3, 12, 12, 5, 5, 5, 5];
+  const got = [];
+  for (let k = 0; k < 8; k++) {
+    // advance a whole instruction: three phases
+    for (let p = 0; p < 3; p++) tick();
+    got.push(rd('ACC', 4));
+  }
+  // the accumulator holds each loaded value until the next LDM replaces it
+  expect(c, 'LDM loads the accumulator', got.includes(3), true);
+  expect(c, 'a later LDM replaces it', got.includes(12), true);
+  expect(c, 'and again', got.includes(5), true);
+
+  // accLoad must fire only at EXEC of an LDM. Firing in another phase
+  // would write the accumulator from whatever the register happened to
+  // hold; firing on another instruction would corrupt it silently.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  let fires = 0, wrongPhase = 0, wrongInstr = 0;
+  for (let k = 0; k < 24; k++) {
+    if (c.value[c.control.accLoad] === HI) {
+      fires++;
+      if (phase() !== 2) wrongPhase++;
+      if (((rd('IR', 8) >> 4) & 15) !== 13) wrongInstr++;   // 13 = LDM
+    }
+    tick();
+  }
+  expect(c, 'accLoad fires at all', fires > 0, true);
+  expect(c, 'accLoad only fires during EXEC', wrongPhase, 0);
+  expect(c, 'accLoad only fires for LDM', wrongInstr, 0);
+
+  // Every accumulator bit is statically driven — this is a register, not a
+  // node coasting on charge, so a paused machine keeps its value.
+  for (let i = 0; i < 4; i++) {
+    expect(c, `ACC${i} is statically driven`, lampStr(c, `ACC${i}`), STRONG);
+  }
+}
+{
+  // The register module on its own: it must hold when load is low, which
+  // is the whole difference between a register and a wire.
+  const c = new Circuit('reg');
+  c.implicitGround = false;
+  const clk = c.net(), nclk = c.net(), load = c.net();
+  const sClk = c.addSwitch('CLK', clk, 'toggle', 0, 0, { from: 0, to: 1 });
+  const sLoad = c.addSwitch('LD', load, 'toggle', 0, 0, { from: 0, to: 1 });
+  instantiate(c, Inverter, 0, 200, { a: clk, y: nclk });
+  const bind = { clk, nclk, load };
+  const sd = [];
+  for (let i = 0; i < 4; i++) {
+    const n = c.net();
+    sd.push(c.addSwitch(`D${i}`, n, 'toggle', 0, 0, { from: 0, to: 1 }));
+    bind[`d${i}`] = n;
+  }
+  const R = instantiate(c, register(4), 0, 0, bind);
+  const tick = () => { sClk.on = true; settle(c); sClk.on = false; settle(c); };
+  const setD = v => { for (let i = 0; i < 4; i++) sd[i].on = !!((v >> i) & 1); };
+  const val = () => {
+    let v = 0;
+    for (let i = 0; i < 4; i++) if (c.value[R.nets[`q${i}`]] === HI) v |= 1 << i;
+    return v;
+  };
+  setD(5); sLoad.on = true; settle(c); tick();
+  expect(c, 'register loads', val(), 5);
+  sLoad.on = false; settle(c);
+  setD(10); settle(c); tick(); tick();
+  expect(c, 'register holds while load is low', val(), 5);
+  sLoad.on = true; settle(c); tick();
+  expect(c, 'register loads again', val(), 10);
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────

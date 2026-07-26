@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**52 circuits** across 4 sections.
+**53 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (19)
+### CMOS (20)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -92,6 +92,7 @@ circuit exists to explain.
 | 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
 | Fetch Machine | Machines | · | 834 | · | 8 | 386 |
 | Sequenced Machine | Machines | · | 1109 | · | 8 | 512 |
+| Accumulator Machine | Machines | · | 1243 | · | 8 | 573 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -116,26 +117,26 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 52 |
+| Circuits | 53 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 5599 |
+| Transistors | 6842 |
 | Diodes | 4 |
-| Resistors | 272 |
+| Resistors | 280 |
 
 ### Largest circuits
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
 | 16×4 Register File | 1488 | 635 |
+| Accumulator Machine | 1251 | 573 |
 | Sequenced Machine | 1117 | 512 |
 | Fetch Machine | 842 | 386 |
 | 4-bit ALU | 538 | 262 |
-| 12-bit Program Counter | 532 | 247 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **147606 checks, 0 failures**
+`node test/sim-test.mjs` → **147651 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

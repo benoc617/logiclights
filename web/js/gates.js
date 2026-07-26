@@ -340,3 +340,49 @@ export function counter(bits) {
     },
   });
 }
+
+// A register with a load enable: `bits` flip-flops that take `d` when
+// `load` is high on the clock edge, and hold otherwise.
+//
+// The hold is the whole point. A bare flip-flop takes its input on every
+// edge, so a register wired straight to a bus would follow whatever the bus
+// happened to carry — the value would survive exactly one cycle. Gating it
+// is what makes storage that persists until something decides to change it,
+// which is the difference between a wire and a register.
+//
+// Each bit is a two-input mux feeding the flip-flop: take `d` when load is
+// high, take your own output when it is low. That shape recurs everywhere
+// state meets control, which is why it is worth having once.
+export function register(bits) {
+  return defineModule(`reg${bits}`, {
+    ports: [
+      { name: 'clk', x: 0, y: -3, side: 'top' },
+      { name: 'nclk', x: 0, y: -1, side: 'top' },
+      { name: 'load', x: -1.5, y: 2, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `d${i}`, x: -1.5, y: 8 + i * 4, side: 'in',
+      })),
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `q${i}`, x: GATE_W * 16, y: i * 4, side: 'out',
+      })),
+    ],
+    build(m) {
+      const clk = m.port('clk'), nclk = m.port('nclk');
+      const load = m.port('load');
+      const nload = m.net();
+      m.instantiate(Inverter, 0, 0, { a: load, y: nload });
+
+      for (let i = 0; i < bits; i++) {
+        const y = i * (GATE_H + 4);
+        const take = m.net(), keep = m.net(), d = m.net();
+        m.instantiate(And2, GATE_W * 3, y,
+          { a: m.port(`d${i}`), b: load, y: take });
+        m.instantiate(And2, GATE_W * 3, y + GATE_H + 2,
+          { a: m.port(`q${i}`), b: nload, y: keep });
+        m.instantiate(Or2, GATE_W * 6, y, { a: take, b: keep, y: d });
+        m.instantiate(DFlipFlop, GATE_W * 10, y,
+          { d, q: m.port(`q${i}`), clk, nclk }, { tag: `b${i}` });
+      }
+    },
+  });
+}
