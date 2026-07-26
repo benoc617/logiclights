@@ -230,13 +230,8 @@ function buildAlu4() {
   return c;
 }
 
-// An 8 x 8 mask ROM. The contents spell a short message in ASCII, so the
-// array holds something legible rather than arbitrary bytes — you can read
-// the pattern of transistors off the canvas and decode it by eye, which is
-// the charm of a mask ROM: the program is visible as physical structure.
-
-
-
+// The 4004's index registers: 16 words of 4 bits, separate read and write
+// ports. The largest block in the machine, and none of it placed by hand.
 function buildRegFile() {
   const c = new Circuit('16×4 Register File');
   c.implicitGround = false;
@@ -281,13 +276,6 @@ function buildRegFile() {
   return c;
 }
 
-
-// A generic wrapper for module-built solid-state circuits: switches down
-// the left, lamps down the right, rails top and bottom. The module supplies
-// the logic; this only gives it I/O and a frame to sit in.
-//
-// `inputs` and `outputs` are [label, portName] pairs. A port left out of
-// `inputs` is bound to whatever the module allocates, which is how the
 
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 

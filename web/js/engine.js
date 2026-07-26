@@ -430,8 +430,6 @@ export class Circuit {
     return val;
   }
 
-  computeHot() { this.solve(); return this.hot; }  // legacy name
-
   // Schedule/apply one device's transition. Returns true if it moved.
   _advance(d, want, now, key) {
     const target = d.pending !== null ? d.pending : d[key];

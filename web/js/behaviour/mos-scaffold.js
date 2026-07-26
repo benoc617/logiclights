@@ -8,10 +8,7 @@
 
 import { Circuit, VDD, VSS } from '../engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from '../geometry.js';
-
-function w(c, net, ...pts) {
-  c.wire(net, ...pts);
-}
+import { w } from './util.js';
 
 // Two rails plus a column of changeover inputs down the left. The inputs are
 // changeovers, not simple make contacts: a MOS gate must be driven both ways,

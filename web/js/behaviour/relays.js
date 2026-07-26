@@ -9,16 +9,9 @@
 // free, exactly like the real thing.
 
 import { Circuit, VCC } from '../engine.js';
+import { relay, w } from './util.js';
 
 // ── small builder helpers ────────────────────────────────────────────────
-
-function relay(c, name, coil, x, y, contacts) {
-  return c.addRelay(name, coil, x, y, contacts);
-}
-
-function w(c, net, ...pts) {
-  c.wire(net, ...pts);
-}
 
 // Horizontal feed from the VCC rail at x=x0 to a contact-common terminal.
 function railFeed(c, x0, y, x1) {

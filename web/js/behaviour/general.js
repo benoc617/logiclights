@@ -7,13 +7,10 @@
 
 import { Circuit, VCC, VDD, VSS } from '../engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from '../geometry.js';
-import { mosScaffold, cmosInv, w } from './mos-scaffold.js';
-
-// Three Technologies builds the same gate from relays *and* transistors, so
-// it needs the relay helper as well as the MOS scaffolding.
-function relay(c, name, coil, x, y, contacts) {
-  return c.addRelay(name, coil, x, y, contacts);
-}
+import { mosScaffold, cmosInv } from './mos-scaffold.js';
+// Three Technologies builds one gate from relays *and* transistors, so it
+// needs the relay helper as well as the MOS scaffolding.
+import { relay, w } from './util.js';
 
 function buildTransistor101() {
   const c = new Circuit('Meet the Transistor');
