@@ -161,6 +161,44 @@ export const FullAdder = defineModule('fa', {
   },
 });
 
+// A transmission-gate D latch, which is the CMOS memory primitive.
+//
+// Two inverters and two pass gates: when `en` is high the input gate is
+// open and the feedback gate shut, so q follows d. When `en` goes low they
+// swap, and the two inverters close a loop that holds the value.
+//
+// The pair is why this is *static* storage rather than charge on a node —
+// the loop actively drives, so the bit survives indefinitely. That
+// distinction matters for the 4004, whose real registers were dynamic and
+// therefore gave the chip a *minimum* clock frequency.
+//
+// `nen` must be the complement of `en`; the caller supplies it, because a
+// register file wants one inverter per row shared by every bit, not one
+// per cell.
+export const DLatch = defineModule('dlatch', {
+  ports: [
+    { name: 'd', x: -1.5, y: 8, side: 'in' },
+    { name: 'q', x: GATE_W * 4, y: 8, side: 'out' },
+    { name: 'en', x: 0, y: -3, side: 'top' },
+    { name: 'nen', x: 0, y: -1, side: 'top' },
+  ],
+  build(m) {
+    const en = m.port('en'), nen = m.port('nen'), q = m.port('q');
+    const gated = m.net(), nq = m.net();
+
+    // input gate: open while en is high, so q tracks d
+    m.instantiate(PassGate, 0, 8, { a: m.port('d'), y: gated, en, nen });
+    // the holding pair — gated → nq → q, with q fed back
+    m.instantiate(Inverter, GATE_W, 0, { a: gated, y: nq });
+    m.instantiate(Inverter, GATE_W * 2, 0, { a: nq, y: q });
+    // feedback gate: open while en is *low*, closing the loop that holds.
+    // en/nen are swapped here, which is the whole trick — exactly one of
+    // the two gates is ever open, so the cell is never both driven and
+    // holding (that would be a contention, and would read as X).
+    m.instantiate(PassGate, GATE_W * 3, 8, { a: q, y: gated, en: nen, nen: en });
+  },
+});
+
 // XOR from four NANDs — the classic. y = (a·(a·b)') · (b·(a·b)')  … inverted.
 export const Xor2 = defineModule('xor2', {
   ports: [

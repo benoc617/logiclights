@@ -44,6 +44,7 @@ web/
   js/gates.js         reusable CMOS gates built on module.js
   js/alu.js           4-bit ALU, composed from gates.js
   js/rom.js           NMOS mask ROM array + row decoder
+  js/regfile.js       16×4 dual-port register file
   js/buses.js         groups switches/lamps into binary buses
   js/render.js        canvas renderer (pan/zoom, glow, LOD)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"
@@ -139,6 +140,13 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
   any `add*()` device call — must set `this._built = false`, or the circuit
   solves against a stale graph. Adding a new device type means adding its
   edges to `_buildStatic()` as well as handling it in `solve()`.
+- **Level-sensitive latches need the write enable to fall first.** The
+  register file's cells are transparent while WE is high, so changing the
+  address with WE still up walks the current word into the newly selected
+  register on the way past. Sequence it WE low → set address and data →
+  WE high → WE low. This is real behaviour, not a modelling artifact — the
+  4004's registers were level-sensitive too — so the tests encode the
+  sequence rather than papering over it.
 - **A transition takes two `step()` calls.** The first schedules it
   (`nextEventAt()` goes non-null), a later one at or past the event time
   applies it and counts it. Flipping a switch and stepping once reports

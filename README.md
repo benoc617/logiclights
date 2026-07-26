@@ -34,9 +34,13 @@ way through the machine. Every wire is a light: amber means driven high.
   / NAND / NOR, NMOS Inverter, Diode Logic, Transmission Gate, Tri-State
   Bus, Three Technologies; SR Latch, D Latch, 4-bit Register; Half/Full
   Adder, 4-bit & 8-bit Ripple Adders, 4-bit Adder/Subtractor (two's
-  complement), and a 538-transistor **4-bit ALU** — six functions steered
-  onto a shared result bus, composed from gate modules rather than placed
-  by hand.
+  complement).
+- **Composed machines** — bigger blocks assembled from gate modules rather
+  than placed by hand: a 538-transistor **4-bit ALU** (six functions steered
+  onto a shared result bus), an **NMOS mask ROM** whose stored bits are
+  visible as the presence or absence of a transistor, and a 1,488-transistor
+  **16×4 register file** with separate read and write ports. These are the
+  4004's building blocks, being built one at a time.
 
 No frameworks, no build step: vanilla ES modules + canvas.
 

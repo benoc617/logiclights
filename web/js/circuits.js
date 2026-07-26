@@ -10,6 +10,7 @@ import { MOS_H, MOS_GATE, switchSpdtT } from './geometry.js';
 import { instantiate } from './module.js';
 import { Alu4, ALU_BITS } from './alu.js';
 import { romArray } from './rom.js';
+import { RegFile16x4, REG_WIDTH, REG_ADDR } from './regfile.js';
 
 // ── small builder helpers ────────────────────────────────────────────────
 
@@ -980,6 +981,47 @@ function buildRom8() {
   return c;
 }
 
+// The 4004's index registers: 16 words of 4 bits, separate read and write
+// ports. The largest block in the machine, and none of it placed by hand.
+function buildRegFile() {
+  const c = new Circuit('16×4 Register File');
+  c.implicitGround = false;
+
+  const bind = {};
+  let y = 4;
+  const mk = (label) => {
+    const n = c.net();
+    c.addSwitch(label, n, 'toggle', 4, y, { to: VSS });
+    y += 4.5;
+    return n;
+  };
+  for (let i = 0; i < REG_ADDR; i++) bind[`wa${i}`] = mk(`WA${i}`);
+  for (let i = 0; i < REG_WIDTH; i++) bind[`d${i}`] = mk(`D${i}`);
+  bind.we = mk('WE');
+  y += 3;
+  for (let i = 0; i < REG_ADDR; i++) bind[`ra${i}`] = mk(`RA${i}`);
+
+  const inst = instantiate(c, RegFile16x4, 26, 0, bind);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -10, yBot = b.y1 + 6;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const s of c.switches) {
+    const t = switchSpdtT(s);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < REG_WIDTH; i++) {
+    c.addLamp(`Q${i}`, inst.nets[`q${i}`], xEnd - 5, 6 + i * 5, { short: `Q${i}` });
+  }
+  return c;
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 export const CIRCUITS = [
@@ -1027,6 +1069,9 @@ export const CIRCUITS = [
     desc: 'While EN is on, Q follows D through one path; when EN drops, a second path lets Q hold itself. Flip D with EN off — nothing happens until you open the gate.' },
   { id: 'reg4', group: 'Memory', name: '4-bit Register', build: buildRegister4,
     desc: 'Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it.' },
+  { id: 'regfile', group: 'Memory', name: '16×4 Register File', build: buildRegFile,
+    desc: 'The 4004’s index registers: sixteen 4-bit words, written through one address port and read through another, so the machine can read one register while writing a different one. Every row drives the same four bit lines through tri-state gates — one shared bus, sixteen possible drivers. Set WA and D, raise WE to store, then read any address back. Drop WE before changing the address: these are level-sensitive latches, so moving the address with WE still high walks the word into the next register, exactly as the real part does.',
+    readout: v => `read r${v.RA} → ${v.Q}   ·   write r${v.WA} ← ${v.D}${v.WE ? '  (WE high — storing now)' : ''}` },
   { id: 'rom8', group: 'Memory', name: 'Program ROM', build: buildRom8,
     desc: 'A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.',
     readout: v => {

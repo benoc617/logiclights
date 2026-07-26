@@ -7,6 +7,7 @@ import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/
 import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2 } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
+import { DLatch } from '../web/js/gates.js';
 
 let failures = 0;
 let checks = 0;
@@ -491,6 +492,76 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   } catch { threw = true; }
   const c = new Circuit('bad');
   expect(c, 'unknown port rejected', threw, true);
+}
+
+// ── D latch ──────────────────────────────────────────────────────────────
+// Two inverters and two pass gates. Transparent while en is high, holding
+// when it is low — and holding *actively*, driven by the inverter loop, not
+// coasting on stored charge.
+{
+  const c = new Circuit('dlatch-mod');
+  c.implicitGround = false;
+  const d = c.net(), en = c.net(), nen = c.net();
+  const sd = c.addSwitch('D', d, 'toggle', 0, 0, { from: 0, to: 1 });
+  const se = c.addSwitch('EN', en, 'toggle', 0, 0, { from: 0, to: 1 });
+  instantiate(c, Inverter, 0, 40, { a: en, y: nen });
+  const L = instantiate(c, DLatch, 0, 0, { d, en, nen });
+  const q = () => c.value[L.nets.q];
+
+  sd.on = true; se.on = true; settle(c);
+  expect(c, 'latch transparent: q follows d=1', q(), HI);
+  sd.on = false; settle(c);
+  expect(c, 'latch transparent: q follows d=0', q(), LO);
+  sd.on = true; settle(c);
+  se.on = false; settle(c);                 // latch the 1
+  expect(c, 'latch holds after en falls', q(), HI);
+  sd.on = false; settle(c);
+  expect(c, 'latch ignores d while held', q(), HI);
+  // static storage: the holding loop drives, so this is not stored charge
+  expect(c, 'held value is actively driven', c.strength[L.nets.q], STRONG);
+  se.on = true; settle(c);
+  expect(c, 'latch transparent again', q(), LO);
+}
+
+// ── 16 x 4 register file ─────────────────────────────────────────────────
+{
+  const c = buildCircuit('regfile');
+  const set = (p, v, n) => {
+    for (let i = 0; i < n; i++) sw(c, `${p}${i}`, !!((v >> i) & 1));
+  };
+  // WE must fall before the address changes: these are level-sensitive
+  // latches, so moving the address while WE is high walks the old word
+  // into the new register on the way past. That is how the real part
+  // behaves, and the sequencing is the caller's job.
+  const write = (addr, val) => {
+    sw(c, 'WE', false); settle(c);
+    set('WA', addr, 4); set('D', val, 4); settle(c);
+    sw(c, 'WE', true); settle(c);
+    sw(c, 'WE', false); settle(c);
+  };
+  const read = (addr) => {
+    set('RA', addr, 4); settle(c);
+    let v = 0;
+    for (let b = 0; b < 4; b++) {
+      if (lampV(c, `Q${b}`) === HI) v |= 1 << b;
+      expect(c, `read r${addr} bit ${b} driven`, lampStr(c, `Q${b}`), STRONG);
+    }
+    return v;
+  };
+
+  for (let r = 0; r < 16; r++) write(r, (r * 7) & 15);
+  for (let r = 0; r < 16; r++) {
+    expect(c, `register ${r} holds its own value`, read(r), (r * 7) & 15);
+  }
+  // writing one register must not disturb its neighbours
+  write(5, 0b1010);
+  expect(c, 'rewritten register updates', read(5), 0b1010);
+  expect(c, 'neighbour survives a write', read(6), (6 * 7) & 15);
+  expect(c, 'far register survives a write', read(15), (15 * 7) & 15);
+  // WE low means no write happens at all
+  sw(c, 'WE', false); settle(c);
+  set('WA', 6, 4); set('D', 0, 4); settle(c);
+  expect(c, 'no write while WE is low', read(6), (6 * 7) & 15);
 }
 
 // ── program ROM ──────────────────────────────────────────────────────────

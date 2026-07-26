@@ -39,18 +39,29 @@ what `Circuit.implicitGround` exists for.
 
 ## More circuits
 
-- [ ] **CMOS latch and flip-flop** — a transmission-gate latch is two
-      inverters and two pass gates; the master-slave pair is the memory
-      primitive the CPU needs. The relay side already has SR/D/register.
+- [x] **CMOS latch** — transmission-gate D latch in `gates.js`: two
+      inverters, two pass gates, complementary enables so exactly one is
+      ever open. Static storage — the holding loop drives, so a held bit
+      reads STRONG rather than coasting on charge.
+- [ ] **Master-slave flip-flop** — two DLatches on opposite enables. Needed
+      for edge-triggered state (a PC that increments on a clock edge);
+      the register file gets by with level-sensitive latches, as the real
+      4004 did.
 - [x] **ALU** — 4-bit, six functions (add / sub / AND / OR / XOR / shift
       left), one-hot decoded, steered onto a shared result bus by
       transmission gates. 538 transistors, composed from gate modules
       rather than hand-placed — the first circuit built that way. Full
       sweep in the test suite: 6 functions × 16 × 16, asserting STRONG on
       every result bit so a second open driver (X) or none (Z) fails.
-- [ ] **Memory unit** — address decoder feeding a register file (start 4×4,
-      then 8×8), with read/write enable. 6T SRAM cells rather than latch
-      pairs once the CMOS latch exists.
+- [x] **16 × 4 register file** — the 4004's index registers, dual-ported
+      (separate read and write addresses), sixteen rows sharing four bit
+      lines through tri-state gates. 1,488 transistors — about 3× the ~500
+      the budget table guessed, because each cell is a full static latch
+      plus its tri-state buffer rather than a 6T SRAM cell. Solves in
+      8.4 µs, so it is comfortably real-time.
+- [ ] **Data RAM** — 6T SRAM cells would cut the per-cell cost
+      substantially versus the latch-based register file; worth doing when
+      the 16-nibble data store lands.
 - [x] **Program ROM** — 8 × 8 NMOS array, a transistor per stored `0`,
       driven by a one-hot row decoder, bit lines pulled up and buffered out.
       Contents spell "LOGIC 42" in ASCII so the array holds something
