@@ -6,18 +6,31 @@ it is the handoff between sessions.
 
 ## Status (2026-07-26)
 
-v1 shipped as a relay simulator: 18 circuits, binary I/O table,
-orientation-aware layout, click sounds, zoom/pan.
+**48 circuits across three technologies**, and the comparison between them
+is now the organising idea rather than an afterthought.
 
-v2 generalises the primitive from relays to physical devices. The engine is
-now a four-state switch-level solver (`0` / `1` / `Z` / `X`, at strong /
-weak / charge strength) over relays, NMOS, PMOS, diodes and resistors, with
-both rails explicit. Nine device circuits added, including a tri-state bus
-that demonstrates floating and contended nets directly. Every original relay
-truth table passes unchanged under the new solver — that compatibility is
-what `Circuit.implicitGround` exists for.
+- **v1** shipped as a relay simulator: 18 circuits, binary I/O table,
+  orientation-aware layout, click sounds, zoom/pan.
+- **v2** generalised the primitive from relays to physical devices. The
+  engine is a four-state switch-level solver (`0` / `1` / `Z` / `X`, at
+  strong / weak / charge strength) over relays, NMOS, PMOS, diodes and
+  resistors, with both rails explicit. Every original relay truth table
+  passes unchanged under it — that compatibility is what
+  `Circuit.implicitGround` exists for.
+- **v3** filled the technology matrix. CMOS (15) and NMOS (12) now each
+  have the full gate family, a ring oscillator, a decoder, a latch, an
+  adder and an ALU, so most rows can be read across. Three bridge circuits
+  (diode logic, Meet the Transistor, Three Technologies) connect the
+  sections.
+- The library is split into catalogue data (`web/data/circuits.json`) and
+  per-circuit behaviour (`web/js/behaviour/`) — see [DATA.md](DATA.md).
 
-`node test/sim-test.mjs` → **132,429 checks, 0 failures**.
+`node test/sim-test.mjs` → **146,622 checks, 0 failures** in ~9 s.
+
+Two things that cannot be filled in and are results rather than gaps:
+tri-state needs a complementary pair, so it exists only in CMOS; and the
+NMOS ALU is stuck with a mux tree for exactly that reason, which is what
+the Tri-State Bus circuit exists to explain.
 
 ## Ship it
 
@@ -87,10 +100,13 @@ what `Circuit.implicitGround` exists for.
       Wires are decorative, so a router only has to be legible, not correct.
 - [x] **Performance** — `solve()` now precomputes a flat CSR edge list once
       and only flips per-edge enable flags; floods are generation-stamped so
-      nothing is cleared per pass. Real circuits 1.6–3.6× faster (`add8`
-      3.16 → 0.89 µs); at 4004 scale ~65 → ~32 µs, and a realistic fan-out
-      topology solves 4,610 nets in 36 µs. Tiny circuits pay ~1 µs more for
-      the per-device flag loop, which is the right trade.
+      nothing is cleared per pass. Real circuits came out 1.6–3.6× faster
+      (`add8` ~3.2 → ~1 µs); at 4004 scale ~65 → ~32 µs, and a realistic
+      fan-out topology solved 4,610 nets in ~36 µs. Tiny circuits pay ~1 µs
+      more for the per-device flag loop, which is the right trade.
+      (Figures are one machine's numbers, not a tracked benchmark — there
+      are no timing assertions in the suite. Treat them as orders of
+      magnitude.)
 - [ ] **Renderer caching** — build a `Path2D` per net once and reuse it;
       currently every wire is re-pathed each frame, now once per logic value.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module

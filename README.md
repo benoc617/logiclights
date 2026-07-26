@@ -29,18 +29,29 @@ way through the machine. Every wire is a light: amber means driven high.
   with an equation line for the arithmetic circuits.
 - **Zoom & pan** — pinch/scroll from single-contact detail out to a whole
   machine on one tablet screen.
-- **Circuit library** — Meet the Relay, Buzzer, Ring Oscillator; NOT / AND /
-  OR / XOR / NAND / NOR; 2-to-4 Decoder; Meet the Transistor, CMOS Inverter
-  / NAND / NOR, NMOS Inverter, Diode Logic, Transmission Gate, Tri-State
-  Bus, Three Technologies; SR Latch, D Latch, 4-bit Register; Half/Full
-  Adder, 4-bit & 8-bit Ripple Adders, 4-bit Adder/Subtractor (two's
-  complement).
-- **Composed machines** — bigger blocks assembled from gate modules rather
-  than placed by hand: a 538-transistor **4-bit ALU** (six functions steered
-  onto a shared result bus), an **NMOS mask ROM** whose stored bits are
-  visible as the presence or absence of a transistor, and a 1,488-transistor
-  **16×4 register file** with separate read and write ports. These are the
-  4004's building blocks, being built one at a time.
+- **Circuit library, organised by technology** — 48 circuits, because the
+  point is to build the *same* logic three ways and compare:
+  - **Relays** (18) — Meet the Relay, Buzzer, Ring Oscillator; NOT / AND /
+    OR / XOR / NAND / NOR; 2-to-4 Decoder; SR Latch, D Latch, 4-bit
+    Register; Half and Full Adder, 4-bit & 8-bit Ripple Adders, 4-bit
+    Adder/Subtractor (two's complement).
+  - **CMOS** (15) — Inverter, NAND / NOR / AND / OR / XOR, 2-to-4 Decoder,
+    D Latch, Full Adder, Ring Oscillator; Transmission Gate and Tri-State
+    Bus; and three composed machines: a 538-transistor **4-bit ALU**, a
+    1,488-transistor **16×4 register file**, and a dynamic **CMOS Program
+    ROM** that precharges its bit lines instead of burning static current.
+  - **NMOS** (12) — Inverter, NAND / NOR / AND / OR / XOR, 2-to-4 Decoder,
+    D Latch, Ring Oscillator, 4-bit Adder, 4-bit ALU, and the **mask ROM**
+    whose stored bits are visible as the presence or absence of a
+    transistor. Every 1 here is only weakly driven by a load resistor —
+    that asymmetry is why CMOS won.
+  - **General** (3) — the bridges: Meet the Transistor, Diode Logic, and
+    Three Technologies, which builds one NAND gate three ways at once.
+- **Guides for the big circuits** — a caption under every input explaining
+  what it selects, a legend of function codes with the live one highlighted,
+  a grid of internal state the outputs do not expose (all sixteen registers
+  at once, or every function an ALU computed simultaneously), and labelled
+  boxes drawn on the canvas naming each block of a composed machine.
 
 No frameworks, no build step: vanilla ES modules + canvas.
 

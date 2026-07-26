@@ -39,18 +39,31 @@ web/
   css/style.css       all styling (orientation-aware, see below)
   js/engine.js        Circuit: nets, devices, four-state solver, timing
   js/geometry.js      symbol geometry shared by builders and renderer
-  js/circuits.js      joins catalogue data to behaviour (see docs/DATA.md)
-  js/behaviour/       per-circuit builders and readouts, by technology
   data/circuits.json  the catalogue: names, prose, hints, legends
+  data/circuits.schema.json   what a catalogue entry may declare
+  js/circuits.js      joins catalogue to behaviour (see docs/DATA.md)
+  js/behaviour/       per-circuit builders, by technology:
+      index.js          merges the four maps, keyed by circuit id
+      relays.js         coils and contacts only
+      cmos.js           complementary pairs + the composed machines
+      nmos.js           N-channel under resistor loads
+      general.js        the bridges (diode logic, cross-technology)
+      mos-scaffold.js   rails + changeover inputs, shared by CMOS and NMOS
+      from-module.js    generic frame for module-built circuits
+      rom-circuit.js    the ROM, in both load styles
+      util.js           one-line w() / relay() builder helpers
   js/module.js        sub-circuit modules: named ports, local coordinates
   js/gates.js         reusable CMOS gates built on module.js
-  js/alu.js           4-bit ALU, composed from gates.js
-  js/rom.js           NMOS mask ROM array + row decoder
+  js/nmos.js          the same library one technology back: NMOS gates
+  js/alu.js           4-bit CMOS ALU, composed from gates.js
+  js/rom.js           mask ROM array + row decoder (resistor or precharge)
   js/regfile.js       16×4 dual-port register file
   js/buses.js         groups switches/lamps into binary buses
-  js/render.js        canvas renderer (pan/zoom, glow, LOD)
+  js/render.js        canvas renderer (pan/zoom, glow, LOD, region boxes)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"
-  js/main.js          UI wiring, rAF loop, pointer input, binary I/O panel
+  js/picker.js        the nested circuit menu
+  js/io-panel.js      binary I/O table: buses, hints, legends, live state
+  js/main.js          canvas sizing, pointer input, the rAF loop
 test/sim-test.mjs     headless truth-table suite (no runner, plain node)
 Dockerfile            nginx image serving /lights/ for the puzzleboss stack
 nginx.conf            with /lights/health for the ALB health check
@@ -113,6 +126,18 @@ these layouts want to be wide and short like the rest of the library.
    node that happens to be holding one.
 4. Check it visually at several zoom levels; wires are hand-routed and
    overlaps are easy to miss.
+
+**Annotate composed machines with `c.region()`.** A few hundred transistors
+read as undifferentiated texture at any zoom that fits them on screen, so a
+labelled box behind each block says what it is — "Write decoder", "r0",
+"Adder". Regions are annotation only: they conduct nothing, the solver never
+reads them, and `m.region()` deliberately does not grow a module's extent,
+so drawing a box never moves the next block. Unlike device labels, which
+fade out as you zoom away, region captions are drawn at every zoom with the
+type held at a readable pixel size — they matter most when zoomed out, which
+is exactly when everything else stops being legible. Derive the box from the
+instance's measured extent (`inst.w` / `inst.h`) rather than typed
+coordinates, or it will drift the next time a pitch changes.
 
 **Wires are decorative.** `c.wire()` only stores geometry — conduction comes
 entirely from devices. Two wires of different nets sharing a segment is a

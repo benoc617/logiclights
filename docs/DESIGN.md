@@ -181,3 +181,79 @@ browser and the repo has no dependencies by design.
 - No framework, no bundler, no TypeScript — see CLAUDE.md rule 1.
 - No server. Everything is static; saved user circuits will need a decision
   here (localStorage first, see ROADMAP).
+
+## The two ROMs
+
+Both read the same eight bytes out of the same array shape; they differ
+only in how the bit lines are held high, and that difference is the whole
+comparison.
+
+**Resistor load (NMOS).** A pull-up resistor per bit line. The array is a
+wired-AND: a transistor at a site pulls its line down to store a 0, an
+empty site leaves it pulled up as a 1, and programming a mask ROM is
+deciding where to put transistors. The cost is that whenever a line is
+pulled low there is an unbroken path from the rail to ground for as long as
+it stays there.
+
+**Precharge (CMOS).** No resistors: a P-channel per line, plus a foot
+transistor per column, both gated by PRE. With PRE low the pull-ups charge
+every line; PRE then rises, the pull-ups switch off, the feet switch on,
+and the selected row discharges only the lines storing 0. Nothing ever
+fights, so there is no static current at all.
+
+Two things this arrangement forces, both real properties of dynamic logic
+rather than modelling artifacts:
+
+- **The foot transistors are not optional.** Without them the array still
+  conducts during precharge, shorting VDD to VSS through the selected site;
+  the bit line reads X and the data only comes out right if the downstream
+  inverters happen to resolve the X favourably. The test suite asserts the
+  precharge phase draws no crowbar current, not merely that the bytes are
+  correct.
+- **PRE must fall before the address moves.** Change the address mid-
+  evaluate and the new row discharges lines the old one already pulled
+  down, and nothing restores them until the next precharge.
+
+A static P-channel load — pseudo-NMOS — is deliberately *not* offered.
+Real pseudo-NMOS works because the pull-up is fabricated far weaker than
+the pull-down; this simulator has one drive strength per transistor, so the
+two would simply contend and the line would read X. That is the model being
+honest about what it does not represent, and it is why the CMOS version has
+to be dynamic.
+
+## Region annotations
+
+`c.region(text, x0, y0, x1, y1)` draws a labelled box *behind* the circuit
+naming a block of it — "Write decoder", "Bit 2 (MSB)", "r9". They exist
+because a composed machine of several hundred transistors reads as
+undifferentiated texture at any zoom that fits it on screen, and the boxes
+are what turn that back into structure you can point at.
+
+They are annotation only: they conduct nothing and the solver never reads
+them. `ModuleBuilder.region()` deliberately does not grow an instance's
+extent, so drawing a box around a block never shifts the next one.
+
+Two rendering choices differ from the device labels, on purpose:
+
+- **Drawn at every zoom level.** Device labels drop out below ~5 px per
+  world unit because at that scale they are noise. Region captions do the
+  opposite — they matter *most* when zoomed out, which is exactly when
+  everything else stops being legible — so the caption size is computed in
+  pixels and converted back to world units, clamped to a readable range.
+- **Captions clip to their own box.** Without that, adjacent blocks' labels
+  overlap the moment two boxes sit side by side, and a caption that
+  overflows its box points at the wrong devices. `side: 'inside'` tucks the
+  label into the top-left corner for boxes packed too tightly for an
+  outside caption — the sixteen register rows, the per-slice internals of
+  the ALU.
+
+## The circuit picker
+
+A native `<select>` cannot nest: optgroups do not contain optgroups. With
+48 circuits across four technology sections and fifteen groups, a flat list
+with indented labels made a heading indistinguishable from the circuits
+under it. `js/picker.js` is a custom widget instead — collapsed technology
+sections that expand to reveal their subsections — and it deliberately
+exposes the same small surface the `<select>` did (a readable and
+assignable `.value`, plus a `change` listener), so the rest of the app is
+unaware it is not a native control.

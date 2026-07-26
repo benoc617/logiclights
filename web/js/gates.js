@@ -1,7 +1,8 @@
 // Reusable CMOS gate modules.
 //
-// These are the same topologies as the hand-placed gates in circuits.js —
-// PMOS pull-up network, NMOS pull-down network, complementary — but written
+// These are the same topologies as the hand-placed gates in
+// behaviour/cmos.js — PMOS pull-up network, NMOS pull-down network,
+// complementary — but written
 // once as modules with named ports so they can be instantiated in bulk. The
 // library circuits stay hand-routed (they are the teaching material, and
 // their wire runs are deliberate); these exist for the composed machines,
