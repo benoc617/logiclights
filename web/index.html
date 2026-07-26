@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Logic Lights — relay logic, visualized</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💡</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <h1>⚡ Logic Lights</h1>
+  <select id="circuit" title="Choose a circuit"></select>
+  <div class="ctl">
+    <label for="speed" title="Relay switching time">🐢</label>
+    <input id="speed" type="range" min="0" max="100" value="35">
+    <span id="speed-label">300 ms</span>
+  </div>
+  <div class="btns">
+    <button id="panel-toggle" class="active" title="Binary input / output table">01</button>
+    <button id="sound" title="Relay click sounds">🔊</button>
+    <button id="zout" title="Zoom out">−</button>
+    <button id="zin" title="Zoom in">+</button>
+    <button id="fit" title="Fit to screen">⛶</button>
+    <button id="reset" title="Rebuild circuit">↺</button>
+  </div>
+</header>
+<main>
+  <canvas id="view"></canvas>
+  <aside id="panel" class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Binary I/O</span>
+      <button id="panel-close" title="Hide table">×</button>
+    </div>
+    <div id="panel-body"></div>
+  </aside>
+</main>
+<footer>
+  <span id="stats"></span>
+  <span id="desc"></span>
+</footer>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
