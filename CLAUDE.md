@@ -109,6 +109,12 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
   independent delays, so there is always a brief `X` (both on — real crowbar
   current) or `Z` (both off) mid-handover. This is the model being honest,
   not a bug. Tests must assert on *settled* state.
+- **Conduction tables are precomputed and must be invalidated.** `solve()`
+  builds a static CSR edge list on first use and thereafter only flips
+  per-edge enable flags. Anything that changes the *topology* — `net()` or
+  any `add*()` device call — must set `this._built = false`, or the circuit
+  solves against a stale graph. Adding a new device type means adding its
+  edges to `_buildStatic()` as well as handling it in `solve()`.
 - **A transition takes two `step()` calls.** The first schedules it
   (`nextEventAt()` goes non-null), a later one at or past the event time
   applies it and counts it. Flipping a switch and stepping once reports

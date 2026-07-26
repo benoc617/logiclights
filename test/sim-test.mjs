@@ -3,7 +3,7 @@
 
 import { buildCircuit, CIRCUITS } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
-import { X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
+import { Circuit, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 
 let failures = 0;
 let checks = 0;
@@ -415,6 +415,48 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   expect(c, 'subtract 9-4 sum bus', vals.S, 5);
   expect(c, 'Beff shows ~B', vals.Beff, 11);
   expect(c, 'readout text', c.readout(vals), '9 − 4 = 5');
+}
+
+// ── static conduction tables ─────────────────────────────────────────────
+// solve() precomputes a flat CSR edge list and only flips per-edge flags.
+// The tables must be rebuilt whenever the topology grows, or a circuit
+// built up in stages silently solves against a stale graph.
+{
+  const c = new Circuit('late-devices');
+  c.implicitGround = false;
+  const a = c.net();
+  // solve() before the circuit is finished: builds tables at this size
+  c.solve();
+  // now grow it — an inverter added after the first solve
+  const out = c.net();
+  c.addTransistor('P', 'pmos', a, 0, out, 0, 0);
+  c.addTransistor('N', 'nmos', a, out, 1, 0, 0);
+  const sIn = c.addSwitch('IN', a, 'toggle', 0, 0, { from: 0, to: 1 });
+  sIn.on = false;                    // changeover parks IN at VSS → out HI
+  for (const t of c.transistors) { t.on = t.kind === 'pmos'; }
+  const v = c.solve();
+  expect(c, 'devices added after a solve still conduct', VALUE_CHAR[v[out]], '1');
+}
+{
+  // Diodes keep their one-way behaviour in the shared edge structure:
+  // a diode passes HI anode→cathode but must not pass it backwards.
+  const c = new Circuit('diode-dir');
+  c.implicitGround = false;
+  const anode = c.net(), cathode = c.net();
+  c.addDiode('D', anode, cathode, 0, 0);
+  const s = c.addSwitch('S', anode, 'toggle', 0, 0, { from: 0, to: 1 });
+  s.on = true;                       // drive the anode high
+  let v = c.solve();
+  expect(c, 'diode passes forward', VALUE_CHAR[v[cathode]], '1');
+
+  const c2 = new Circuit('diode-rev');
+  c2.implicitGround = false;
+  const an2 = c2.net(), ca2 = c2.net();
+  c2.addDiode('D', an2, ca2, 0, 0);
+  const s2 = c2.addSwitch('S', ca2, 'toggle', 0, 0, { from: 0, to: 1 });
+  s2.on = true;                      // drive the *cathode* high
+  v = c2.solve();
+  expect(c2, 'diode blocks reverse HI', VALUE_CHAR[v[an2]] !== '1', true);
 }
 
 // ── sound counters: clicks vs channel switchings ─────────────────────────

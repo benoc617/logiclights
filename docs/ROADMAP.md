@@ -67,10 +67,12 @@ what `Circuit.implicitGround` exists for.
       formalize them.
 - [ ] **Auto-routing** for inter-module wires (channel routing between rows).
       Wires are decorative, so a router only has to be legible, not correct.
-- [ ] **Performance** — `solve()` still rebuilds its adjacency lists every
-      call and runs two to four floods over them. Fine at 24 relays, needs a
-      static CSR edge list and a reusable typed-array stack at thousands of
-      devices.
+- [x] **Performance** — `solve()` now precomputes a flat CSR edge list once
+      and only flips per-edge enable flags; floods are generation-stamped so
+      nothing is cleared per pass. Real circuits 1.6–3.6× faster (`add8`
+      3.16 → 0.89 µs); at 4004 scale ~65 → ~32 µs, and a realistic fan-out
+      topology solves 4,610 nets in 36 µs. Tiny circuits pay ~1 µs more for
+      the per-device flag loop, which is the right trade.
 - [ ] **Renderer caching** — build a `Path2D` per net once and reuse it;
       currently every wire is re-pathed each frame, now once per logic value.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module
