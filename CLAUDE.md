@@ -40,6 +40,9 @@ web/
   js/engine.js        Circuit: nets, devices, four-state solver, timing
   js/geometry.js      symbol geometry shared by builders and renderer
   js/circuits.js      the circuit library + registry (CIRCUITS)
+  js/module.js        sub-circuit modules: named ports, local coordinates
+  js/gates.js         reusable CMOS gates built on module.js
+  js/alu.js           4-bit ALU, composed from gates.js
   js/buses.js         groups switches/lamps into binary buses
   js/render.js        canvas renderer (pan/zoom, glow, LOD)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"
@@ -59,6 +62,26 @@ charge. Relays and transistors are the same thing wearing different clothes
 `addRelay` and `addTransistor` share one solver and one delay scheduler.
 Diodes are the only directional device. Full detail in
 [docs/DEVICES.md](docs/DEVICES.md).
+
+## Hand-routed circuits vs composed machines
+
+Two ways to build, deliberately kept apart.
+
+The **library circuits** in `circuits.js` are hand-placed: every device at a
+chosen coordinate, every wire routed by eye. They are the teaching material,
+their layouts are the explanation, and they should stay that way.
+
+The **composed machines** (`alu.js`, and whatever follows) are assembled from
+modules in `gates.js` via `module.js`. A module declares named ports, builds
+in local coordinates, and gets instantiated at a position with its ports
+bound to caller nets; device names are namespaced by instance tag so a fault
+in one of sixteen copies is identifiable. Modules nest.
+
+The rule of thumb: if you would place it by eye, hand-route it. If it needs
+more than a few dozen devices or the same block more than three times,
+compose it. When composing, pitch instances to the blocks' measured extents
+(`inst.w` / `inst.h`) — guessing leaves a sparse, unreadable circuit, and
+these layouts want to be wide and short like the rest of the library.
 
 ## Adding a circuit
 

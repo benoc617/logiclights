@@ -118,6 +118,49 @@ export const Or2 = defineModule('or2', {
   },
 });
 
+// A transmission gate: NMOS and PMOS in parallel so the pair passes a full
+// 0 and a full 1. `en` opens it, `nen` must be its complement. When closed
+// the output is genuinely floating — this is the one thing a relay cannot
+// do, and it is what lets several drivers share a bus.
+export const PassGate = defineModule('tg', {
+  ports: [
+    { name: 'a', x: -1.5, y: 0, side: 'in' },
+    { name: 'y', x: 4.5, y: 0, side: 'out' },
+    { name: 'en', x: 1.5, y: -2, side: 'top' },
+    { name: 'nen', x: 1.5, y: 4, side: 'bottom' },
+  ],
+  build(m) {
+    const a = m.port('a'), y = m.port('y');
+    m.transistor('N', 'nmos', m.port('en'), a, y, 0, 0);
+    m.transistor('P', 'pmos', m.port('nen'), a, y, 3, 0);
+    m.wire(a, [-1.5, 0], [3, 0]);
+    m.wire(y, [0, MOS_H], [3, MOS_H]);
+    m.wire(y, [1.5, MOS_H], [4.5, MOS_H]);
+  },
+});
+
+// One bit of ripple-carry addition, built from gates rather than derived:
+// sum = a^b^cin, cout = majority(a, b, cin) = ab + cin(a^b).
+export const FullAdder = defineModule('fa', {
+  ports: [
+    { name: 'a', x: -1.5, y: 4, side: 'in' },
+    { name: 'b', x: -1.5, y: 8, side: 'in' },
+    { name: 'cin', x: -1.5, y: 12, side: 'in' },
+    { name: 'sum', x: GATE_W * 7, y: 8, side: 'out' },
+    { name: 'cout', x: GATE_W * 7, y: 30, side: 'out' },
+  ],
+  build(m) {
+    const a = m.port('a'), b = m.port('b'), cin = m.port('cin');
+    const axb = m.net(), ab = m.net(), cx = m.net();
+    m.instantiate(Xor2, 0, 0, { a, b, y: axb });
+    m.instantiate(Xor2, GATE_W * 3.5, 0, { a: axb, b: cin, y: m.port('sum') });
+    // carry: ab + cin·(a^b) — an OR of two ANDs
+    m.instantiate(And2, 0, GATE_H * 2 + 4, { a, b, y: ab });
+    m.instantiate(And2, GATE_W * 2.5, GATE_H * 2 + 4, { a: cin, b: axb, y: cx });
+    m.instantiate(Or2, GATE_W * 5, GATE_H * 2 + 4, { a: ab, b: cx, y: m.port('cout') });
+  },
+});
+
 // XOR from four NANDs — the classic. y = (a·(a·b)') · (b·(a·b)')  … inverted.
 export const Xor2 = defineModule('xor2', {
   ports: [

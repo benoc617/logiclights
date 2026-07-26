@@ -7,6 +7,8 @@
 
 import { Circuit, VCC, VDD, VSS } from './engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from './geometry.js';
+import { instantiate } from './module.js';
+import { Alu4, ALU_BITS } from './alu.js';
 
 // ── small builder helpers ────────────────────────────────────────────────
 
@@ -885,6 +887,59 @@ function buildThreeTech() {
   return c;
 }
 
+// ── Composed machines ────────────────────────────────────────────────────
+
+// The first circuit assembled from modules rather than placed by hand. The
+// ALU itself lives in alu.js; this only wraps it in the switches, lamps and
+// rails the app needs. That split is the point: the machine is composed,
+// and only its I/O is hand-drawn.
+function buildAlu4() {
+  const c = new Circuit('4-bit ALU');
+  c.implicitGround = false;
+
+  const bind = {};
+  const yA = 4, yB = 26, yF = 48;
+  // operand switches down the left, LSB at the top of each group
+  for (let i = 0; i < ALU_BITS; i++) {
+    const na = c.net(), nb = c.net();
+    c.addSwitch(`A${i}`, na, 'toggle', 4, yA + i * 4, { to: VSS });
+    c.addSwitch(`B${i}`, nb, 'toggle', 4, yB + i * 4, { to: VSS });
+    bind[`a${i}`] = na;
+    bind[`b${i}`] = nb;
+  }
+  for (let i = 0; i < 3; i++) {
+    const n = c.net();
+    c.addSwitch(`F${i}`, n, 'toggle', 4, yF + i * 4, { to: VSS });
+    bind[`f${i}`] = n;
+  }
+
+  const inst = instantiate(c, Alu4, 24, 0, bind);
+
+  // rails span the whole block
+  const b = c.bounds();
+  const xEnd = Math.max(b.x1, 40) + 8;
+  w(c, VDD, [0, -6], [xEnd, -6]);
+  w(c, VSS, [0, 70], [xEnd, 70]);
+  c.label('+V', -1.6, -6, 1.1, '#ffb340');
+  c.label('GND', -2.4, 70, 1.1, '#7f8aa3');
+
+  // feed every input switch from the rails (changeover: always driving)
+  for (const s of c.switches) {
+    const t = switchSpdtT(s);
+    w(c, VDD, [2.4, -6], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, 70], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  // result lamps
+  for (let i = 0; i < ALU_BITS; i++) {
+    c.addLamp(`Y${i}`, inst.nets[`y${i}`], xEnd - 4, yA + i * 4, { short: `Y${i}` });
+  }
+  c.addLamp('Cout', inst.nets.cout, xEnd - 4, yB, { short: 'Cout' });
+  // no addBus('Y') — the Y0..Y3 lamps already derive that bus, and
+  // declaring it again lists it a second time under "Internal"
+  return c;
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 export const CIRCUITS = [
@@ -932,6 +987,16 @@ export const CIRCUITS = [
     desc: 'While EN is on, Q follows D through one path; when EN drops, a second path lets Q hold itself. Flip D with EN off — nothing happens until you open the gate.' },
   { id: 'reg4', group: 'Memory', name: '4-bit Register', build: buildRegister4,
     desc: 'Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it.' },
+  { id: 'alu4', group: 'Arithmetic', name: '4-bit ALU', build: buildAlu4,
+    desc: 'Six functions over two nibbles, chosen by F. Every function is computed at once and a transmission gate steers the selected one onto a shared result bus — one wire with six possible drivers, the way a CPU does it, not a mux tree per destination. 538 transistors, composed from gate modules rather than placed by hand. Codes 6 and 7 select nothing, and the bus floats.',
+    readout: v => {
+      const OPS = ['+', '−', 'AND', 'OR', 'XOR', '<<'];
+      if (v.F > 5) return `F=${v.F}: no function selected — result bus floating`;
+      if (v.F === 5) return `${v.A} << 1 = ${v.Y}`;
+      const carry = v.F === 0 && v.Cout ? '  (carry)' : '';
+      const borrow = v.F === 1 && !v.Cout ? '  (borrow — negative)' : '';
+      return `${v.A} ${OPS[v.F]} ${v.B} = ${v.Y}${carry}${borrow}`;
+    } },
   { id: 'halfadd', group: 'Arithmetic', name: 'Half Adder', build: buildHalfAdder,
     desc: 'XOR gives the sum bit, a series pair gives the carry: 1+1=10. Five contacts on two relays.',
     readout: v => `${v.A} + ${v.B} = ${v.CARRY * 2 + v.SUM}` },

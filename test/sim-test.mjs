@@ -3,7 +3,7 @@
 
 import { buildCircuit, CIRCUITS } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
-import { Circuit, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
+import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2 } from '../web/js/gates.js';
 
@@ -490,6 +490,69 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   } catch { threw = true; }
   const c = new Circuit('bad');
   expect(c, 'unknown port rejected', threw, true);
+}
+
+// ── 4-bit ALU ────────────────────────────────────────────────────────────
+// Full sweep: six functions over every operand pair. The result bus is
+// shared by six transmission gates, so this also asserts that exactly one
+// driver is ever open — a second one would show as X, and none as Z.
+{
+  const c = buildCircuit('alu4');
+  const buses = deriveBuses(c);
+  const OPS = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'SHL'];
+  const want = (op, a, b) => {
+    switch (op) {
+      case 'ADD': return (a + b) & 15;
+      case 'SUB': return (a - b) & 15;
+      case 'AND': return a & b;
+      case 'OR': return a | b;
+      case 'XOR': return a ^ b;
+      case 'SHL': return (a << 1) & 15;
+    }
+  };
+  const setBus = (name, val, bits) => {
+    for (let i = 0; i < bits; i++) sw(c, `${name}${i}`, !!((val >> i) & 1));
+  };
+  for (let f = 0; f < 6; f++) {
+    setBus('F', f, 3);
+    for (let a = 0; a < 16; a++) {
+      setBus('A', a, 4);
+      for (let b = 0; b < 16; b++) {
+        setBus('B', b, 4);
+        settle(c);
+        let got = 0, clean = true;
+        for (let i = 0; i < 4; i++) {
+          const v = lampV(c, `Y${i}`);
+          if (v === HI) got |= 1 << i;
+          else if (v !== LO) clean = false;
+          // the bus must be driven, not floating or contended
+          if (lampStr(c, `Y${i}`) !== STRONG) clean = false;
+        }
+        expect(c, `${OPS[f]} ${a},${b}`, got, want(OPS[f], a, b));
+        expect(c, `${OPS[f]} ${a},${b} bus driven`, clean, true);
+      }
+    }
+  }
+  // ADD sets carry out on overflow; SUB clears it on borrow
+  setBus('F', 0, 3); setBus('A', 15, 4); setBus('B', 1, 4); settle(c);
+  expect(c, 'ADD 15+1 carries', lampV(c, 'Cout'), HI);
+  setBus('F', 1, 3); setBus('A', 3, 4); setBus('B', 5, 4); settle(c);
+  expect(c, 'SUB 3-5 borrows', lampV(c, 'Cout'), LO);
+  // An unused function code opens no pass gate, so nothing drives the bus.
+  // It does not read Z: with every gate shut the net keeps its last value
+  // on stored charge (see CLAUDE.md — a lit lamp is not a driven net), so
+  // the honest assertion is on strength, not value.
+  setBus('F', 4, 3); setBus('A', 15, 4); setBus('B', 0, 4); settle(c);
+  expect(c, 'XOR drives the bus hard', lampStr(c, 'Y0'), STRONG);
+  setBus('F', 7, 3); settle(c);
+  expect(c, 'unused code leaves the bus undriven', lampStr(c, 'Y0'), CHARGE);
+  // Which value it holds is not predictable: the decoder's own gates settle
+  // at slightly different times, so the bus can be pulled once more on the
+  // way down before the last pass gate shuts. Only the strength is a
+  // guarantee — that no function is driving.
+  for (let i = 0; i < 4; i++) {
+    expect(c, `unused code: Y${i} undriven`, lampStr(c, `Y${i}`), CHARGE);
+  }
 }
 
 // ── static conduction tables ─────────────────────────────────────────────
