@@ -51,9 +51,12 @@ what `Circuit.implicitGround` exists for.
 - [ ] **Memory unit** — address decoder feeding a register file (start 4×4,
       then 8×8), with read/write enable. 6T SRAM cells rather than latch
       pairs once the CMOS latch exists.
-- [ ] **Program ROM** — an NMOS array, a transistor per stored `0`, driven
-      by a row decoder. A good demo on its own before any CPU exists, and
-      the thing that makes programs possible. See [4004.md](4004.md).
+- [x] **Program ROM** — 8 × 8 NMOS array, a transistor per stored `0`,
+      driven by a one-hot row decoder, bit lines pulled up and buffered out.
+      Contents spell "LOGIC 42" in ASCII so the array holds something
+      legible. Tests cover every decoder width (1/2/3 address bits — the
+      1-bit path had its rows swapped when only 3-bit was exercised) and
+      assert the sneak-path property directly.
 - [ ] Program counter (ripple counter) and instruction register
 - [ ] **Intel 4004** — the long arc, retargeted from the 8008 (4-bit
       datapath, Harvard, no interrupts, 3-level stack, and the existing

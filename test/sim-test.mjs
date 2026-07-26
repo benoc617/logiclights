@@ -6,6 +6,7 @@ import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2 } from '../web/js/gates.js';
+import { romArray } from '../web/js/rom.js';
 
 let failures = 0;
 let checks = 0;
@@ -490,6 +491,76 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   } catch { threw = true; }
   const c = new Circuit('bad');
   expect(c, 'unknown port rejected', threw, true);
+}
+
+// ── program ROM ──────────────────────────────────────────────────────────
+// An NMOS array: a transistor at a site pulls the bit line down, storing 0;
+// an empty site reads 1 through the pull-up.
+{
+  // Every address width, not just the one the library circuit uses — the
+  // 1-bit decoder takes a different code path from the folded-AND case and
+  // had its row lines swapped when it was only exercised at 3 bits.
+  for (const bits of [1, 2, 3]) {
+    const rows = 1 << bits;
+    // a pattern with all-zeros, all-ones and mixed words
+    const words = Array.from({ length: rows }, (_, i) => (i * 37 + i) & 0x0f);
+    words[0] = 0; words[rows - 1] = 0x0f;
+    const Rom = romArray(words, 4, bits);
+    for (let addr = 0; addr < rows; addr++) {
+      const c = new Circuit(`rom${bits}`);
+      c.implicitGround = false;
+      const bind = {};
+      for (let i = 0; i < bits; i++) {
+        const n = c.net();
+        const s = c.addSwitch(`A${i}`, n, 'toggle', 0, 0, { from: 0, to: 1 });
+        s.on = !!((addr >> i) & 1);
+        bind[`a${i}`] = n;
+      }
+      const inst = instantiate(c, Rom, 0, 0, bind);
+      settle(c);
+      let got = 0, driven = true;
+      for (let b = 0; b < 4; b++) {
+        const net = inst.nets[`d${b}`];
+        if (c.value[net] === HI) got |= 1 << b;
+        // the output buffer must drive hard — the pull-up alone is WEAK,
+        // and reporting a weak level as data is how a real part fails
+        if (c.strength[net] !== STRONG) driven = false;
+      }
+      expect(c, `rom${bits} addr ${addr}`, got, words[addr]);
+      expect(c, `rom${bits} addr ${addr} driven`, driven, true);
+    }
+  }
+}
+{
+  // The sneak-path property. This pattern — two rows sharing a column, one
+  // a superset of the other — reads wrong on a bare switch matrix, because
+  // the selected row backfeeds through the unselected row's site. Isolated
+  // gates make it structurally impossible.
+  const words = [0b00, 0b01];
+  const Rom = romArray(words, 2, 1);
+  for (let addr = 0; addr < 2; addr++) {
+    const c = new Circuit('rom-sneak');
+    c.implicitGround = false;
+    const n = c.net();
+    const s = c.addSwitch('A0', n, 'toggle', 0, 0, { from: 0, to: 1 });
+    s.on = !!addr;
+    const inst = instantiate(c, Rom, 0, 0, { a0: n });
+    settle(c);
+    const got = (c.value[inst.nets.d1] === HI ? 2 : 0) | (c.value[inst.nets.d0] === HI ? 1 : 0);
+    expect(c, `no sneak path at addr ${addr}`, got, words[addr]);
+  }
+}
+{
+  // The library circuit reads back the ASCII it was programmed with.
+  const c = buildCircuit('rom8');
+  const text = 'LOGIC 42';
+  for (let addr = 0; addr < 8; addr++) {
+    for (let i = 0; i < 3; i++) sw(c, `A${i}`, !!((addr >> i) & 1));
+    settle(c);
+    let byte = 0;
+    for (let b = 0; b < 8; b++) if (lampV(c, `D${b}`) === HI) byte |= 1 << b;
+    expect(c, `rom8 addr ${addr} reads "${text[addr]}"`, byte, text.charCodeAt(addr));
+  }
 }
 
 // ── 4-bit ALU ────────────────────────────────────────────────────────────

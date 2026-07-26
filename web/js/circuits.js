@@ -9,6 +9,7 @@ import { Circuit, VCC, VDD, VSS } from './engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from './geometry.js';
 import { instantiate } from './module.js';
 import { Alu4, ALU_BITS } from './alu.js';
+import { romArray } from './rom.js';
 
 // ── small builder helpers ────────────────────────────────────────────────
 
@@ -940,6 +941,45 @@ function buildAlu4() {
   return c;
 }
 
+// An 8 x 8 mask ROM. The contents spell a short message in ASCII, so the
+// array holds something legible rather than arbitrary bytes — you can read
+// the pattern of transistors off the canvas and decode it by eye, which is
+// the charm of a mask ROM: the program is visible as physical structure.
+const ROM_WORDS = [...'LOGIC 42'].map(ch => ch.charCodeAt(0));
+
+function buildRom8() {
+  const c = new Circuit('Program ROM');
+  c.implicitGround = false;
+
+  const bind = {};
+  for (let i = 0; i < 3; i++) {
+    const n = c.net();
+    c.addSwitch(`A${i}`, n, 'toggle', 4, 6 + i * 5, { to: VSS });
+    bind[`a${i}`] = n;
+  }
+
+  const Rom = romArray(ROM_WORDS, 8, 3);
+  const inst = instantiate(c, Rom, 22, 0, bind);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yBot = b.y1 + 6;
+  w(c, VDD, [0, -14], [xEnd, -14]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, -14, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const s of c.switches) {
+    const t = switchSpdtT(s);
+    w(c, VDD, [2.4, -14], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`D${i}`, inst.nets[`d${i}`], xEnd - 5, 6 + i * 5, { short: `D${i}` });
+  }
+  return c;
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 export const CIRCUITS = [
@@ -987,6 +1027,13 @@ export const CIRCUITS = [
     desc: 'While EN is on, Q follows D through one path; when EN drops, a second path lets Q hold itself. Flip D with EN off — nothing happens until you open the gate.' },
   { id: 'reg4', group: 'Memory', name: '4-bit Register', build: buildRegister4,
     desc: 'Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it.' },
+  { id: 'rom8', group: 'Memory', name: 'Program ROM', build: buildRom8,
+    desc: 'A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.',
+    readout: v => {
+      const ch = v.D;
+      const glyph = ch >= 32 && ch < 127 ? String.fromCharCode(ch) : '·';
+      return `addr ${v.A} → ${ch} = 0x${ch.toString(16).toUpperCase().padStart(2, '0')} = "${glyph}"`;
+    } },
   { id: 'alu4', group: 'Arithmetic', name: '4-bit ALU', build: buildAlu4,
     desc: 'Six functions over two nibbles, chosen by F. Every function is computed at once and a transmission gate steers the selected one onto a shared result bus — one wire with six possible drivers, the way a CPU does it, not a mux tree per destination. 538 transistors, composed from gate modules rather than placed by hand. Codes 6 and 7 select nothing, and the bus floats.',
     readout: v => {

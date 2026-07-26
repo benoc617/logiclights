@@ -43,6 +43,7 @@ web/
   js/module.js        sub-circuit modules: named ports, local coordinates
   js/gates.js         reusable CMOS gates built on module.js
   js/alu.js           4-bit ALU, composed from gates.js
+  js/rom.js           NMOS mask ROM array + row decoder
   js/buses.js         groups switches/lamps into binary buses
   js/render.js        canvas renderer (pan/zoom, glow, LOD)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"
