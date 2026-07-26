@@ -25,8 +25,11 @@ what `Circuit.implicitGround` exists for.
 - [x] Live demo published as a Claude artifact
 - [x] Push to `benoc617/logiclights` main
 - [x] Device model: four-state solver, transistors, diodes, resistors
-- [ ] Confirm the Pages workflow goes green (it runs the tests first, then
-      self-enables Pages) → live at `https://benoc617.github.io/logiclights/`
+- [x] Pages enabled on the repo (`build_type=workflow`). The first two
+      deploy runs failed at `configure-pages`: `enablement: true` cannot
+      create a site from nothing, so it needed one manual API call. See
+      CLAUDE.md § Deploying → live at
+      `https://benoc617.github.io/logiclights/`
 - [ ] **Production `/lights`** on the puzzleboss stack: merge the infra
       branch in puzzleboss2-infra, `terraform apply`, build+push the ARM64
       image on the utility server, then set `lights_desired_count = 1`

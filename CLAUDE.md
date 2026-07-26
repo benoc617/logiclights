@@ -131,7 +131,17 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
 ## Deploying
 
 - **GitHub Pages** — push to `main`; `.github/workflows/pages.yml` runs the
-  tests and only deploys if they pass. It self-enables Pages.
+  tests and only deploys if they pass. Pages must already be enabled on the
+  repo: `configure-pages` has `enablement: true`, but that cannot bootstrap
+  a site from nothing — creating one needs `administration: write`, which
+  `GITHUB_TOKEN` is never granted no matter what the `permissions:` block
+  says, so the deploy job fails with "Resource not accessible by
+  integration". Enable it once per repo, then the workflow is self-
+  sufficient:
+
+  ```bash
+  gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow
+  ```
 - **puzzleboss infra (`/lights`)** — the Terraform lives in the
   [puzzleboss2-infra](https://github.com/bigjimmy/puzzleboss2-infra) repo
   (`lights` ECR repo, ECS service, ALB rule priority 13, health at
