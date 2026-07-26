@@ -1,8 +1,9 @@
-// Headless truth-table tests for the relay simulation.
+// Headless truth-table tests for the device simulation.
 // Run: node test/sim-test.mjs
 
 import { buildCircuit, CIRCUITS } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
+import { X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 
 let failures = 0;
 let checks = 0;
@@ -17,7 +18,7 @@ function settle(c) {
     c.step(clock);
   }
   if (guard >= 5000) throw new Error(`${c.name}: did not settle`);
-  c.computeHot();
+  c.solve();
 }
 
 function sw(c, label, on) {
@@ -240,6 +241,122 @@ testAdder('add8', 8);
     flips += c.step(clock);
   }
   expect(c, 'oscillator keeps running', flips >= 30, true);
+}
+
+// ── solid-state devices ──────────────────────────────────────────────────
+
+function lampV(c, label) {
+  const l = c.lamps.find(l => l.label === label || l.label.startsWith(label));
+  if (!l) throw new Error(`${c.name}: no lamp ${label}`);
+  return c.value[l.net];
+}
+function lampStr(c, label) {
+  const l = c.lamps.find(l => l.label === label || l.label.startsWith(label));
+  return c.strength[l.net];
+}
+const V = v => VALUE_CHAR[v];
+
+{
+  // N-channel conducts on a high gate, P-channel on a low one — and the
+  // resistor holds the other output down rather than letting it float
+  const c = buildCircuit('t101');
+  for (const g of [false, true]) {
+    sw(c, 'GATE', g); settle(c);
+    expect(c, `gate=${+g} NMOS`, V(lampV(c, 'N-channel')), g ? '1' : '0');
+    expect(c, `gate=${+g} PMOS`, V(lampV(c, 'P-channel')), g ? '0' : '1');
+  }
+}
+{
+  const c = buildCircuit('cmosinv');
+  for (const a of [false, true]) {
+    sw(c, 'IN', a); settle(c);
+    expect(c, `IN=${+a}`, V(lampV(c, 'OUT')), a ? '0' : '1');
+    // at rest exactly one of the pair conducts: never a short, never a float
+    expect(c, `IN=${+a} driven hard`, lampStr(c, 'OUT'), STRONG);
+  }
+}
+{
+  const c = buildCircuit('nmosinv');
+  for (const a of [false, true]) {
+    sw(c, 'IN', a); settle(c);
+    expect(c, `IN=${+a}`, V(lampV(c, 'OUT')), a ? '0' : '1');
+    // the load only ever drives weakly — the transistor always wins
+    expect(c, `IN=${+a} strength`, lampStr(c, 'OUT'), a ? STRONG : WEAK);
+  }
+}
+for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) => !(a || b)]]) {
+  const c = buildCircuit(id);
+  for (const a of [false, true]) for (const b of [false, true]) {
+    sw(c, 'A', a); sw(c, 'B', b); settle(c);
+    expect(c, `A=${+a} B=${+b}`, V(lampV(c, 'OUT')), fn(a, b) ? '1' : '0');
+    expect(c, `A=${+a} B=${+b} driven hard`, lampStr(c, 'OUT'), STRONG);
+  }
+}
+{
+  // diodes conduct one way only: OR under a pull-down, AND under a pull-up
+  const c = buildCircuit('diode');
+  for (const a of [false, true]) for (const b of [false, true]) {
+    sw(c, 'A', a); sw(c, 'B', b); settle(c);
+    expect(c, `A=${+a} B=${+b} OR`, V(lampV(c, 'A OR B')), (a || b) ? '1' : '0');
+    expect(c, `A=${+a} B=${+b} AND`, V(lampV(c, 'A AND B')), (a && b) ? '1' : '0');
+  }
+}
+{
+  // a pass-gate pair carries a full 0 and a full 1 in either direction
+  const c = buildCircuit('tgate');
+  for (const s of [false, true]) for (const a of [false, true]) for (const b of [false, true]) {
+    sw(c, 'SEL', s); sw(c, 'A', a); sw(c, 'B', b); settle(c);
+    const want = s ? b : a;
+    expect(c, `SEL=${+s} A=${+a} B=${+b}`, V(lampV(c, 'OUT')), want ? '1' : '0');
+    expect(c, `SEL=${+s} A=${+a} B=${+b} not floating`, lampStr(c, 'OUT'), STRONG);
+  }
+}
+{
+  // the whole point of a bus: driven, floating, or fought over
+  const c = buildCircuit('tristate');
+  settle(c);
+  expect(c, 'never driven, so floating', V(lampV(c, 'BUS')), 'Z');
+
+  sw(c, 'D1', true); sw(c, 'EN1', true); settle(c);
+  expect(c, 'driver 1 enabled', V(lampV(c, 'BUS')), '1');
+  expect(c, 'driver 1 drives hard', lampStr(c, 'BUS'), STRONG);
+
+  sw(c, 'EN1', false); settle(c);
+  expect(c, 'released, charge holds the 1', V(lampV(c, 'BUS')), '1');
+  expect(c, 'held on capacitance, not driven', lampStr(c, 'BUS'), CHARGE);
+
+  sw(c, 'D2', false); sw(c, 'EN2', true); settle(c);
+  expect(c, 'driver 2 pulls it back down', V(lampV(c, 'BUS')), '0');
+
+  sw(c, 'EN1', true); sw(c, 'D1', true); settle(c);
+  expect(c, 'both drivers disagree — contention', V(lampV(c, 'BUS')), 'X');
+
+  sw(c, 'D1', false); settle(c);
+  expect(c, 'both drivers agree — no contention', V(lampV(c, 'BUS')), '0');
+
+  sw(c, 'EN1', false); sw(c, 'EN2', false); settle(c);
+  expect(c, 'released again, holds the 0', V(lampV(c, 'BUS')), '0');
+}
+{
+  // one gate, three technologies, one truth table
+  const c = buildCircuit('tech3');
+  for (const a of [false, true]) for (const b of [false, true]) {
+    sw(c, 'A', a); sw(c, 'B', b); settle(c);
+    const want = !(a && b) ? '1' : '0';
+    for (const tech of ['relay', 'NMOS', 'CMOS']) {
+      expect(c, `A=${+a} B=${+b} ${tech}`, V(lampV(c, tech)), want);
+    }
+  }
+}
+{
+  // relay circuits keep the one-rail model: nothing floats, nothing contends
+  for (const id of ['add8', 'reg4', 'addsub4', 'dec24']) {
+    const c = buildCircuit(id);
+    settle(c);
+    let bad = 0;
+    for (let n = 0; n < c.netCount; n++) if (c.value[n] === X || c.value[n] === Z) bad++;
+    expect(c, `${id}: no X or Z under implicit ground`, bad, 0);
+  }
 }
 
 // ── binary I/O buses ─────────────────────────────────────────────────────

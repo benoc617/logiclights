@@ -1,15 +1,25 @@
 # ⚡ Logic Lights
 
-Logic circuits the way they were built before transistors: **relays**. Pick a
-circuit — from a single relay up through gates, latches, registers and ripple
-adders — flip the input switches, and watch (and hear) the signal click its
-way through the machine. Every wire is a light: amber means energized.
+How logic is actually built, from armatures to CMOS. Pick a circuit — a
+single relay, a two-transistor inverter, a tri-state bus, an 8-bit ripple
+adder — flip the input switches, and watch (and hear) the signal make its
+way through the machine. Every wire is a light: amber means driven high.
 
-- **Authentic simulation** — no gate abstractions. Nets conduct through relay
-  contacts from the + rail, exactly like a relay rack (conduction is
-  undirected; the circuits are designed sneak-path-free). Coils pull in after
-  a configurable mechanical delay, so you can *see* a carry ripple across an
-  adder and *hear* the armatures clack.
+- **Authentic simulation** — no gate abstractions. Everything is nets and
+  devices, solved at switch level: relay contacts, MOSFET channels, diodes
+  and resistors, with conduction undirected exactly like the real things
+  (the circuits are designed sneak-path-free). Devices switch after a
+  configurable delay, so you can *see* a carry ripple across an adder and
+  *hear* the armatures clack.
+- **Four-state nets** — `0` and `1`, but also `Z` for a floating wire
+  (drawn dashed, holding its last value on stored charge) and `X` for
+  contention (drawn red). Those are the two ways real circuits fail, and a
+  simulator that can't show them will tell you a broken design works.
+- **Relays *and* transistors** — the same solver runs both, because they are
+  the same thing: an isolated control terminal working a bidirectional
+  switch. *Three Technologies* builds one NAND gate three ways from the same
+  two inputs, and the CMOS output lands while the armatures are still
+  travelling.
 - **Binary I/O table** — every input is grouped into a named bus (A, B, Cin
   …) you can drive by tapping bits or typing binary, instead of hunting for
   switches on the canvas. Outputs and interesting internal buses (the carry
@@ -18,16 +28,20 @@ way through the machine. Every wire is a light: amber means energized.
 - **Zoom & pan** — pinch/scroll from single-contact detail out to a whole
   machine on one tablet screen.
 - **Circuit library** — Meet the Relay, Buzzer, Ring Oscillator; NOT / AND /
-  OR / XOR / NAND / NOR; 2-to-4 Decoder; SR Latch, D Latch, 4-bit Register;
-  Half/Full Adder, 4-bit & 8-bit Ripple Adders, 4-bit Adder/Subtractor
-  (two's complement).
+  OR / XOR / NAND / NOR; 2-to-4 Decoder; Meet the Transistor, CMOS Inverter
+  / NAND / NOR, NMOS Inverter, Diode Logic, Transmission Gate, Tri-State
+  Bus, Three Technologies; SR Latch, D Latch, 4-bit Register; Half/Full
+  Adder, 4-bit & 8-bit Ripple Adders, 4-bit Adder/Subtractor (two's
+  complement).
 
 No frameworks, no build step: vanilla ES modules + canvas.
 
 **Docs:** [CLAUDE.md](CLAUDE.md) — conventions and gotchas for working in
-this repo · [docs/DESIGN.md](docs/DESIGN.md) — how the simulation, circuit
-topologies and renderer work · [docs/ROADMAP.md](docs/ROADMAP.md) — the
-plan and open TODOs.
+this repo · [docs/DEVICES.md](docs/DEVICES.md) — the device model and the
+switch-level solver · [docs/DESIGN.md](docs/DESIGN.md) — how the circuit
+topologies and renderer work · [docs/4004.md](docs/4004.md) — the plan for
+building a 4004 · [docs/ROADMAP.md](docs/ROADMAP.md) — the queue and open
+TODOs.
 
 ## Run it
 
@@ -52,7 +66,8 @@ with `readout: v => ...`.
 
 Full truth-table verification of every circuit (all 131k+ adder input
 combinations, latch sequences, oscillator dynamics) plus bus grouping,
-one-hot decoding, and two's-complement readouts:
+one-hot decoding, two's-complement readouts, and the four-state device
+behaviour — drive strength, floating nets, and bus contention:
 
 ```bash
 node test/sim-test.mjs
@@ -79,8 +94,8 @@ node test/sim-test.mjs
 
 ## Roadmap
 
-- Bigger machines: ALU, memory unit with address decoding … an Intel 8008,
-  relay by relay.
+- Bigger machines: ALU, memory unit with address decoding … an Intel 4004,
+  device by device. See [docs/4004.md](docs/4004.md).
 - Build-your-own-circuit editor, saving creations alongside the examples.
 - iOS app.
 
@@ -91,3 +106,19 @@ staircase — the same trick as a hallway light with switches at both ends,
 chained three deep, computing parity. The **carry** is a majority vote:
 three series contact pairs (A·B, B·Cin, A·Cin) in parallel. Chain four or
 eight cells carry-to-carry and you have arithmetic you can watch happen.
+
+## Why a relay and a transistor are the same circuit
+
+A relay coil is galvanically isolated from its contacts; a MOSFET gate has
+no DC path to its channel. Both work a switch that conducts in either
+direction. So an NO contact is an NMOS, an NC contact is a PMOS — and a
+relay's SPDT changeover is exactly a complementary pair, which is to say a
+CMOS inverter.
+
+The difference that matters is what happens when the switch is *off*. A
+relay circuit's lamp returns through a ground nobody drew, so an unfed net
+is simply dark. A transistor that turns off doesn't pull its output
+anywhere — it just lets go, and the net floats. That is why the solver
+needs four states instead of two, why every device circuit here wires both
+rails, and why *Tri-State Bus* is worth playing with: it is the one thing a
+relay rack cannot do, and it is what lets a CPU have buses.

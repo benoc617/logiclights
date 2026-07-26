@@ -5,7 +5,8 @@
 // undirected, so these topologies are designed sneak-path-free, like the
 // real thing.
 
-import { Circuit, VCC } from './engine.js';
+import { Circuit, VCC, VDD, VSS } from './engine.js';
+import { MOS_H, MOS_GATE, switchSpdtT } from './geometry.js';
 
 // ── small builder helpers ────────────────────────────────────────────────
 
@@ -563,6 +564,327 @@ function buildAddSub4() {
   return c;
 }
 
+// ── Solid state ──────────────────────────────────────────────────────────
+//
+// Everything below wires both rails explicitly and turns off the implicit
+// ground, so a net that nothing drives really does float. That is what makes
+// Z (floating) and X (two sources fighting) visible instead of silently
+// reading as zero — and a missing pull-up becomes a bug you can see.
+
+// Two rails plus a column of changeover inputs down the left. The inputs are
+// changeovers, not simple make contacts: a MOS gate must be driven both ways,
+// and leaving one floating is a fault, not an input state.
+function mosScaffold(c, xEnd, yTop, yBot, inputs) {
+  c.implicitGround = false;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.3, yTop, 1.1, '#ffb340');
+  c.label('GND', -1.9, yBot, 1.1, '#7f8aa3');
+  const nets = {};
+  for (const [label, y] of inputs) {
+    const n = c.net();
+    nets[label] = n;
+    const s = c.addSwitch(label, n, 'toggle', 4.2, y, { to: VSS });
+    const t = switchSpdtT(s);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+  return nets;
+}
+
+// A CMOS inverter in one column: PMOS pulls up, NMOS pulls down, and exactly
+// one of them is ever on. Returns the gate spine so callers can tap it.
+function cmosInv(c, tag, inNet, outNet, x, yTop, yBot) {
+  const yP = yTop + 2, yN = yBot - 4.4;
+  c.addTransistor(`${tag}p`, 'pmos', inNet, VDD, outNet, x, yP);
+  c.addTransistor(`${tag}n`, 'nmos', inNet, outNet, VSS, x, yN);
+  w(c, VDD, [x, yTop], [x, yP]);
+  w(c, outNet, [x, yP + MOS_H], [x, yN]);
+  w(c, VSS, [x, yN + MOS_H], [x, yBot]);
+  const gx = x - MOS_GATE;
+  w(c, inNet, [gx, yP + MOS_H / 2], [gx, yN + MOS_H / 2]);
+  return { gx, gyP: yP + MOS_H / 2, gyN: yN + MOS_H / 2 };
+}
+
+function buildTransistor101() {
+  const c = new Circuit('Meet the Transistor');
+  const yTop = 0, yBot = 15;
+  const { GATE } = mosScaffold(c, 32, yTop, yBot, [['GATE', 7.5]]);
+
+  // N-channel: the gate attracts a conducting channel when it goes high.
+  const outN = c.net();
+  c.addTransistor('N1', 'nmos', GATE, VDD, outN, 13, 2);
+  c.addResistor('R1', outN, VSS, 13, 9.6, { vert: true });
+  w(c, VDD, [13, yTop], [13, 2]);
+  w(c, outN, [13, 4.4], [13, 8.4]);
+  w(c, VSS, [13, 10.8], [13, yBot]);
+  w(c, outN, [13, 6], [18, 6]);
+  c.addLamp('N-channel', outN, 18, 6, { short: 'NMOS' });
+
+  // P-channel: the exact complement, on when the gate is low.
+  const outP = c.net();
+  c.addTransistor('P1', 'pmos', GATE, VDD, outP, 24, 2);
+  c.addResistor('R2', outP, VSS, 24, 9.6, { vert: true });
+  w(c, VDD, [24, yTop], [24, 2]);
+  w(c, outP, [24, 4.4], [24, 8.4]);
+  w(c, VSS, [24, 10.8], [24, yBot]);
+  w(c, outP, [24, 6], [29, 6]);
+  c.addLamp('P-channel', outP, 29, 6, { short: 'PMOS' });
+
+  // one gate signal, both devices
+  w(c, GATE, [5.2, 7.5], [11.5, 7.5], [11.5, 3.2]);
+  w(c, GATE, [11.5, 7.5], [22.5, 7.5], [22.5, 3.2]);
+  c.label('pull-down', 16.6, 9.6, 0.8);
+  c.label('pull-down', 27.6, 9.6, 0.8);
+  return c;
+}
+
+function buildCmosInverter() {
+  const c = new Circuit('CMOS Inverter');
+  const yTop = 0, yBot = 14;
+  const { IN } = mosScaffold(c, 24, yTop, yBot, [['IN', 6.6]]);
+  const out = c.net();
+  const g = cmosInv(c, 'K', IN, out, 14, yTop, yBot);
+  w(c, IN, [5.2, 6.6], [g.gx, 6.6]);
+  w(c, out, [14, 6.6], [20, 6.6]);
+  c.addLamp('OUT', out, 20, 6.6);
+  return c;
+}
+
+function buildCmosNand() {
+  const c = new Circuit('CMOS NAND');
+  const yTop = 0, yBot = 20;
+  const { A, B } = mosScaffold(c, 28, yTop, yBot, [['A', 5], ['B', 9]]);
+  const out = c.net(), mid = c.net();
+  // pull-up network: PMOS in parallel, so either input low lifts the output
+  c.addTransistor('PA', 'pmos', A, VDD, out, 14, 2);
+  c.addTransistor('PB', 'pmos', B, VDD, out, 21, 2);
+  w(c, VDD, [14, yTop], [14, 2]);
+  w(c, VDD, [21, yTop], [21, 2]);
+  w(c, out, [14, 4.4], [14, 11]);
+  w(c, out, [21, 4.4], [21, 5.6], [14, 5.6]);
+  // pull-down network: NMOS in series, so only both high pulls it down
+  c.addTransistor('NA', 'nmos', A, out, mid, 14, 11);
+  c.addTransistor('NB', 'nmos', B, mid, VSS, 14, 15.6);
+  w(c, mid, [14, 13.4], [14, 15.6]);
+  w(c, VSS, [14, 18], [14, yBot]);
+  w(c, A, [5.2, 5], [12.5, 5]);
+  w(c, A, [12.5, 3.2], [12.5, 12.2]);
+  w(c, B, [5.2, 9], [10, 9]);
+  w(c, B, [10, 9], [10, 16.8], [12.5, 16.8]);
+  w(c, B, [10, 9], [10, 0.9], [19.5, 0.9], [19.5, 3.2]);
+  w(c, out, [14, 8], [24, 8]);
+  c.addLamp('OUT', out, 24, 8);
+  return c;
+}
+
+function buildCmosNor() {
+  const c = new Circuit('CMOS NOR');
+  const yTop = 0, yBot = 20;
+  const { A, B } = mosScaffold(c, 30, yTop, yBot, [['A', 5], ['B', 10]]);
+  const out = c.net(), pmid = c.net();
+  // the dual of NAND: PMOS in series, NMOS in parallel
+  c.addTransistor('PA', 'pmos', A, VDD, pmid, 14, 2);
+  c.addTransistor('PB', 'pmos', B, pmid, out, 14, 6.6);
+  c.addTransistor('NA', 'nmos', A, out, VSS, 14, 13);
+  c.addTransistor('NB', 'nmos', B, out, VSS, 21, 13);
+  w(c, VDD, [14, yTop], [14, 2]);
+  w(c, pmid, [14, 4.4], [14, 6.6]);
+  w(c, out, [14, 9], [14, 13]);
+  w(c, out, [14, 11], [21, 11], [21, 13]);
+  w(c, VSS, [14, 15.4], [14, yBot]);
+  w(c, VSS, [21, 15.4], [21, yBot]);
+  w(c, A, [5.2, 5], [9, 5]);
+  w(c, A, [9, 3.2], [9, 14.2]);
+  w(c, A, [9, 3.2], [12.5, 3.2]);
+  w(c, A, [9, 14.2], [12.5, 14.2]);
+  w(c, B, [5.2, 10], [7, 10]);
+  w(c, B, [7, 7.8], [7, 17.5]);
+  w(c, B, [7, 7.8], [12.5, 7.8]);
+  w(c, B, [7, 17.5], [19.5, 17.5], [19.5, 14.2]);
+  w(c, out, [14, 10], [26, 10]);
+  c.addLamp('OUT', out, 26, 10);
+  return c;
+}
+
+function buildNmosInverter() {
+  const c = new Circuit('NMOS Inverter');
+  const yTop = 0, yBot = 15;
+  const { IN } = mosScaffold(c, 24, yTop, yBot, [['IN', 6]]);
+  const out = c.net();
+  // A resistor load instead of a PMOS: it only ever drives weakly, so the
+  // transistor wins whenever it is on — and burns current the whole time.
+  c.addResistor('RL', VDD, out, 14, 3, { vert: true });
+  c.addTransistor('N1', 'nmos', IN, out, VSS, 14, 8);
+  w(c, VDD, [14, yTop], [14, 1.8]);
+  w(c, out, [14, 4.2], [14, 8]);
+  w(c, VSS, [14, 10.4], [14, yBot]);
+  w(c, IN, [5.2, 6], [12.5, 6], [12.5, 9.2]);
+  w(c, out, [14, 6], [20, 6]);
+  c.addLamp('OUT', out, 20, 6);
+  c.label('load', 16.4, 3, 0.8);
+  return c;
+}
+
+function buildDiodeLogic() {
+  const c = new Circuit('Diode Logic');
+  const yTop = 0, yBot = 17;
+  const { A, B } = mosScaffold(c, 34, yTop, yBot, [['A', 4], ['B', 8]]);
+  const orOut = c.net(), andOut = c.net();
+
+  // OR: a diode can only push a 1 forward, so the output follows whichever
+  // input is high; the resistor holds it down when neither is.
+  c.addDiode('D1', A, orOut, 13, 4);
+  c.addDiode('D2', B, orOut, 13, 8);
+  c.addResistor('R1', orOut, VSS, 15.5, 12, { vert: true });
+  w(c, A, [5.2, 4], [12.1, 4]);
+  w(c, B, [5.2, 8], [12.1, 8]);
+  w(c, orOut, [13.9, 4], [15.5, 4], [15.5, 10.8]);
+  w(c, orOut, [13.9, 8], [15.5, 8]);
+  w(c, VSS, [15.5, 13.2], [15.5, yBot]);
+  w(c, orOut, [15.5, 6], [20, 6]);
+  c.addLamp('A OR B', orOut, 20, 6, { short: 'OR' });
+
+  // AND: the diodes point the other way, so any low input drags the output
+  // down through them; the pull-up only wins when every input is high.
+  c.addResistor('R2', VDD, andOut, 26, 2.5, { vert: true });
+  c.addDiode('D3', andOut, A, 26, 6, { vert: true });
+  c.addDiode('D4', andOut, B, 29, 6, { vert: true });
+  w(c, VDD, [26, yTop], [26, 1.3]);
+  w(c, andOut, [26, 3.7], [26, 5.1]);
+  w(c, andOut, [26, 4.4], [29, 4.4], [29, 5.1]);
+  w(c, A, [8, 4], [8, 13.5], [26, 13.5], [26, 6.9]);
+  w(c, B, [10, 8], [10, 15.2], [29, 15.2], [29, 6.9]);
+  w(c, andOut, [29, 4.4], [32, 4.4]);
+  c.addLamp('A AND B', andOut, 32, 4.4, { short: 'AND' });
+  return c;
+}
+
+function buildTransmissionGate() {
+  const c = new Circuit('Transmission Gate');
+  const yTop = 0, yBot = 18;
+  const { A, B, SEL } = mosScaffold(c, 36, yTop, yBot, [['A', 3], ['B', 11.4], ['SEL', 15]]);
+  const nsel = c.net(), out = c.net();
+  const g = cmosInv(c, 'I', SEL, nsel, 12, yTop, yBot);
+  w(c, SEL, [5.2, 15], [g.gx, 15], [g.gx, g.gyN]);
+
+  // Two pass gates, each an NMOS and a PMOS in parallel so the pair carries
+  // a full 0 and a full 1. Complementary enables: exactly one is ever open.
+  c.addTransistor('N1', 'nmos', nsel, A, out, 20, 3);
+  c.addTransistor('P1', 'pmos', SEL, A, out, 26, 3);
+  c.addTransistor('N2', 'nmos', SEL, out, B, 20, 9);
+  c.addTransistor('P2', 'pmos', nsel, out, B, 26, 9);
+  w(c, A, [5.2, 3], [26, 3]);
+  w(c, out, [20, 5.4], [20, 9]);
+  w(c, out, [26, 5.4], [26, 9]);
+  w(c, out, [20, 6.5], [26, 6.5]);
+  w(c, B, [5.2, 11.4], [26, 11.4]);
+  w(c, out, [26, 6.5], [32, 6.5]);
+  c.addLamp('OUT', out, 32, 6.5);
+
+  // gate routing: SEL to P1 and N2, /SEL to N1 and P2 — the crossover is
+  // what makes exactly one gate open for either value of SEL
+  w(c, SEL, [g.gx, g.gyP], [g.gx, 1.5], [17.2, 1.5]);
+  w(c, SEL, [17.2, 1.5], [17.2, 10.2], [18.5, 10.2]);
+  w(c, SEL, [17.2, 1.5], [24.5, 1.5], [24.5, 4.2]);
+  w(c, nsel, [12, 7.4], [15.8, 7.4], [15.8, 4.2], [18.5, 4.2]);
+  w(c, nsel, [15.8, 7.4], [15.8, 12.8], [22.8, 12.8], [22.8, 10.2], [24.5, 10.2]);
+  return c;
+}
+
+function buildTriState() {
+  const c = new Circuit('Tri-State Bus');
+  const yTop = 0, yBot = 20;
+  const { D1, EN1, D2, EN2 } = mosScaffold(c, 42, yTop, yBot,
+    [['D1', 3], ['EN1', 7], ['D2', 13.4], ['EN2', 17]]);
+  const nen1 = c.net(), nen2 = c.net(), bus = c.net();
+  cmosInv(c, 'A', EN1, nen1, 13, yTop, yBot);
+  cmosInv(c, 'B', EN2, nen2, 19, yTop, yBot);
+  w(c, EN1, [5.2, 7], [11.5, 7]);
+  w(c, EN2, [5.2, 17], [17.5, 17]);
+
+  // Two pass gates onto one shared net. Nothing arbitrates: whether the bus
+  // ends up driven, floating or contended is entirely up to the enables.
+  c.addTransistor('N1', 'nmos', EN1, D1, bus, 28, 3);
+  c.addTransistor('P1', 'pmos', nen1, D1, bus, 33, 3);
+  c.addTransistor('N2', 'nmos', EN2, bus, D2, 28, 11);
+  c.addTransistor('P2', 'pmos', nen2, bus, D2, 33, 11);
+  w(c, D1, [5.2, 3], [33, 3]);
+  w(c, bus, [28, 5.4], [28, 11]);
+  w(c, bus, [33, 5.4], [33, 11]);
+  w(c, bus, [28, 8], [33, 8]);
+  w(c, D2, [5.2, 13.4], [33, 13.4]);
+  w(c, bus, [33, 8], [39, 8]);
+  c.addLamp('BUS', bus, 39, 8);
+
+  w(c, EN1, [11.5, 16.8], [11.5, 18.6], [26.5, 18.6], [26.5, 4.2]);
+  w(c, nen1, [13, 5], [15, 5], [15, 1], [31.5, 1], [31.5, 4.2]);
+  w(c, EN2, [17.5, 12.2], [26.5, 12.2]);
+  w(c, nen2, [19, 14], [21.4, 14], [21.4, 9.6], [31.5, 9.6], [31.5, 12.2]);
+  return c;
+}
+
+function buildThreeTech() {
+  const c = new Circuit('Three Technologies');
+  const yTop = 0, yBot = 19;
+  const { A, B } = mosScaffold(c, 50, yTop, yBot, [['A', 15.4], ['B', 17.2]]);
+  const rout = c.net(), nout = c.net(), nmid = c.net();
+  const cout = c.net(), cmid = c.net();
+
+  // Relay: two normally-closed contacts in parallel. Either coil at rest
+  // completes the path, so the output is low only when both pull in.
+  relay(c, 'K1', A, 11, 2, [{ c: VDD, no: null, nc: rout }]);
+  relay(c, 'K2', B, 11, 8, [{ c: VDD, no: null, nc: rout }]);
+  c.addResistor('R0', rout, VSS, 17, 14, { vert: true });
+  w(c, VDD, [9, yTop], [9, 10.6], [11, 10.6]);
+  w(c, VDD, [9, 4.6], [11, 4.6]);
+  w(c, rout, [15, 4], [17, 4], [17, 12.8]);
+  w(c, rout, [15, 10], [17, 10]);
+  w(c, VSS, [17, 15.2], [17, yBot]);
+  w(c, rout, [17, 6.5], [20, 6.5]);
+  c.addLamp('relay', rout, 20, 6.5, { short: 'RELAY' });
+
+  // NMOS: same pull-down network, but the pull-up is a plain resistor, so a
+  // low output is a permanent short from the rail through the load.
+  c.addResistor('RL', VDD, nout, 28, 2.5, { vert: true });
+  c.addTransistor('NA', 'nmos', A, nout, nmid, 28, 6);
+  c.addTransistor('NB', 'nmos', B, nmid, VSS, 28, 10);
+  w(c, VDD, [28, yTop], [28, 1.3]);
+  w(c, nout, [28, 3.7], [28, 6]);
+  w(c, nmid, [28, 8.4], [28, 10]);
+  w(c, VSS, [28, 12.4], [28, yBot]);
+  w(c, nout, [28, 5], [32, 5]);
+  c.addLamp('NMOS', nout, 32, 5);
+
+  // CMOS: the resistor becomes a second transistor network, the exact
+  // complement of the first. No path from rail to rail, ever.
+  c.addTransistor('PA', 'pmos', A, VDD, cout, 40, 2);
+  c.addTransistor('PB', 'pmos', B, VDD, cout, 46, 2);
+  c.addTransistor('CA', 'nmos', A, cout, cmid, 40, 8);
+  c.addTransistor('CB', 'nmos', B, cmid, VSS, 40, 12);
+  w(c, VDD, [40, yTop], [40, 2]);
+  w(c, VDD, [46, yTop], [46, 2]);
+  w(c, cout, [40, 4.4], [40, 8]);
+  w(c, cout, [46, 4.4], [46, 5.6], [40, 5.6]);
+  w(c, cmid, [40, 10.4], [40, 12]);
+  w(c, VSS, [40, 14.4], [40, yBot]);
+  w(c, cout, [40, 7], [43, 7]);
+  c.addLamp('CMOS', cout, 43, 7);
+
+  // A and B run as spines under the whole rack and tap up into each column
+  w(c, A, [5.2, 15.4], [37, 15.4]);
+  w(c, A, [7.2, 15.4], [7.2, 2.8], [11, 2.8]);      // K1 coil
+  w(c, A, [24, 15.4], [24, 7.2], [26.5, 7.2]);      // NA gate
+  w(c, A, [37, 15.4], [37, 3.2], [38.5, 3.2]);      // PA gate
+  w(c, A, [37, 9.2], [38.5, 9.2]);                  // CA gate
+  w(c, B, [5.2, 17.2], [44.5, 17.2]);
+  w(c, B, [8.4, 17.2], [8.4, 8.8], [11, 8.8]);      // K2 coil
+  w(c, B, [22.6, 17.2], [22.6, 11.2], [26.5, 11.2]); // NB gate
+  w(c, B, [36, 17.2], [36, 13.2], [38.5, 13.2]);    // CB gate
+  w(c, B, [44.5, 17.2], [44.5, 3.2]);               // PB gate
+  return c;
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 export const CIRCUITS = [
@@ -586,6 +908,24 @@ export const CIRCUITS = [
     desc: 'Series normally-closed contacts: on only when both relays are at rest.' },
   { id: 'dec24', group: 'Gates', name: '2-to-4 Decoder', build: buildDecoder,
     desc: 'A contact tree: relay A splits the current two ways, relay B splits each again. Two inputs select exactly one of four lamps — this is how addresses select memory rows.' },
+  { id: 't101', group: 'Solid State', name: 'Meet the Transistor', build: buildTransistor101,
+    desc: 'A MOSFET is a relay with no moving parts: the gate is isolated from the channel exactly like a coil is isolated from its contacts. N-channel conducts when the gate is high, P-channel when it is low — the two throws of a relay, split into two devices. Each output needs a resistor to hold it down, because a transistor that is off does not pull anything low; it just lets go.' },
+  { id: 'cmosinv', group: 'Solid State', name: 'CMOS Inverter', build: buildCmosInverter,
+    desc: 'Two transistors, and the whole of CMOS in miniature: the P-channel pulls the output up, the N-channel pulls it down, and the input turns exactly one of them on. Slow the clock right down and watch the handover — for a moment both are on (a red X, a dead short through the pair) or both are off (a dashed Z, the output floating on its own charge). Real chips fight both.' },
+  { id: 'cmosnand', group: 'Solid State', name: 'CMOS NAND', build: buildCmosNand,
+    desc: 'Four transistors. The pull-down network is the logic — two N-channels in series, so both inputs must be high to reach ground — and the pull-up is its exact complement, two P-channels in parallel. Every static CMOS gate is built this way, and the pull-up is always the dual of the pull-down.' },
+  { id: 'cmosnor', group: 'Solid State', name: 'CMOS NOR', build: buildCmosNor,
+    desc: 'The mirror image of NAND: series P-channels above, parallel N-channels below. Swap series for parallel in both networks and the gate inverts — which is why NAND and NOR come in pairs and why either one alone can build a computer.' },
+  { id: 'nmosinv', group: 'Solid State', name: 'NMOS Inverter', build: buildNmosInverter,
+    desc: 'How it was done before CMOS, and how the 4004 itself was built: one transistor and a resistor load. It works — but the load only ever drives weakly, so whenever the output is low there is a permanent path from the rail to ground. That static current is why early chips ran hot and why the second transistor was worth adding.' },
+  { id: 'diode', group: 'Solid State', name: 'Diode Logic', build: buildDiodeLogic,
+    desc: 'The one directional device here: a diode passes a 1 forward and a 0 backward, and blocks the other way. Point them one way with a pull-down and you get OR; turn them around under a pull-up and you get AND. No transistors at all — but also no gain, so the output is weaker than the input and these cannot be chained. That is exactly why amplifying devices had to be invented.' },
+  { id: 'tgate', group: 'Solid State', name: 'Transmission Gate', build: buildTransmissionGate,
+    desc: 'An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors.' },
+  { id: 'tristate', group: 'Solid State', name: 'Tri-State Bus', build: buildTriState,
+    desc: 'Two drivers, one shared wire, and nothing to arbitrate. Enable one and the bus follows it. Enable neither and the bus floats — dashed Z, holding its last value on stray capacitance until it leaks away. Enable both with different data and they fight: a red X, a rail-to-rail short. This is the thing relays cannot do, and it is what lets a CPU have buses instead of a multiplexer tree for every destination.' },
+  { id: 'tech3', group: 'Solid State', name: 'Three Technologies', build: buildThreeTech,
+    desc: 'One NAND gate, built three ways from the same two inputs: two relays, two transistors and a resistor, then four transistors. Same truth table, same lamps, wildly different machines — and the CMOS output lands while the armatures are still travelling.' },
   { id: 'srlatch', group: 'Memory', name: 'SR Latch', build: buildSrLatch,
     desc: 'Tap SET and the relay feeds its own coil through its own contact — it remembers. RESET breaks the hold path. One bit of memory.' },
   { id: 'dlatch', group: 'Memory', name: 'D Latch', build: buildDLatch,

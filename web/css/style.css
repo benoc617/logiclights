@@ -229,6 +229,18 @@ footer {
   border-color: #c98c2c;
   color: #ffd67f;
 }
+/* four-state outputs: X is two sources fighting, Z is nothing driving */
+.bit.bad {
+  background: #4d1a16;
+  border-color: #ff5347;
+  color: #ff9c90;
+}
+.bit.float {
+  background: #1b2133;
+  border-style: dashed;
+  border-color: #55618a;
+  color: #7d89b3;
+}
 
 .bin {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

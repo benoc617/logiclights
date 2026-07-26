@@ -4,14 +4,17 @@ Guidance for Claude Code working in the Logic Lights repo.
 
 ## What this is
 
-An interactive web app that shows logic circuits **implemented in relays** —
-lights on every wire, visible propagation delay, optional click sounds. It
-runs from a single gate up to an 8-bit ripple adder today; the long arc is
-an entire Intel 8008 plus a build-your-own-circuit editor (see
-[docs/ROADMAP.md](docs/ROADMAP.md)).
+An interactive web app showing how logic is actually built out of physical
+devices — **relays, then transistors** — with lights on every wire, visible
+propagation delay, and optional click sounds. It runs from a single relay,
+through CMOS gates and a tri-state bus, up to an 8-bit ripple adder today;
+the long arc is an Intel 4004 plus a build-your-own-circuit editor (see
+[docs/ROADMAP.md](docs/ROADMAP.md) and [docs/4004.md](docs/4004.md)).
 
-Design and rationale live in [docs/DESIGN.md](docs/DESIGN.md) — read it
-before changing the simulation core or adding a large circuit.
+Read [docs/DEVICES.md](docs/DEVICES.md) before touching `engine.js` — it
+documents the four-state switch-level solver, the two flood rules that are
+easy to get wrong, and the deliberate simplifications. Design and rationale
+for everything else live in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Hard rules
 
@@ -20,12 +23,13 @@ before changing the simulation core or adding a large circuit.
    framework is out. This is what lets the app ship as a GitHub Pages site,
    an nginx container, and a single inlined HTML file simultaneously.
 2. **`node test/sim-test.mjs` must pass before every commit.** It is the
-   only guard on circuit correctness — the relay topologies are hand-wired
-   and a one-character slip produces a plausible-looking circuit that adds
-   wrong. Add cases for whatever you change.
+   only guard on circuit correctness — the topologies are hand-wired and a
+   one-character slip produces a plausible-looking circuit that adds wrong.
+   Add cases for whatever you change.
 3. **Circuits are simulated, never faked.** No shortcut that computes a
-   gate's output arithmetically. Everything is nets, contacts and coils; if
-   it lights up, current actually reached it.
+   gate's output arithmetically. Everything is nets, channels, contacts and
+   coils; if it lights up, current actually reached it. A reference model
+   used as a test oracle is fine — in `test/` only, never in the app.
 
 ## Layout
 
@@ -33,7 +37,7 @@ before changing the simulation core or adding a large circuit.
 web/
   index.html          UI shell
   css/style.css       all styling (orientation-aware, see below)
-  js/engine.js        Circuit: nets, relays, switches, lamps, timing
+  js/engine.js        Circuit: nets, devices, four-state solver, timing
   js/geometry.js      symbol geometry shared by builders and renderer
   js/circuits.js      the circuit library + registry (CIRCUITS)
   js/buses.js         groups switches/lamps into binary buses
@@ -46,19 +50,42 @@ nginx.conf            with /lights/health for the ALB health check
 .github/workflows/    tests + GitHub Pages deploy on push to main
 ```
 
+## The device model in one paragraph
+
+Net 0 is **VDD**, net 1 is **VSS**. Nets resolve to `0`, `1`, `Z`
+(floating) or `X` (contention) at a strength of strong / weak / stored
+charge. Relays and transistors are the same thing wearing different clothes
+— an isolated control terminal working a bidirectional switch — so
+`addRelay` and `addTransistor` share one solver and one delay scheduler.
+Diodes are the only directional device. Full detail in
+[docs/DEVICES.md](docs/DEVICES.md).
+
 ## Adding a circuit
 
 1. Write a `buildX()` in `circuits.js` returning a `Circuit`. Use `c.net()`
-   for signals, `relay()`, `c.addSwitch()`, `c.addLamp()`, `w()` for wires.
-   Coordinates are world units, hand-placed; `railFeed()` drops a lead from
-   the + rail.
+   for signals, then `relay()`, `c.addTransistor()`, `c.addDiode()`,
+   `c.addResistor()`, `c.addSwitch()`, `c.addLamp()`, and `w()` for wires.
+   Coordinates are world units, hand-placed.
+   - **Relay circuits**: keep the default `implicitGround`, feed from the
+     `+` rail with `railFeed()`, and don't wire VSS.
+   - **Device circuits**: call `mosScaffold()`, which draws both rails,
+     turns `implicitGround` off, and puts changeover inputs down the left.
+     `cmosInv()` builds an inverter column and hands back its gate spine.
 2. Register it in `CIRCUITS` with `id`, `group`, `name`, `build`, `desc`.
    Optionally `readout: v => ...` for an equation line in the I/O table.
 3. Add truth-table cases to `test/sim-test.mjs`. For anything with more
    than a couple of inputs, sweep the full input space — the 8-bit adder
-   sweeps all 131,072 combinations and it still runs in seconds.
+   sweeps all 131,072 combinations and it still runs in seconds. For device
+   circuits assert on the four-state value *and* the strength, not just on
+   `hot`: "the lamp is lit" does not distinguish a driven 1 from a floating
+   node that happens to be holding one.
 4. Check it visually at several zoom levels; wires are hand-routed and
    overlaps are easy to miss.
+
+**Wires are decorative.** `c.wire()` only stores geometry — conduction comes
+entirely from devices. Two wires of different nets sharing a segment is a
+lie the simulator will never catch, so route deliberately. Crossings are
+fine and normal; collinear overlaps are not.
 
 **Naming drives the binary I/O table.** A trailing number makes a bus bit:
 switches `A0..A7` become bus **A** with bit 0 as LSB. Names without a
@@ -69,10 +96,19 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
 
 ## Things that will bite you
 
-- **Conduction is undirected**, exactly like a real relay rack. A contact
-  tree that looks fine can leak current backwards through another branch (a
-  "sneak path") and light things that should be dark. The test suite is the
-  only thing that catches this — never add a circuit without one.
+- **Conduction is undirected**, in a relay rack and in a MOS channel alike.
+  A contact tree that looks fine can leak current backwards through another
+  branch (a "sneak path") and light things that should be dark. The test
+  suite is the only thing that catches this — never add a circuit without
+  one. Diodes are the exception and exist precisely to break the symmetry.
+- **A lit lamp is not a driven net.** With `implicitGround` off, an undriven
+  net floats and holds its last value on stored charge, so it can read `1`
+  long after anything stopped driving it. Assert on `c.strength[]` when that
+  distinction matters.
+- **Every CMOS transition passes through a glitch.** The P and N halves have
+  independent delays, so there is always a brief `X` (both on — real crowbar
+  current) or `Z` (both off) mid-handover. This is the model being honest,
+  not a bug. Tests must assert on *settled* state.
 - **Momentary switches** (`push`, `push-nc`) are held only while pressed,
   on canvas and in the I/O table. `push-nc` is closed at rest, so `on`
   means *pressed*, which *opens* it.
@@ -88,7 +124,7 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
   bottom and in landscape it docks right. `fitView()` insets around it so
   the circuit is never covered. Refits are threshold-based (>15%) so a
   mobile URL bar sliding away doesn't discard the user's zoom.
-- **Renderer LOD**: below ~2.5 px/world-unit relays collapse to state-
+- **Renderer LOD**: below ~2.5 px/world-unit devices collapse to state-
   colored blocks and labels drop out. That's what lets a large circuit
   shrink to pixel scale and still read as on/off.
 

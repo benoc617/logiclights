@@ -5,26 +5,36 @@ before changing the simulation core or adding a large circuit.
 
 ## The simulation
 
-A circuit is a set of **nets** joined by **contacts**. Net 0 is the `+`
-rail and is always hot. Every step:
+A circuit is a set of **nets** joined by **devices** — relay contacts,
+MOSFET channels, diodes and resistors — solved at switch level. Net 0 is
+**VDD** and net 1 is **VSS**; every other net resolves to `0`, `1`, `Z`
+(floating) or `X` (contention), at a strength of strong, weak or stored
+charge.
 
-1. Build an adjacency list. Each closed switch joins the rail to its net;
-   each relay contact joins its common to either its NO throw (energized)
-   or its NC throw (at rest).
-2. Flood-fill from the rail. A net is **hot** iff current can reach it.
-3. Each relay reads its coil net. If it differs from the armature's current
-   or pending position, schedule a flip at `now + baseDelay × delayFactor`.
+The full model, including the two flood rules that are easy to get wrong
+and the list of deliberate simplifications, is in
+[DEVICES.md](DEVICES.md). Read that before touching `engine.js`. Every step:
+
+1. Rebuild the conducting adjacency: closed switches, relay contacts on
+   whichever throw the armature rests on, transistor channels that are on.
+2. Flood `1` from VDD and `0` from VSS through channels, contacts and
+   diodes, then run the weak pass seeded from resistors.
+3. Each relay reads its coil net and each transistor its gate net. If the
+   control state differs from the device's current or pending position,
+   schedule a flip at `now + delayOf(device)`.
 4. Apply any flips whose time has arrived, then repeat until nothing moves
    (bounded — see below).
 
 ### Consequences worth understanding
 
 - **Conduction is undirected.** There are no inputs and outputs at the
-  electrical level, exactly like a real relay rack. Current entering a
-  contact tree from the "wrong" end will happily light things up. This is
-  authentic, and it means circuit topologies must be designed sneak-path-
-  free. It is the single most common source of subtle bugs here.
-- **Feedback is a first-class citizen.** Because relays have real delay, a
+  electrical level, in a relay rack or in a MOS channel alike. Current
+  entering a contact tree from the "wrong" end will happily light things up.
+  This is authentic, and it means circuit topologies must be designed
+  sneak-path-free. It is the single most common source of subtle bugs here.
+  The diode is the one exception, and that asymmetry is the whole of diode
+  logic.
+- **Feedback is a first-class citizen.** Because devices have real delay, a
   relay whose coil is fed through its own NC contact oscillates (the
   buzzer), and a relay latching itself through its own NO contact remembers
   (the SR latch). Nothing special-cases these.
@@ -32,10 +42,15 @@ rail and is always hot. Every step:
   iterations per call, and the test harness's `settle()` gives up after
   5000 scheduled events. Any new code that waits for stability needs a
   bound.
-- **Per-relay variance.** `delayFactor` is a deterministic hash of the
-  relay's index giving ±8% spread, so propagation looks and sounds organic
+- **Per-device variance.** `delayFactor` is a deterministic hash of the
+  device's index giving ±8% spread, so propagation looks and sounds organic
   rather than machine-synchronized. Deterministic matters: tests must be
-  reproducible.
+  reproducible. One side effect is real: the two halves of a CMOS pair
+  never switch at quite the same instant, so every transition passes
+  through a moment of `X` (both on) or `Z` (both off).
+- **Relay circuits are unchanged.** `implicitGround` models the ground that
+  a one-rail schematic never drew, so under it nothing floats and nothing
+  contends, and every original truth table passes byte-for-byte.
 
 ## Circuit topologies
 
@@ -67,6 +82,30 @@ Four D latches sharing one `LOAD` button through an 8-pole relay: two poles
 per bit, one gating D in, one holding Q through itself when LOAD is
 released.
 
+### Static CMOS gates
+
+Every static CMOS gate is one logic network plus its exact dual: the
+pull-down network of NMOS *is* the logic, and the pull-up network of PMOS
+mirrors it with series and parallel swapped. NAND is two NMOS in series
+under two PMOS in parallel; NOR is the other way round. That duality is why
+the two gates come in pairs, and why either alone can build a computer.
+
+`cmosInv()` is the informal module prototype — one column, PMOS from VDD,
+NMOS to VSS, returning its gate spine so callers can tap it.
+
+### Transmission gates and buses
+
+An NMOS and a PMOS in parallel with complementary gates pass a full `0` and
+a full `1` in either direction, which neither device manages alone. This is
+the multiplexer primitive that a relay gets free from a changeover contact,
+and it is why one relay contact is worth two transistors.
+
+Two of them onto a shared net is a bus, and nothing arbitrates it: enable
+neither and the net floats at `Z` on stored charge; enable both with
+different data and it is `X`, a rail-to-rail short. Relays cannot do this at
+all, and it is the reason a device-level CPU can have buses instead of a
+multiplexer tree per destination — see [4004.md](4004.md).
+
 ## Binary I/O buses
 
 `buses.js` groups switches and lamps by name — a trailing number makes a
@@ -85,18 +124,22 @@ add an equation line with a `readout(vals)` function in the registry.
 World units are circuit-space; the view is a scale plus an offset, so pan
 and zoom are cheap and the layout code never thinks in pixels.
 
-Wires draw in three passes: a wide translucent glow for hot nets, thin
-strokes for cold ones, brighter strokes for hot ones. `shadowBlur` is
+Wires draw one pass per logic value, so a whole net reads at a glance: a
+wide translucent glow for `1` and `X`, then thin strokes for `0`, dashed
+cool-grey for `Z`, bright amber for `1` and red for `X`. `shadowBlur` is
 deliberately avoided — it is dramatically slower for this many strokes.
 
-Level of detail keys off px-per-world-unit: below ~2.5 relays become
-state-colored blocks and glow is skipped; below ~5 labels drop; below ~6–7
-filaments and coil windings drop. This is what allows the "zoom all the way
-out and it still fits a tablet" requirement — components degrade to
-pixel-scale on/off indicators rather than turning into unreadable mush.
+Level of detail keys off px-per-world-unit: below ~2.5 relays and
+transistors become state-colored blocks and glow is skipped; below ~5 labels
+drop; below ~6–7 filaments and coil windings drop. This is what allows the
+"zoom all the way out and it still fits a tablet" requirement — components
+degrade to pixel-scale on/off indicators rather than turning into
+unreadable mush.
 
-Armature travel is animated by interpolating the blade between the NC and
-NO throw over the relay's delay, so you see the contact move, not teleport.
+Motion is animated from the same schedule the solver uses (`delayOf`), so
+what you see matches what is simulated: an armature blade interpolates
+between the NC and NO throw, and a transistor's channel bar grows to bridge
+its gap as the inversion layer forms. Contacts move, they don't teleport.
 
 ## Layout
 
@@ -116,13 +159,25 @@ register load/hold, all 131,072 8-bit adder input combinations, the
 adder/subtractor across all operands in both modes, oscillator liveness
 (asserting the circuit *doesn't* settle), and the bus/readout layer.
 
+Device circuits are asserted on the four-state value, not just "is it hot":
+the CMOS gates must come out `STRONG` at rest (never a short, never a
+float), the NMOS inverter must be `WEAK` high and `STRONG` low so the load
+is demonstrably losing to the transistor, and the tri-state bus is walked
+through driven → floating-on-charge → contended → agreeing. A separate test
+asserts that no relay circuit ever produces `X` or `Z`, which is what pins
+the `implicitGround` compatibility path.
+
 Visual checks are done with Playwright against the local server; the harness
 lives in the session scratch space rather than the repo, since it needs a
 browser and the repo has no dependencies by design.
 
 ## Deliberate non-goals (for now)
 
-- No gate-level abstraction layer. The whole point is relays.
+- No gate-level abstraction layer. The point is the devices: a NAND is four
+  transistors or two relays, never a primitive.
+- No analogue modelling — no threshold drops, no charge decay, no partially
+  conducting channels. The simplifications are listed in
+  [DEVICES.md](DEVICES.md); do not let them drift without writing them down.
 - No framework, no bundler, no TypeScript — see CLAUDE.md rule 1.
 - No server. Everything is static; saved user circuits will need a decision
   here (localStorage first, see ROADMAP).

@@ -1,16 +1,26 @@
-// Canvas renderer: pan/zoom viewport, glowing wires, animated armatures.
+// Canvas renderer: pan/zoom viewport, glowing wires, animated devices.
 
-import { RELAY_W, COIL_H, coilT, contactT, relayH, switchT } from './geometry.js';
+import {
+  RELAY_W, COIL_H, MOS_H, coilT, contactT, relayH,
+  mosT, diodeT, resistorT, switchT, switchSpdtT,
+} from './geometry.js';
+import { LO, HI, X, Z } from './engine.js';
 
 const BG = '#12141a';
-const WIRE_OFF = '#3b4252';
-const WIRE_HOT = '#ffb54d';
+const WIRE_OFF = '#3b4252';   // logic 0
+const WIRE_HOT = '#ffb54d';   // logic 1
+const WIRE_X = '#ff5347';     // contention — two sources fighting
+const WIRE_Z = '#55618a';     // floating — nothing is driving it
 const GLOW = 'rgba(255, 160, 40, 0.22)';
+const GLOW_X = 'rgba(255, 70, 55, 0.26)';
 const BODY = '#1c212e';
 const BODY_EDGE = '#454e66';
 const METAL = '#c7cfe0';
 const TEXT = '#8b93a7';
 const LAMP_ON = '#ffd67f';
+
+const WIRE_COL = [WIRE_OFF, WIRE_HOT, WIRE_X, WIRE_Z];
+const DOT_COL = ['#59637e', WIRE_HOT, WIRE_X, '#4a5470'];
 
 export class Renderer {
   constructor(canvas) {
@@ -61,28 +71,33 @@ export class Renderer {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    const hot = c.hot;
+    const val = c.value;
     const lod = s; // px per world unit
 
-    // wires: glow pass for hot nets, then core strokes
+    // wires: glow pass for driven-high and contended nets, then core strokes
+    // in one pass per logic value so the whole net reads at a glance
     if (lod > 2.5) {
-      ctx.strokeStyle = GLOW;
-      ctx.lineWidth = 0.42;
-      ctx.beginPath();
-      for (const wr of c.wires) if (hot[wr.net]) this.path(ctx, wr.pts);
-      ctx.stroke();
+      for (const [v, col] of [[HI, GLOW], [X, GLOW_X]]) {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 0.42;
+        ctx.beginPath();
+        for (const wr of c.wires) if (val[wr.net] === v) this.path(ctx, wr.pts);
+        ctx.stroke();
+      }
     }
-    ctx.strokeStyle = WIRE_OFF;
-    ctx.lineWidth = 0.1;
-    ctx.beginPath();
-    for (const wr of c.wires) if (!hot[wr.net]) this.path(ctx, wr.pts);
-    ctx.stroke();
-    ctx.strokeStyle = WIRE_HOT;
-    ctx.lineWidth = 0.13;
-    ctx.beginPath();
-    for (const wr of c.wires) if (hot[wr.net]) this.path(ctx, wr.pts);
-    ctx.stroke();
+    for (const v of [LO, Z, HI, X]) {
+      ctx.strokeStyle = WIRE_COL[v];
+      ctx.lineWidth = v === LO || v === Z ? 0.1 : 0.13;
+      if (v === Z) ctx.setLineDash([0.34, 0.26]);
+      ctx.beginPath();
+      for (const wr of c.wires) if (val[wr.net] === v) this.path(ctx, wr.pts);
+      ctx.stroke();
+      if (v === Z) ctx.setLineDash([]);
+    }
 
+    for (const r of c.resistors) this.drawResistor(ctx, c, r, lod);
+    for (const d of c.diodes) this.drawDiode(ctx, c, d, lod);
+    for (const t of c.transistors) this.drawTransistor(ctx, c, t, now, lod);
     for (const r of c.relays) this.drawRelay(ctx, c, r, now, lod);
     for (const sw of c.switches) this.drawSwitch(ctx, c, sw, lod);
     for (const l of c.lamps) this.drawLamp(ctx, c, l, lod);
@@ -103,6 +118,13 @@ export class Renderer {
   path(ctx, pts) {
     ctx.moveTo(pts[0][0], pts[0][1]);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  }
+
+  // Fraction of the way through an in-flight transition, 0..1.
+  travel(c, d, now) {
+    if (d.pending === null) return null;
+    const delay = c.delayOf(d);
+    return Math.max(0, Math.min(1, 1 - (d.pendingAt - now) / delay));
   }
 
   drawRelay(ctx, c, r, now, lod) {
@@ -144,13 +166,13 @@ export class Renderer {
     }
     // coil feed terminal + wire stub
     const ct = coilT(r);
-    ctx.strokeStyle = c.hot[r.coil] ? WIRE_HOT : WIRE_OFF;
+    ctx.strokeStyle = WIRE_COL[c.value[r.coil]];
     ctx.lineWidth = 0.13;
     ctx.beginPath();
     ctx.moveTo(ct.x, ct.y);
     ctx.lineTo(cx0, ct.y);
     ctx.stroke();
-    this.dot(ctx, ct.x, ct.y, c.hot[r.coil]);
+    this.dot(ctx, ct.x, ct.y, c.value[r.coil]);
     // ground stub on the far side of the coil
     if (lod > 7) {
       ctx.strokeStyle = '#566078';
@@ -165,27 +187,23 @@ export class Renderer {
 
     // armature position: 0 = NC (up), 1 = NO (down); animate travel
     let pos = r.energized ? 1 : 0;
-    if (r.pending !== null) {
-      const delay = Math.max(15, c.baseDelay * r.delayFactor);
-      const prog = Math.max(0, Math.min(1, 1 - (r.pendingAt - now) / delay));
-      pos = r.pending ? prog : 1 - prog;
-    }
+    const prog = this.travel(c, r, now);
+    if (prog !== null) pos = r.pending ? prog : 1 - prog;
 
     for (let i = 0; i < r.contacts.length; i++) {
       const k = r.contacts[i];
       const t = contactT(r, i);
       const commonHot = c.hot[k.c];
       // throw terminals
-      if (k.nc !== null) this.dot(ctx, t.nc.x, t.nc.y, c.hot[k.nc], k.nc === undefined);
+      if (k.nc !== null) this.dot(ctx, t.nc.x, t.nc.y, c.value[k.nc]);
       else this.smallTick(ctx, t.nc.x, t.nc.y);
-      if (k.no !== null) this.dot(ctx, t.no.x, t.no.y, c.hot[k.no]);
+      if (k.no !== null) this.dot(ctx, t.no.x, t.no.y, c.value[k.no]);
       else this.smallTick(ctx, t.no.x, t.no.y);
-      this.dot(ctx, t.c.x, t.c.y, commonHot);
+      this.dot(ctx, t.c.x, t.c.y, c.value[k.c]);
       // armature blade from common to a point interpolated NC->NO
       const ty = t.nc.y + (t.no.y - t.nc.y) * pos;
-      const live = commonHot;
-      ctx.strokeStyle = live ? WIRE_HOT : METAL;
-      ctx.lineWidth = live ? 0.16 : 0.12;
+      ctx.strokeStyle = commonHot ? WIRE_HOT : METAL;
+      ctx.lineWidth = commonHot ? 0.16 : 0.12;
       ctx.beginPath();
       ctx.moveTo(t.c.x + 0.12, t.c.y);
       ctx.lineTo(t.nc.x - 0.45, ty);
@@ -202,13 +220,164 @@ export class Renderer {
     }
   }
 
+  // A MOSFET: channel between a and b, gate bar alongside it, isolated. The
+  // channel is drawn broken when the device is off, so it reads as the
+  // switch it is; the gap closes as the transition completes.
+  drawTransistor(ctx, c, t, now, lod) {
+    const p = mosT(t);
+    const pmos = t.kind === 'pmos';
+    const conducting = t.on;
+
+    if (lod <= 2.5) {
+      ctx.fillStyle = conducting ? '#b06018' : '#262c3c';
+      ctx.fillRect(t.x - 0.6, t.y, 1.2, MOS_H);
+      return;
+    }
+
+    const va = c.value[t.a], vb = c.value[t.b];
+    // drain/source leads
+    ctx.lineWidth = 0.13;
+    ctx.strokeStyle = WIRE_COL[va];
+    ctx.beginPath();
+    ctx.moveTo(p.a.x, p.a.y); ctx.lineTo(p.a.x, p.a.y + 0.62);
+    ctx.stroke();
+    ctx.strokeStyle = WIRE_COL[vb];
+    ctx.beginPath();
+    ctx.moveTo(p.b.x, p.b.y); ctx.lineTo(p.b.x, p.b.y - 0.62);
+    ctx.stroke();
+
+    // channel: three segments of the vertical bar, joined only when on
+    const y0 = p.a.y + 0.62, y1 = p.b.y - 0.62;
+    const prog = this.travel(c, t, now);
+    let closed = conducting ? 1 : 0;
+    if (prog !== null) closed = t.pending ? prog : 1 - prog;
+    ctx.strokeStyle = conducting && (va === HI || vb === HI) ? WIRE_HOT : METAL;
+    ctx.lineWidth = 0.15;
+    ctx.beginPath();
+    ctx.moveTo(t.x, y0); ctx.lineTo(t.x, y0 + 0.32);
+    ctx.moveTo(t.x, y1); ctx.lineTo(t.x, y1 - 0.32);
+    ctx.stroke();
+    if (closed > 0) {
+      // the inversion layer forming: a bar that grows to bridge the gap
+      const mid = (y0 + y1) / 2, half = ((y1 - y0) / 2 - 0.3) * closed;
+      ctx.globalAlpha = 0.35 + 0.65 * closed;
+      ctx.beginPath();
+      ctx.moveTo(t.x, mid - half); ctx.lineTo(t.x, mid + half);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // gate: a bar parallel to the channel, never touching it
+    const gx = t.x - 0.5;
+    ctx.strokeStyle = WIRE_COL[c.value[t.gate]];
+    ctx.lineWidth = 0.14;
+    ctx.beginPath();
+    ctx.moveTo(gx, y0 - 0.1); ctx.lineTo(gx, y1 + 0.1);
+    ctx.stroke();
+    // gate lead, with the PMOS inversion bubble
+    const gy = (p.a.y + p.b.y) / 2;
+    ctx.lineWidth = 0.12;
+    ctx.beginPath();
+    ctx.moveTo(p.g.x, p.g.y); ctx.lineTo(p.g.x, gy);
+    ctx.lineTo(gx - (pmos ? 0.34 : 0), gy);
+    ctx.stroke();
+    if (pmos) {
+      ctx.fillStyle = BG;
+      ctx.beginPath();
+      ctx.arc(gx - 0.17, gy, 0.17, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    this.dot(ctx, p.g.x, p.g.y, c.value[t.gate]);
+    this.dot(ctx, p.a.x, p.a.y, va);
+    this.dot(ctx, p.b.x, p.b.y, vb);
+
+    if (lod > 6) {
+      ctx.fillStyle = pmos ? '#9d86c9' : '#6f9dd0';
+      ctx.font = '0.62px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t.name, t.x + 0.4, gy);
+    }
+  }
+
+  drawDiode(ctx, c, d, lod) {
+    const p = diodeT(d);
+    const va = c.value[d.anode], vb = c.value[d.cathode];
+    if (lod <= 2.5) {
+      ctx.fillStyle = va === HI ? '#b06018' : '#262c3c';
+      ctx.fillRect(d.x - 0.5, d.y - 0.5, 1, 1);
+      return;
+    }
+    const ang = d.vert ? Math.PI / 2 : 0;
+    ctx.save();
+    ctx.translate(d.x, d.y);
+    ctx.rotate(ang);
+    // leads
+    ctx.lineWidth = 0.13;
+    ctx.strokeStyle = WIRE_COL[va];
+    ctx.beginPath(); ctx.moveTo(-0.9, 0); ctx.lineTo(-0.32, 0); ctx.stroke();
+    ctx.strokeStyle = WIRE_COL[vb];
+    ctx.beginPath(); ctx.moveTo(0.32, 0); ctx.lineTo(0.9, 0); ctx.stroke();
+    // triangle pointing anode -> cathode, with the cathode bar
+    const conducting = va === HI && vb !== HI;
+    ctx.fillStyle = conducting ? WIRE_HOT : METAL;
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 0.12;
+    ctx.beginPath();
+    ctx.moveTo(-0.34, -0.38); ctx.lineTo(0.28, 0); ctx.lineTo(-0.34, 0.38);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0.3, -0.42); ctx.lineTo(0.3, 0.42);
+    ctx.stroke();
+    ctx.restore();
+    this.dot(ctx, p.a.x, p.a.y, va);
+    this.dot(ctx, p.b.x, p.b.y, vb);
+  }
+
+  drawResistor(ctx, c, r, lod) {
+    const p = resistorT(r);
+    const va = c.value[r.a], vb = c.value[r.b];
+    if (lod <= 2.5) {
+      ctx.strokeStyle = '#4a5470';
+      ctx.lineWidth = 0.2;
+      ctx.beginPath();
+      ctx.moveTo(p.a.x, p.a.y); ctx.lineTo(p.b.x, p.b.y);
+      ctx.stroke();
+      return;
+    }
+    ctx.save();
+    ctx.translate(r.x, r.y);
+    ctx.rotate(r.vert ? Math.PI / 2 : 0);
+    const h = 1.2;
+    ctx.lineWidth = 0.13;
+    ctx.strokeStyle = WIRE_COL[va];
+    ctx.beginPath(); ctx.moveTo(-h, 0); ctx.lineTo(-0.62, 0); ctx.stroke();
+    ctx.strokeStyle = WIRE_COL[vb];
+    ctx.beginPath(); ctx.moveTo(0.62, 0); ctx.lineTo(h, 0); ctx.stroke();
+    // zigzag body
+    ctx.strokeStyle = METAL;
+    ctx.lineWidth = 0.11;
+    ctx.beginPath();
+    ctx.moveTo(-0.62, 0);
+    for (let i = 0; i < 6; i++) {
+      ctx.lineTo(-0.52 + i * 0.207, (i % 2 ? -1 : 1) * 0.3);
+    }
+    ctx.lineTo(0.62, 0);
+    ctx.stroke();
+    ctx.restore();
+    this.dot(ctx, p.a.x, p.a.y, va);
+    this.dot(ctx, p.b.x, p.b.y, vb);
+  }
+
   drawSwitch(ctx, c, s, lod) {
-    const t = switchT(s);
-    const a = s.flip ? t.out : t.in;   // fixed pivot side (fed side)
-    const b = s.flip ? t.in : t.out;
     const closed = s.kind === 'push-nc' ? !s.on : s.on;
-    const inHot = true; // fed from VCC
-    const outHot = c.hot[s.net];
+    if (s.to !== null) return this.drawSpdt(ctx, c, s, closed, lod);
+
+    const t = switchT(s);
+    const vIn = c.value[s.from];
+    const vOut = c.value[s.net];
 
     if (lod <= 2.5) {
       ctx.fillStyle = closed ? '#b06018' : '#30374a';
@@ -216,59 +385,95 @@ export class Renderer {
       return;
     }
 
-    this.dot(ctx, t.in.x, t.in.y, inHot);
-    this.dot(ctx, t.out.x, t.out.y, outHot);
+    this.dot(ctx, t.in.x, t.in.y, vIn);
+    this.dot(ctx, t.out.x, t.out.y, vOut);
 
     // lever pivots on the fed side; open = tip raised
     const dir = Math.sign(t.out.x - t.in.x);
     const hx = closed ? t.out.x - dir * 0.15 : t.out.x - dir * 0.45;
     const hy = closed ? t.out.y : t.out.y - 1.0;
-    ctx.strokeStyle = closed ? WIRE_HOT : METAL;
+    ctx.strokeStyle = closed && vIn === HI ? WIRE_HOT : METAL;
     ctx.lineWidth = 0.16;
     ctx.beginPath();
     ctx.moveTo(t.in.x, t.in.y);
     ctx.lineTo(hx, hy);
     ctx.stroke();
-    ctx.fillStyle = s.kind === 'toggle' ? '#5f8dd3' : (s.kind === 'push-nc' ? '#d36a5f' : '#67b26f');
-    ctx.beginPath();
-    ctx.arc(hx, hy, 0.28, 0, Math.PI * 2);
-    ctx.fill();
+    this.knob(ctx, s, hx, hy);
+    this.switchLabel(ctx, s, lod);
+  }
 
-    if (lod > 5) {
-      ctx.fillStyle = TEXT;
-      ctx.font = '0.75px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillText(s.label, s.x, s.y + 0.75);
-      if (s.kind !== 'toggle' && lod > 9) {
-        ctx.fillStyle = '#5d6578';
-        ctx.font = '0.5px system-ui, sans-serif';
-        ctx.fillText(s.kind === 'push-nc' ? '(push · NC)' : '(push)', s.x, s.y + 1.7);
-      }
+  // Changeover input switch: the lever rests on the + throw or the ground
+  // throw, so the driven net is never left floating.
+  drawSpdt(ctx, c, s, closed, lod) {
+    const t = switchSpdtT(s);
+    if (lod <= 2.5) {
+      ctx.fillStyle = closed ? '#b06018' : '#30374a';
+      ctx.fillRect(s.x - 1, s.y - 0.7, 2, 1.4);
+      return;
+    }
+    this.dot(ctx, t.hi.x, t.hi.y, c.value[s.from]);
+    this.dot(ctx, t.lo.x, t.lo.y, c.value[s.to]);
+    this.dot(ctx, t.c.x, t.c.y, c.value[s.net]);
+    const tip = closed ? t.hi : t.lo;
+    ctx.strokeStyle = c.value[s.net] === HI ? WIRE_HOT : METAL;
+    ctx.lineWidth = 0.16;
+    ctx.beginPath();
+    ctx.moveTo(t.c.x - 0.12, t.c.y);
+    ctx.lineTo(tip.x + 0.4, tip.y);
+    ctx.lineTo(tip.x + 0.12, tip.y);
+    ctx.stroke();
+    this.knob(ctx, s, s.x - 0.05, tip.y - 0.5);
+    this.switchLabel(ctx, s, lod);
+  }
+
+  knob(ctx, s, x, y) {
+    ctx.fillStyle = s.kind === 'toggle' ? '#5f8dd3'
+      : (s.kind === 'push-nc' ? '#d36a5f' : '#67b26f');
+    ctx.beginPath();
+    ctx.arc(x, y, 0.28, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  switchLabel(ctx, s, lod) {
+    if (lod <= 5) return;
+    ctx.fillStyle = TEXT;
+    ctx.font = '0.75px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(s.label, s.x, s.y + 0.75);
+    if (s.kind !== 'toggle' && lod > 9) {
+      ctx.fillStyle = '#5d6578';
+      ctx.font = '0.5px system-ui, sans-serif';
+      ctx.fillText(s.kind === 'push-nc' ? '(push · NC)' : '(push)', s.x, s.y + 1.7);
     }
   }
 
   drawLamp(ctx, c, l, lod) {
-    const on = c.hot[l.net];
-    if (on && lod > 2.5) {
+    const v = c.value[l.net];
+    const on = v === HI;
+    const bad = v === X;
+    if ((on || bad) && lod > 2.5) {
+      const tint = bad ? '255, 90, 75' : '255, 205, 110';
       const g = ctx.createRadialGradient(l.x, l.y, 0.1, l.x, l.y, 1.8);
-      g.addColorStop(0, 'rgba(255, 205, 110, 0.55)');
-      g.addColorStop(1, 'rgba(255, 205, 110, 0)');
+      g.addColorStop(0, `rgba(${tint}, 0.55)`);
+      g.addColorStop(1, `rgba(${tint}, 0)`);
       ctx.fillStyle = g;
       ctx.beginPath();
       ctx.arc(l.x, l.y, 1.8, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = on ? LAMP_ON : '#262b39';
-    ctx.strokeStyle = on ? '#ffe9bd' : '#4d5568';
+    ctx.fillStyle = on ? LAMP_ON : bad ? '#8f2a22' : '#262b39';
+    ctx.strokeStyle = on ? '#ffe9bd' : bad ? '#ff8a7d' : v === Z ? WIRE_Z : '#4d5568';
     ctx.lineWidth = 0.09;
+    if (v === Z) ctx.setLineDash([0.28, 0.22]);
     ctx.beginPath();
     ctx.arc(l.x, l.y, 0.7, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.setLineDash([]);
     if (lod > 6) {
       // filament cross
-      ctx.strokeStyle = on ? '#b97b1f' : '#414b60';
+      ctx.strokeStyle = on ? '#b97b1f' : bad ? '#d4675a' : '#414b60';
       ctx.lineWidth = 0.07;
       const d = 0.7 * 0.707;
       ctx.beginPath();
@@ -277,16 +482,17 @@ export class Renderer {
       ctx.stroke();
     }
     if (lod > 5) {
-      ctx.fillStyle = on ? '#e8d5ac' : TEXT;
+      ctx.fillStyle = on ? '#e8d5ac' : bad ? '#ff9c90' : TEXT;
       ctx.font = '0.75px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = l.above ? 'bottom' : 'top';
-      ctx.fillText(l.label, l.x, l.above ? l.y - 1.0 : l.y + 1.0);
+      const cap = v === X ? `${l.label} · X` : v === Z ? `${l.label} · Z` : l.label;
+      ctx.fillText(cap, l.x, l.above ? l.y - 1.0 : l.y + 1.0);
     }
   }
 
-  dot(ctx, x, y, hotState) {
-    ctx.fillStyle = hotState ? WIRE_HOT : '#59637e';
+  dot(ctx, x, y, v) {
+    ctx.fillStyle = DOT_COL[v] ?? DOT_COL[LO];
     ctx.beginPath();
     ctx.arc(x, y, 0.14, 0, Math.PI * 2);
     ctx.fill();

@@ -1,5 +1,6 @@
 import { CIRCUITS, buildCircuit } from './circuits.js';
 import { deriveBuses, busValue } from './buses.js';
+import { VALUE_CHAR } from './engine.js';
 import { Renderer } from './render.js';
 import { RelaySound } from './sound.js';
 
@@ -67,13 +68,24 @@ function load(id) {
   circuit.baseDelay = currentDelay();
   circuit.step(performance.now());
   document.getElementById('desc').textContent = circuit.desc;
-  const nContacts = circuit.relays.reduce((n, r) => n + r.contacts.length, 0);
-  document.getElementById('stats').textContent =
-    `${circuit.relays.length} relay${circuit.relays.length === 1 ? '' : 's'} · ${nContacts} contacts`;
+  document.getElementById('stats').textContent = statsText(circuit.counts());
   buildPanel();      // sized before fitting — the panel's width is an inset
   fitView();
   // sandboxed viewers (opaque origins) can refuse URL writes — never fatal
   try { history.replaceState(null, '', '#' + id); } catch { /* ignore */ }
+}
+
+// Only name the devices a circuit actually contains, so a relay rack still
+// reads "24 relays · 88 contacts" and doesn't grow a pile of zeroes.
+function statsText(n) {
+  const parts = [];
+  const add = (v, one, many) => { if (v) parts.push(`${v} ${v === 1 ? one : many}`); };
+  add(n.relays, 'relay', 'relays');
+  add(n.contacts, 'contact', 'contacts');
+  add(n.transistors, 'transistor', 'transistors');
+  add(n.diodes, 'diode', 'diodes');
+  add(n.resistors, 'resistor', 'resistors');
+  return parts.join(' · ');
 }
 
 // ── binary I/O table ─────────────────────────────────────────────────────
@@ -120,7 +132,7 @@ function setBusValue(bus, v) {
   bus.bits.forEach((b, pos) => { b.sw.on = !!(v & (1 << pos)); });
 }
 
-function makeRow(bus, editable, readBit) {
+function makeRow(bus, editable, readBit, charOf) {
   const row = el('div', `bus ${editable ? 'io-in' : 'io-out'}`);
   row.appendChild(el('span', 'bus-name', bus.name));
 
@@ -172,7 +184,7 @@ function makeRow(bus, editable, readBit) {
   const dec = el('span', 'dec', '0');
   row.appendChild(dec);
 
-  rows.push({ bus, cells, bin, dec, editable, readBit, width, value: null });
+  rows.push({ bus, cells, bin, dec, editable, readBit, charOf, width, shown: null });
   return row;
 }
 
@@ -188,15 +200,17 @@ function buildPanel() {
 
   const hotBit = b => circuit.hot[b.net];
   const swBit = b => b.sw.on;
+  const netChar = b => VALUE_CHAR[circuit.value[b.net]];
+  const swChar = b => (b.sw.on ? '1' : '0');
 
-  const section = (title, list, editable, readBit) => {
+  const section = (title, list, editable, readBit, charOf) => {
     if (!list.length) return;
     panelBody.appendChild(el('div', 'sec-title', title));
-    for (const bus of list) panelBody.appendChild(makeRow(bus, editable, readBit));
+    for (const bus of list) panelBody.appendChild(makeRow(bus, editable, readBit, charOf));
   };
-  section('Inputs', buses.inputs, true, swBit);
-  section('Outputs', buses.outputs, false, hotBit);
-  section('Internal', buses.internals, false, hotBit);
+  section('Inputs', buses.inputs, true, swBit, swChar);
+  section('Outputs', buses.outputs, false, hotBit, netChar);
+  section('Internal', buses.internals, false, hotBit, netChar);
 
   if (circuit.readout) {
     readoutEl = el('div', 'readout', '');
@@ -209,22 +223,26 @@ function updatePanel() {
   if (panel.classList.contains('hidden')) return;
   const vals = {};
   for (const r of rows) {
+    let bits = '';                       // cells are stored MSB-first
     for (const c of r.cells) {
-      const on = r.readBit(c.bit);
-      if (c.state !== on) {
-        c.state = on;
-        c.el.textContent = on ? '1' : '0';
-        c.el.classList.toggle('on', on);
+      const ch = r.charOf(c.bit);
+      if (c.state !== ch) {
+        c.state = ch;
+        c.el.textContent = ch;
+        c.el.classList.toggle('on', ch === '1');
+        c.el.classList.toggle('bad', ch === 'X');
+        c.el.classList.toggle('float', ch === 'Z');
       }
+      bits += ch;
     }
     const v = busValue(r.bus, r.readBit);
     vals[r.bus.name] = v;
-    if (r.value !== v) {
-      r.value = v;
-      r.dec.textContent = String(v);
-      const bits = pad(v, r.width);
+    if (r.shown !== bits) {
+      r.shown = bits;
+      // a bus with a floating or contended bit has no numeric value
+      r.dec.textContent = /[XZ]/.test(bits) ? '—' : String(v);
       if (r.editable) {
-        if (document.activeElement !== r.bin) r.bin.value = bits;
+        if (document.activeElement !== r.bin) r.bin.value = pad(v, r.width);
       } else {
         r.bin.textContent = bits;
       }
