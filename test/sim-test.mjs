@@ -1,7 +1,7 @@
 // Headless truth-table tests for the device simulation.
 // Run: node test/sim-test.mjs
 
-import { buildCircuit, CIRCUITS } from '../web/js/circuits.js';
+import { buildCircuit, CIRCUITS, GROUP_ORDER } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 import { instantiate } from '../web/js/module.js';
@@ -622,6 +622,54 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   }
 }
 {
+  // The CMOS variant: no resistors, a P-channel per bit line, read in two
+  // phases. PRE low charges every line; PRE high turns the pull-ups off and
+  // lets the selected row discharge the lines storing 0, so nothing ever
+  // fights and there is no static current.
+  const c = buildCircuit('romcmos');
+  expect(c, 'CMOS ROM uses no resistors', c.resistors.length, 0);
+  expect(c, 'CMOS ROM uses both channel types',
+    c.transistors.some(t => t.kind === 'pmos') &&
+    c.transistors.some(t => t.kind === 'nmos'), true);
+
+  const text = 'LOGIC 42';
+  for (let addr = 0; addr < 8; addr++) {
+    // PRE drops *before* the address moves. Dynamic logic has a phase
+    // order: change the address mid-evaluate and the new row discharges
+    // lines the old one already pulled down, and they never come back —
+    // a discharged line is only reclaimed by a precharge.
+    sw(c, 'PRE', false);
+    for (let i = 0; i < 3; i++) sw(c, `A${i}`, !!((addr >> i) & 1));
+    settle(c);
+    // every line comes up, whatever is stored, and comes up *driven* —
+    // the foot transistor is what stops the array fighting the pull-up
+    // here, and without it a selected row shorts the rails and reads X
+    for (let b = 0; b < 8; b++) {
+      expect(c, `precharge lifts D${b} (addr ${addr})`, lampV(c, `D${b}`), HI);
+    }
+    for (const t of c.transistors) {
+      expect(c, `precharge draws no crowbar current (addr ${addr})`,
+        c.value[t.a] !== X && c.value[t.b] !== X, true);
+    }
+
+    sw(c, 'PRE', true); settle(c);           // evaluate
+    let byte = 0;
+    for (let b = 0; b < 8; b++) if (lampV(c, `D${b}`) === HI) byte |= 1 << b;
+    expect(c, `CMOS ROM addr ${addr} reads "${text[addr]}"`,
+      byte, text.charCodeAt(addr));
+  }
+  // Both ROMs hold the same program, by different means — that comparison
+  // is the reason to keep both in the library.
+  const nmos = buildCircuit('rom8');
+  for (let addr = 0; addr < 8; addr++) {
+    for (let i = 0; i < 3; i++) sw(nmos, `A${i}`, !!((addr >> i) & 1));
+    settle(nmos);
+    let byte = 0;
+    for (let b = 0; b < 8; b++) if (lampV(nmos, `D${b}`) === HI) byte |= 1 << b;
+    expect(nmos, `both ROMs agree at addr ${addr}`, byte, text.charCodeAt(addr));
+  }
+}
+{
   // The library circuit reads back the ASCII it was programmed with.
   const c = buildCircuit('rom8');
   const text = 'LOGIC 42';
@@ -892,6 +940,55 @@ function flipAndStep(c, label, on) {
       expect(c, `${entry.id}: legend select in range`,
         i === -1 || (i >= 0 && i < t.rows.length), true);
     }
+  }
+}
+
+// ── picker grouping ──────────────────────────────────────────────────────
+// Sections are by technology, so a circuit's group has to match the devices
+// it is actually made of — otherwise a new circuit lands in the wrong
+// section and quietly contradicts the thing the library is trying to show.
+{
+  for (const e of CIRCUITS) {
+    const c = e.build();
+    const n = c.counts();
+    const kinds = new Set(c.transistors.map(t => t.kind));
+    const section = e.group.split(' · ')[0];
+    checks++;
+    if (!GROUP_ORDER.includes(e.group)) {
+      failures++;
+      console.error(`FAIL [${e.id}] group "${e.group}" is not in GROUP_ORDER`);
+    }
+    if (section === 'Relays') {
+      expect(c, `${e.id} is in Relays and has relays`, n.relays > 0, true);
+      expect(c, `${e.id} is in Relays and has no transistors`, n.transistors, 0);
+    } else if (section === 'CMOS') {
+      expect(c, `${e.id} is in CMOS and has no relays`, n.relays, 0);
+      // complementary means both polarities are present
+      expect(c, `${e.id} is in CMOS and uses both channel types`,
+        kinds.has('nmos') && kinds.has('pmos'), true);
+    } else if (section === 'NMOS') {
+      expect(c, `${e.id} is in NMOS and has no relays`, n.relays, 0);
+      expect(c, `${e.id} is in NMOS and uses N-channel`, kinds.has('nmos'), true);
+      // N-channel must dominate: a real mask ROM is an NMOS array with CMOS
+      // periphery (decoder, output buffers), so requiring zero P-channel
+      // would be wrong — but the part is only "NMOS" if the array is.
+      expect(c, `${e.id} is in NMOS and is mostly N-channel`,
+        c.transistors.filter(t => t.kind === 'nmos').length >
+        c.transistors.filter(t => t.kind === 'pmos').length, true);
+      // an NMOS load is a resistor, which is the whole point of the section
+      expect(c, `${e.id} is in NMOS and has a resistor load`, n.resistors > 0, true);
+    } else {
+      // General is the bridge section: circuits with no transistors at all
+      // (diode logic), circuits mixing technologies (Three Technologies), or
+      // ones introducing a device rather than building logic from it.
+      expect(c, `${e.id} is in General and is not plain single-technology logic`,
+        n.transistors === 0 || n.relays > 0 || n.resistors > 0, true);
+    }
+  }
+  // every declared group is actually used — a stale name is dead weight
+  for (const g of GROUP_ORDER) {
+    expect({ name: 'GROUP_ORDER' }, `group "${g}" has circuits`,
+      CIRCUITS.some(e => e.group === g), true);
   }
 }
 

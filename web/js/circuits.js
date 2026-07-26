@@ -949,8 +949,8 @@ function buildAlu4() {
 // the charm of a mask ROM: the program is visible as physical structure.
 const ROM_WORDS = [...'LOGIC 42'].map(ch => ch.charCodeAt(0));
 
-function buildRom8() {
-  const c = new Circuit('Program ROM');
+function buildRom8(load = 'resistor') {
+  const c = new Circuit(load === 'precharge' ? 'CMOS Program ROM' : 'Program ROM');
   c.implicitGround = false;
 
   const bind = {};
@@ -959,8 +959,15 @@ function buildRom8() {
     c.addSwitch(`A${i}`, n, 'toggle', 4, 6 + i * 5, { to: VSS });
     bind[`a${i}`] = n;
   }
+  if (load === 'precharge') {
+    const n = c.net();
+    // starts low, which is the precharge phase — the lines come up before
+    // you ever touch it, so the circuit reads correctly on load
+    c.addSwitch('PRE', n, 'toggle', 4, 6 + 3 * 5, { to: VSS });
+    bind.pre = n;
+  }
 
-  const Rom = romArray(ROM_WORDS, 8, 3);
+  const Rom = romArray(ROM_WORDS, 8, 3, { load });
   const inst = instantiate(c, Rom, 22, 0, bind);
 
   const b = c.bounds();
@@ -1030,42 +1037,72 @@ function buildRegFile() {
 
 // ── Registry ─────────────────────────────────────────────────────────────
 
+// The picker is organised by *technology* first, then by what the circuit
+// does. The point of the library is that the same logic gets built several
+// ways out of different physical devices, so grouping by technology lets
+// you read a NAND gate three times over and compare, instead of hunting
+// through one flat list of gates.
+//
+//   Relays  — coils and contacts only, no semiconductors.
+//   CMOS    — complementary N/P pairs, both rails driven, no static current.
+//   NMOS    — N-channel plus a resistor load: how it was done before CMOS,
+//             and how the real 4004 was built.
+//   General — no transistors at all (diode logic), or deliberately spanning
+//             technologies. These are the bridges between the sections.
+//
+// Entries can be listed in any order below; this array is what the picker
+// follows. A group named here with no circuits in it simply does not appear.
+export const GROUP_ORDER = [
+  'Relays · Basics',
+  'Relays · Gates',
+  'Relays · Memory',
+  'Relays · Arithmetic',
+  'General',
+  'CMOS · Basics',
+  'CMOS · Gates',
+  'CMOS · Buses',
+  'CMOS · Memory',
+  'CMOS · Arithmetic',
+  'NMOS · Basics',
+  'NMOS · Arrays',
+];
+
 export const CIRCUITS = [
-  { id: 'relay101', group: 'Basics', name: 'Meet the Relay', build: buildRelay101,
+  { id: 'relay101', group: 'Relays · Basics', name: 'Meet the Relay', build: buildRelay101,
     desc: 'One relay: energize the coil and the armature snaps over, closing the normally-open contact and opening the normally-closed one. Everything else here is built from just this.' },
-  { id: 'buzzer', group: 'Basics', name: 'Buzzer', build: buildBuzzer,
+  { id: 'buzzer', group: 'Relays · Basics', name: 'Buzzer', build: buildBuzzer,
     desc: 'The relay interrupts its own coil through its NC contact, so it chatters forever — the classic doorbell buzzer. Hold PRESS and crank the speed up.' },
-  { id: 'osc', group: 'Basics', name: 'Ring Oscillator', build: buildOscillator,
+  { id: 'osc', group: 'Relays · Basics', name: 'Ring Oscillator', build: buildOscillator,
     desc: 'Three NOT relays in a loop. An odd number of inversions can never settle, so the pulse chases itself around the ring at a speed set by the relay delay.' },
-  { id: 'not', group: 'Gates', name: 'NOT', build: buildNot,
+  { id: 'not', group: 'Relays · Gates', name: 'NOT', build: buildNot,
     desc: 'Inversion is free with relays: the normally-closed contact conducts exactly when the coil is off.' },
-  { id: 'and', group: 'Gates', name: 'AND', build: buildAnd,
+  { id: 'and', group: 'Relays · Gates', name: 'AND', build: buildAnd,
     desc: 'Two normally-open contacts in series — current only gets through when both relays pull in.' },
-  { id: 'or', group: 'Gates', name: 'OR', build: buildOr,
+  { id: 'or', group: 'Relays · Gates', name: 'OR', build: buildOr,
     desc: 'Two normally-open contacts in parallel — either relay can complete the path.' },
-  { id: 'xor', group: 'Gates', name: 'XOR', build: buildXor,
+  { id: 'xor', group: 'Relays · Gates', name: 'XOR', build: buildXor,
     desc: 'Two changeover paths criss-cross like a hallway light with two wall switches: the lamp is on when the switches disagree.' },
-  { id: 'nand', group: 'Gates', name: 'NAND', build: buildNand,
+  { id: 'nand', group: 'Relays · Gates', name: 'NAND', build: buildNand,
     desc: 'Parallel normally-closed contacts: the light stays on unless both relays pull in. NAND alone is enough to build everything else.' },
-  { id: 'nor', group: 'Gates', name: 'NOR', build: buildNor,
+  { id: 'nor', group: 'Relays · Gates', name: 'NOR', build: buildNor,
     desc: 'Series normally-closed contacts: on only when both relays are at rest.' },
-  { id: 'dec24', group: 'Gates', name: '2-to-4 Decoder', build: buildDecoder,
+  { id: 'dec24', group: 'Relays · Gates', name: '2-to-4 Decoder', build: buildDecoder,
     desc: 'A contact tree: relay A splits the current two ways, relay B splits each again. Two inputs select exactly one of four lamps — this is how addresses select memory rows.' },
-  { id: 't101', group: 'Solid State', name: 'Meet the Transistor', build: buildTransistor101,
+  { id: 't101', group: 'General', name: 'Meet the Transistor', build: buildTransistor101,
     desc: 'A MOSFET is a relay with no moving parts: the gate is isolated from the channel exactly like a coil is isolated from its contacts. N-channel conducts when the gate is high, P-channel when it is low — the two throws of a relay, split into two devices. Each output needs a resistor to hold it down, because a transistor that is off does not pull anything low; it just lets go.' },
-  { id: 'cmosinv', group: 'Solid State', name: 'CMOS Inverter', build: buildCmosInverter,
+  { id: 'cmosinv', group: 'CMOS · Basics', name: 'CMOS Inverter', build: buildCmosInverter,
     desc: 'Two transistors, and the whole of CMOS in miniature: the P-channel pulls the output up, the N-channel pulls it down, and the input turns exactly one of them on. Slow the clock right down and watch the handover — for a moment both are on (a red X, a dead short through the pair) or both are off (a dashed Z, the output floating on its own charge). Real chips fight both.' },
-  { id: 'cmosnand', group: 'Solid State', name: 'CMOS NAND', build: buildCmosNand,
+  { id: 'cmosnand', group: 'CMOS · Gates', name: 'CMOS NAND', build: buildCmosNand,
     desc: 'Four transistors. The pull-down network is the logic — two N-channels in series, so both inputs must be high to reach ground — and the pull-up is its exact complement, two P-channels in parallel. Every static CMOS gate is built this way, and the pull-up is always the dual of the pull-down.' },
-  { id: 'cmosnor', group: 'Solid State', name: 'CMOS NOR', build: buildCmosNor,
+  { id: 'cmosnor', group: 'CMOS · Gates', name: 'CMOS NOR', build: buildCmosNor,
     desc: 'The mirror image of NAND: series P-channels above, parallel N-channels below. Swap series for parallel in both networks and the gate inverts — which is why NAND and NOR come in pairs and why either one alone can build a computer.' },
-  { id: 'nmosinv', group: 'Solid State', name: 'NMOS Inverter', build: buildNmosInverter,
+  { id: 'nmosinv', group: 'NMOS · Basics', name: 'NMOS Inverter', build: buildNmosInverter,
     desc: 'How it was done before CMOS, and how the 4004 itself was built: one transistor and a resistor load. It works — but the load only ever drives weakly, so whenever the output is low there is a permanent path from the rail to ground. That static current is why early chips ran hot and why the second transistor was worth adding.' },
-  { id: 'diode', group: 'Solid State', name: 'Diode Logic', build: buildDiodeLogic,
+  { id: 'diode', group: 'General', name: 'Diode Logic', build: buildDiodeLogic,
     desc: 'The one directional device here: a diode passes a 1 forward and a 0 backward, and blocks the other way. Point them one way with a pull-down and you get OR; turn them around under a pull-up and you get AND. No transistors at all — but also no gain, so the output is weaker than the input and these cannot be chained. That is exactly why amplifying devices had to be invented.' },
-  { id: 'tgate', group: 'Solid State', name: 'Transmission Gate', build: buildTransmissionGate,
+  { id: 'tgate', group: 'CMOS · Gates', name: 'Transmission Gate', build: buildTransmissionGate,
     desc: 'An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors.' },
-  { id: 'tristate', group: 'Solid State', name: 'Tri-State Bus', build: buildTriState,
+  { id: 'tristate', group: 'CMOS · Buses', name: 'Tri-State Bus', build: buildTriState,
     desc: 'Two drivers, one shared wire, and nothing to arbitrate. Enable one and the bus follows it. Enable neither and the bus floats — dashed Z, holding its last value on stray capacitance until it leaks away. Enable both with different data and they fight: a red X, a rail-to-rail short. This is the thing relays cannot do, and it is what lets a CPU have buses instead of a multiplexer tree for every destination.',
     // D1/D2 and EN1/EN2 group into 2-bit buses D and EN by the trailing-
     // digit rule, so bit 0 is driver 1 and bit 1 is driver 2.
@@ -1089,15 +1126,15 @@ export const CIRCUITS = [
         { code: 'X', name: 'Both, disagreeing', note: 'contention — a real short' },
       ],
     } },
-  { id: 'tech3', group: 'Solid State', name: 'Three Technologies', build: buildThreeTech,
+  { id: 'tech3', group: 'General', name: 'Three Technologies', build: buildThreeTech,
     desc: 'One NAND gate, built three ways from the same two inputs: two relays, two transistors and a resistor, then four transistors. Same truth table, same lamps, wildly different machines — and the CMOS output lands while the armatures are still travelling.' },
-  { id: 'srlatch', group: 'Memory', name: 'SR Latch', build: buildSrLatch,
+  { id: 'srlatch', group: 'Relays · Memory', name: 'SR Latch', build: buildSrLatch,
     desc: 'Tap SET and the relay feeds its own coil through its own contact — it remembers. RESET breaks the hold path. One bit of memory.' },
-  { id: 'dlatch', group: 'Memory', name: 'D Latch', build: buildDLatch,
+  { id: 'dlatch', group: 'Relays · Memory', name: 'D Latch', build: buildDLatch,
     desc: 'While EN is on, Q follows D through one path; when EN drops, a second path lets Q hold itself. Flip D with EN off — nothing happens until you open the gate.' },
-  { id: 'reg4', group: 'Memory', name: '4-bit Register', build: buildRegister4,
+  { id: 'reg4', group: 'Relays · Memory', name: '4-bit Register', build: buildRegister4,
     desc: 'Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it.' },
-  { id: 'regfile', group: 'Memory', name: '16×4 Register File', build: buildRegFile,
+  { id: 'regfile', group: 'CMOS · Memory', name: '16×4 Register File', build: buildRegFile,
     desc: 'The 4004’s index registers: sixteen 4-bit words, written through one address port and read through another, so the machine can read one register while writing a different one. Every row drives the same four bit lines through tri-state gates — one shared bus, sixteen possible drivers. Set WA and D, raise WE to store, then read any address back. Drop WE before changing the address: these are level-sensitive latches, so moving the address with WE still high walks the word into the next register, exactly as the real part does.',
     readout: v => `read r${v.RA} → ${v.Q}   ·   write r${v.WA} ← ${v.D}${v.WE ? '  (WE high — storing now)' : ''}`,
     hints: {
@@ -1137,7 +1174,7 @@ export const CIRCUITS = [
         };
       }),
     } },
-  { id: 'rom8', group: 'Memory', name: 'Program ROM', build: buildRom8,
+  { id: 'rom8', group: 'NMOS · Arrays', name: 'Program ROM', build: buildRom8,
     desc: 'A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.',
     readout: v => {
       const ch = v.D;
@@ -1160,7 +1197,39 @@ export const CIRCUITS = [
         mark: i === v.A ? 'read' : null,
       })),
     } },
-  { id: 'alu4', group: 'Arithmetic', name: '4-bit ALU', build: buildAlu4,
+  { id: 'romcmos', group: 'CMOS · Memory', name: 'CMOS Program ROM',
+    build: () => buildRom8('precharge'),
+    desc: 'The same 8 × 8 array with no resistors anywhere — a P-channel per bit line instead. It reads in two phases: with PRE low the pull-ups charge every line high, then PRE goes high, the pull-ups switch off, and the selected row discharges only the lines that have a transistor. Nothing ever fights, so unlike the NMOS version there is no path from rail to ground and no static current — which is the whole reason CMOS replaced NMOS. The cost is that a line reading 1 is only floating on its own charge (dashed, Z), so the reading is valid until the charge leaks away. That is dynamic logic, and it is why such chips have a minimum clock speed as well as a maximum.',
+    readout: v => {
+      if (!v.PRE) return 'PRE low — precharging, every line pulled high';
+      const ch = v.D;
+      const glyph = ch >= 32 && ch < 127 ? String.fromCharCode(ch) : '·';
+      return `addr ${v.A} → ${ch} = 0x${ch.toString(16).toUpperCase().padStart(2, '0')} = "${glyph}"`;
+    },
+    hints: {
+      A: 'address — which of the 8 stored words to read',
+      PRE: 'low charges every bit line; raise it to evaluate the word',
+      D: 'the word at that address',
+    },
+    table: {
+      title: 'Read cycle',
+      select: v => (v.PRE ? 1 : 0),
+      rows: [
+        { code: '1.', name: 'PRE low', note: 'pull-ups on, every line charged high' },
+        { code: '2.', name: 'PRE high', note: 'pull-ups off, the row discharges its 0s' },
+      ],
+    },
+    state: {
+      title: 'Stored contents',
+      columns: 4,
+      key: 'amber = the word the address lines are selecting',
+      read: (c, v) => [...'LOGIC 42'].map((ch, i) => ({
+        label: String(i),
+        text: ch === ' ' ? '␣' : ch,
+        mark: i === v.A ? 'read' : null,
+      })),
+    } },
+  { id: 'alu4', group: 'CMOS · Arithmetic', name: '4-bit ALU', build: buildAlu4,
     desc: 'Six functions over two nibbles, chosen by F. Every function is computed at once and a transmission gate steers the selected one onto a shared result bus — one wire with six possible drivers, the way a CPU does it, not a mux tree per destination. 538 transistors, composed from gate modules rather than placed by hand. Codes 6 and 7 select nothing, and the bus floats.',
     hints: {
       A: 'first operand',
@@ -1223,19 +1292,19 @@ export const CIRCUITS = [
       const borrow = v.F === 1 && !v.Cout ? '  (borrow — negative)' : '';
       return `${v.A} ${OPS[v.F]} ${v.B} = ${v.Y}${carry}${borrow}`;
     } },
-  { id: 'halfadd', group: 'Arithmetic', name: 'Half Adder', build: buildHalfAdder,
+  { id: 'halfadd', group: 'Relays · Arithmetic', name: 'Half Adder', build: buildHalfAdder,
     desc: 'XOR gives the sum bit, a series pair gives the carry: 1+1=10. Five contacts on two relays.',
     readout: v => `${v.A} + ${v.B} = ${v.CARRY * 2 + v.SUM}` },
-  { id: 'fulladd', group: 'Arithmetic', name: 'Full Adder', build: buildFullAdder,
+  { id: 'fulladd', group: 'Relays · Arithmetic', name: 'Full Adder', build: buildFullAdder,
     desc: 'Three relays add three bits: a changeover staircase computes the parity (sum) and three series pairs vote on the majority (carry). The building block of every adder.',
     readout: v => `${v.A} + ${v.B} + ${v.Cin} = ${v.Cout * 2 + v.S}` },
-  { id: 'add4', group: 'Arithmetic', name: '4-bit Ripple Adder', build: buildAdder4,
+  { id: 'add4', group: 'Relays · Arithmetic', name: '4-bit Ripple Adder', build: buildAdder4,
     desc: 'Four full adders chained carry-to-carry. Set A=1111 then flip B0 on and watch the carry ripple down the whole row — this is why adders have a "critical path".',
     readout: v => `${v.A} + ${v.B} + ${v.Cin} = ${v.Cout * 16 + v.S}` },
-  { id: 'add8', group: 'Arithmetic', name: '8-bit Ripple Adder', build: buildAdder8,
+  { id: 'add8', group: 'Relays · Arithmetic', name: '8-bit Ripple Adder', build: buildAdder8,
     desc: '24 relays, 88 contacts, numbers up to 255. Zoom out to see the machine, zoom in to watch any single contact. Try 11111111 + 1.',
     readout: v => `${v.A} + ${v.B} + ${v.Cin} = ${v.Cout * 256 + v.S}` },
-  { id: 'addsub4', group: 'Arithmetic', name: '4-bit Adder / Subtractor', build: buildAddSub4,
+  { id: 'addsub4', group: 'Relays · Arithmetic', name: '4-bit Adder / Subtractor', build: buildAddSub4,
     desc: 'Flip SUB and a relay bank inverts every B bit while the same signal injects a carry-in: two’s complement, A−B = A+(~B)+1, in hardware. The seed of an ALU.',
     readout: v => v.SUB
       ? `${v.A} − ${v.B} = ${v.S}${v.Cout ? '' : '  (borrow — negative)'}`

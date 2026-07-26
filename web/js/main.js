@@ -1,4 +1,4 @@
-import { CIRCUITS, buildCircuit } from './circuits.js';
+import { CIRCUITS, GROUP_ORDER, buildCircuit } from './circuits.js';
 import { deriveBuses, busValue } from './buses.js';
 import { VALUE_CHAR } from './engine.js';
 import { Renderer } from './render.js';
@@ -15,16 +15,43 @@ let cssW = 0, cssH = 0;
 
 const sel = document.getElementById('circuit');
 const groups = {};
-for (const e of CIRCUITS) {
-  if (!groups[e.group]) {
-    groups[e.group] = document.createElement('optgroup');
-    groups[e.group].label = e.group;
-    sel.appendChild(groups[e.group]);
+// GROUP_ORDER drives the section order, so the registry array can stay in
+// whatever order reads best. Anything in a group the list forgot still
+// shows up, appended at the end rather than silently dropped.
+// GROUP_ORDER drives the section order, so the registry array can stay in
+// whatever order reads best. Anything in a group the list forgot still
+// shows up, appended at the end rather than silently dropped.
+//
+// HTML select elements cannot nest optgroups, so a two-level menu is faked:
+// the technology becomes a heading and its subsections are indented under
+// it. That keeps "Relays" together as one block instead of scattering
+// Relays · Gates among the CMOS entries alphabetically.
+const order = [...GROUP_ORDER, ...CIRCUITS.map(e => e.group)];
+let lastSection = null;
+for (const g of order) {
+  if (groups[g] || !CIRCUITS.some(e => e.group === g)) continue;
+  const [section, sub] = g.split(' · ');
+  if (section !== lastSection) {
+    lastSection = section;
+    const head = document.createElement('optgroup');
+    head.label = section;
+    sel.appendChild(head);
+    groups[section] = head;
   }
-  const opt = document.createElement('option');
-  opt.value = e.id;
-  opt.textContent = e.name;
-  groups[e.group].appendChild(opt);
+  // a section with no subsections (General) hangs its circuits directly
+  const box = sub ? document.createElement('optgroup') : groups[section];
+  if (sub) {
+    box.label = `  ${sub}`;   // figure spaces: indent under the heading
+    sel.appendChild(box);
+  }
+  groups[g] = box;
+  for (const e of CIRCUITS) {
+    if (e.group !== g) continue;
+    const opt = document.createElement('option');
+    opt.value = e.id;
+    opt.textContent = e.name;
+    box.appendChild(opt);
+  }
 }
 
 const speed = document.getElementById('speed');

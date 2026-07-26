@@ -99,7 +99,29 @@ export function decoder(bits) {
 // (data). Data is active-high at the output: the array is wired-AND and
 // therefore active-low internally, and an inverter per bit line restores
 // the sense — exactly what a real part does with its output buffers.
-export function romArray(words, width, addrBits) {
+// `opts.load` picks how the bit lines are held high when no site pulls
+// them down:
+//
+//   'resistor' — the historical NMOS part. A resistor load drives only
+//                weakly, so whenever a row pulls a line down there is a
+//                permanent path from the rail to ground. That static
+//                current is what made early chips run hot.
+//   'precharge' — full CMOS, and how a real dynamic ROM reads. A P-channel
+//                per line pulls it high while PRE is low, then PRE goes high
+//                and the pull-ups turn *off*; whichever lines have a
+//                transistor at the selected row discharge to ground, and
+//                the rest float, holding their charge. Nothing ever fights,
+//                so there is no static current at all — but the reading is
+//                only valid until the charge leaks away, which is exactly
+//                the trade real dynamic logic makes.
+//
+// Note there is no static-PMOS-load option. A pseudo-NMOS pull-up works in
+// silicon only because the P-channel is deliberately made far weaker than
+// the pull-down; this simulator has one drive strength per transistor, so
+// the two would simply contend and the line would read X. Modelling that
+// honestly is the point — see DEVICES.md on the deliberate simplifications.
+export function romArray(words, width, addrBits, opts = {}) {
+  const load = opts.load || 'resistor';
   const rows = 1 << addrBits;
   if (words.length > rows) {
     throw new Error(`rom: ${words.length} words needs more than ${addrBits} address bits`);
@@ -111,6 +133,9 @@ export function romArray(words, width, addrBits) {
       ...Array.from({ length: addrBits }, (_, i) => ({
         name: `a${i}`, x: -1.5, y: i * 4, side: 'in',
       })),
+      // only the precharged variant has this; binding it otherwise throws
+      ...(load === 'precharge'
+        ? [{ name: 'pre', x: -1.5, y: addrBits * 4 + 4, side: 'in' }] : []),
       ...Array.from({ length: width }, (_, i) => ({
         name: `d${i}`, x: 200, y: i * 6, side: 'out',
       })),
@@ -141,12 +166,37 @@ export function romArray(words, width, addrBits) {
       for (let b = 0; b < width; b++) {
         bit[b] = m.net();
         const x = xArray + b * COL_PITCH;
-        m.resistor(`RL${b}`, VDD, bit[b], x, -8, { vert: true });
-        m.wire(bit[b], [x, -8], [x, 0]);
+        if (load === 'precharge') {
+          // P-channel pull-up, on while PRE is low. The matching foot
+          // transistor below breaks the array's path to ground during that
+          // phase, so the pull-up never has anything to fight — without the
+          // foot, a selected row shorts VDD to VSS through the site and the
+          // line reads X, which is precisely the static current this
+          // arrangement exists to avoid.
+          m.transistor(`PL${b}`, 'pmos', m.port('pre'), VDD, bit[b], x, -9);
+          m.wire(bit[b], [x, -9 + 2.4], [x, 0]);
+        } else {
+          m.resistor(`RL${b}`, VDD, bit[b], x, -8, { vert: true });
+          m.wire(bit[b], [x, -8], [x, 0]);
+        }
         const t = m.net();
         m.instantiate(Inverter, x, rows * ROW_PITCH + 4, { a: bit[b], y: t });
         m.instantiate(Inverter, x, rows * ROW_PITCH + 4 + GATE_H + 2,
           { a: t, y: m.port(`d${b}`) });
+      }
+
+      // Where the array's sites return to. On the resistor part that is
+      // simply ground; on the precharged one it is a foot transistor per
+      // column, gated by PRE, so no site can conduct while the line is
+      // being charged.
+      const foot = [];
+      for (let b = 0; b < width; b++) {
+        if (load !== 'precharge') { foot[b] = VSS; continue; }
+        foot[b] = m.net();
+        const x = xArray + b * COL_PITCH;
+        const yFoot = rows * ROW_PITCH - 2;
+        m.transistor(`FOOT${b}`, 'nmos', m.port('pre'), foot[b], VSS, x, yFoot);
+        m.wire(foot[b], [x, yFoot - 3], [x, yFoot]);
       }
 
       // the array: a transistor wherever the stored bit is 0
@@ -157,8 +207,9 @@ export function romArray(words, width, addrBits) {
         m.wire(row, [xArray - 4, y], [xArray + (width - 1) * COL_PITCH, y]);
         for (let b = 0; b < width; b++) {
           if (((word >> b) & 1) === 0) {
-            // present → pulls the bit line to ground when this row is high
-            m.transistor(`Q${r}_${b}`, 'nmos', row, bit[b], VSS,
+            // present → pulls the bit line toward ground when this row is
+            // high, through the column's foot
+            m.transistor(`Q${r}_${b}`, 'nmos', row, bit[b], foot[b],
               xArray + b * COL_PITCH, y);
           }
           // absent → the site is empty silicon and the line stays pulled up
