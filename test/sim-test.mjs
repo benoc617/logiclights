@@ -6,9 +6,8 @@ import { buildCircuit, CIRCUITS, GROUP_ORDER } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 import { instantiate } from '../web/js/module.js';
-import { Inverter, Nand2, Nor2, And2, Or2, Xor2 } from '../web/js/gates.js';
+import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
-import { DLatch } from '../web/js/gates.js';
 
 let failures = 0;
 let checks = 0;
@@ -689,7 +688,6 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
 // driver is ever open — a second one would show as X, and none as Z.
 {
   const c = buildCircuit('alu4');
-  const buses = deriveBuses(c);
   const OPS = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'SHL'];
   const want = (op, a, b) => {
     switch (op) {
@@ -1018,6 +1016,31 @@ function flipAndStep(c, label, on) {
   expect({ name: 'nmosring' }, 'NMOS handover never shorts the rails', seen.nmosring, false);
 }
 
+// ── composed CMOS gates as library circuits ──────────────────────────────
+// The module-level gate tests exercise And2/Or2/Xor2 directly. These build
+// the *library circuits* wrapped around them, which is a different wiring
+// path — switches bound to module ports, output taken from a lamp — and a
+// swapped port bind there would pass every other test in this file.
+{
+  const gates = {
+    cmosand: (a, b) => (a && b ? 1 : 0),
+    cmosor: (a, b) => (a || b ? 1 : 0),
+    cmosxor: (a, b) => (a ^ b ? 1 : 0),
+  };
+  for (const [id, fn] of Object.entries(gates)) {
+    const c = buildCircuit(id);
+    for (let i = 0; i < 4; i++) {
+      const a = i & 1, b = (i >> 1) & 1;
+      sw(c, 'A', !!a); sw(c, 'B', !!b);
+      settle(c);
+      expect(c, `${id}(${a},${b})`, lampV(c, 'OUT'), fn(a, b) ? HI : LO);
+      // complementary, so both levels are driven hard — this is the
+      // contrast with the NMOS family above
+      expect(c, `${id}(${a},${b}) driven hard`, lampStr(c, 'OUT'), STRONG);
+    }
+  }
+}
+
 // ── the same logic in two technologies ───────────────────────────────────
 // These circuits exist to be compared, so they are tested as pairs: the
 // NMOS and CMOS versions of a function must agree on every input, or the
@@ -1083,6 +1106,14 @@ function flipAndStep(c, label, on) {
       for (let i = 0; i < 4; i++) if (lampV(c, `S${i}`) === HI) s |= 1 << i;
       const co = lampV(c, 'Cout') === HI ? 1 : 0;
       expect(c, `nmosadd4 ${a}+${b}`, co * 16 + s, a + b);
+      // Still NMOS all the way up: a 1 comes from a load resistor and is
+      // WEAK, a 0 is pulled hard to ground. Checking only the arithmetic
+      // would pass on an adder that had quietly acquired CMOS pull-ups,
+      // which is the one thing this circuit exists to contrast.
+      for (let i = 0; i < 4; i++) {
+        expect(c, `nmosadd4 ${a}+${b} S${i} drive`,
+          lampStr(c, `S${i}`), lampV(c, `S${i}`) === HI ? WEAK : STRONG);
+      }
     }
   }
 }
@@ -1108,6 +1139,12 @@ function flipAndStep(c, label, on) {
         }
         expect(c, `nmosalu ${names[f]} ${a},${b}`, got, fns[f](a, b));
         expect(c, `nmosalu ${names[f]} ${a},${b} settled`, clean, true);
+        // the result comes through an OR of gated candidates, all NMOS, so
+        // the drive asymmetry has to survive the whole mux tree
+        for (let i = 0; i < 4; i++) {
+          expect(c, `nmosalu ${names[f]} ${a},${b} Y${i} drive`,
+            lampStr(c, `Y${i}`), lampV(c, `Y${i}`) === HI ? WEAK : STRONG);
+        }
       }
     }
   }
@@ -1141,7 +1178,11 @@ function flipAndStep(c, label, on) {
   const idPattern = new RegExp(schema.definitions.circuit.properties.id.pattern);
   const ctx = { name: 'circuits.json' };
 
-  expect(ctx, 'catalogue covers every circuit', cat.circuits.length, CIRCUITS.length);
+  // Compare by id, not by count: two entries could drift — one renamed,
+  // another dropped — and a length check would still pass at 48.
+  const catIds = cat.circuits.map(e => e.id).sort().join(',');
+  const regIds = CIRCUITS.map(e => e.id).sort().join(',');
+  expect(ctx, 'catalogue and registry hold the same ids', catIds, regIds);
   const ids = new Set();
   for (const e of cat.circuits) {
     for (const key of required) {
