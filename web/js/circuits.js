@@ -9,6 +9,7 @@ import { Circuit, VCC, VDD, VSS, VALUE_CHAR } from './engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from './geometry.js';
 import { instantiate } from './module.js';
 import { Alu4, ALU_BITS } from './alu.js';
+import { And2, Or2, Xor2 } from './gates.js';
 import { romArray } from './rom.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from './regfile.js';
 
@@ -711,6 +712,193 @@ function buildCmosNor() {
   return c;
 }
 
+// NMOS logic is the pull-down network alone: a resistor holds the output
+// high, and whatever pattern of N-channels you wire below it decides when
+// the output gets pulled down. Series is NAND, parallel is NOR — the same
+// two shapes as CMOS, but with no complementary network above, which is why
+// NMOS needs roughly half the transistors and pays for it in static current.
+function nmosGate(name, series, invert) {
+  return () => {
+    const c = new Circuit(name);
+    const yTop = 0, yBot = 20;
+    const { A, B } = mosScaffold(c, 32, yTop, yBot, [['A', 5], ['B', 10]]);
+    const out = c.net();
+    c.addResistor('RL', VDD, out, 14, 2, { vert: true });
+    w(c, VDD, [14, yTop], [14, 0.8]);
+
+    if (series) {
+      // both must be high to reach ground → NAND
+      const mid = c.net();
+      c.addTransistor('NA', 'nmos', A, out, mid, 14, 7);
+      c.addTransistor('NB', 'nmos', B, mid, VSS, 14, 12);
+      w(c, out, [14, 3.2], [14, 7]);
+      w(c, mid, [14, 9.4], [14, 12]);
+      w(c, VSS, [14, 14.4], [14, yBot]);
+      w(c, A, [5.2, 5], [12.5, 5], [12.5, 8.2]);
+      w(c, B, [5.2, 10], [10, 10], [10, 13.2], [12.5, 13.2]);
+    } else {
+      // either one high reaches ground → NOR
+      c.addTransistor('NA', 'nmos', A, out, VSS, 14, 8);
+      c.addTransistor('NB', 'nmos', B, out, VSS, 20, 8);
+      w(c, out, [14, 3.2], [14, 8]);
+      w(c, out, [14, 5.6], [20, 5.6], [20, 8]);
+      w(c, VSS, [14, 10.4], [14, yBot]);
+      w(c, VSS, [20, 10.4], [20, yBot]);
+      w(c, A, [5.2, 5], [12.5, 5], [12.5, 9.2]);
+      w(c, B, [5.2, 10], [10, 10], [10, 16], [18.5, 16], [18.5, 9.2]);
+    }
+
+    // AND and OR are the inverted forms, so they cost an extra inverter —
+    // exactly as in CMOS, and the reason NAND and NOR are the primitives.
+    let final = out;
+    if (invert) {
+      final = c.net();
+      c.addResistor('RL2', VDD, final, 26, 2, { vert: true });
+      c.addTransistor('NI', 'nmos', out, final, VSS, 26, 8);
+      w(c, VDD, [26, yTop], [26, 0.8]);
+      w(c, final, [26, 3.2], [26, 8]);
+      w(c, VSS, [26, 10.4], [26, yBot]);
+      w(c, out, [14, 6.5], [24.5, 6.5], [24.5, 9.2]);
+    }
+    w(c, final, [invert ? 26 : 14, 6.5], [invert ? 30 : 28, 6.5]);
+    c.addLamp('OUT', final, invert ? 30 : 28, 6.5);
+    return c;
+  };
+}
+
+// A ring oscillator in silicon. Same idea as the relay version — an odd
+// number of inversions can never settle — but where the relay ring ticks at
+// armature speed you can watch, this one runs at transistor speed, which is
+// the whole point of the comparison. Ring oscillators are also how you
+// measure a real process: fabricate one, count the frequency, and you know
+// how fast the transistors are.
+//
+// `stages` counts the plain inverters only. The run/stop NAND at the head
+// of the ring is itself an inversion, so the total is stages + 1 and
+// `stages` must be EVEN — two inverters plus the NAND is three inversions.
+// Three inverters would make four, which is even, and the ring would simply
+// sit in a stable state.
+function buildRing(name, kind, stages) {
+  if (stages % 2 !== 0) {
+    throw new Error(`${name}: stages must be even (the gating NAND inverts too)`);
+  }
+  return () => {
+    const c = new Circuit(name);
+    const yTop = 0, yBot = 18;
+    const { RUN } = mosScaffold(c, 12 + stages * 12, yTop, yBot, [['RUN', 8]]);
+
+    const nets = [];
+    for (let i = 0; i < stages; i++) nets.push(c.net());
+
+    // A real ring starts itself: thermal noise is enough, because the loop
+    // has gain and any imbalance runs away. This model has no noise, and a
+    // floating gate turns its transistor off, so a CMOS ring would sit at Z
+    // at power-on and never move. One weak pull-down gives it a definite
+    // starting state — the equivalent of the relay version's coils
+    // defaulting to de-energized.
+    //
+    // The NMOS ring needs no such help: every stage already has a resistor
+    // load holding its output high, so no node is ever floating. Adding one
+    // here would in fact break it, forming a divider against that load and
+    // pinning the node at X.
+    if (kind === 'cmos') {
+      c.addResistor('RS', nets[stages - 1], VSS, 12 + stages * 12 - 4, 14);
+    }
+
+    // The ring is gated so it can be stopped: stage 0's input is the last
+    // stage NANDed with RUN, which for one extra transistor gives a run/stop
+    // control instead of a ring that free-runs from power-on.
+    const gated = c.net();
+    const x0 = 14;
+    if (kind === 'cmos') {
+      c.addTransistor('GP1', 'pmos', RUN, VDD, gated, x0, 2);
+      c.addTransistor('GP2', 'pmos', nets[stages - 1], VDD, gated, x0 + 5, 2);
+      const gm = c.net();
+      c.addTransistor('GN1', 'nmos', RUN, gated, gm, x0, 9);
+      c.addTransistor('GN2', 'nmos', nets[stages - 1], gm, VSS, x0, 13);
+      w(c, VDD, [x0, yTop], [x0, 2]);
+      w(c, VDD, [x0 + 5, yTop], [x0 + 5, 2]);
+      w(c, gated, [x0, 4.4], [x0, 9]);
+      w(c, gated, [x0 + 5, 4.4], [x0 + 5, 6], [x0, 6]);
+      w(c, gm, [x0, 11.4], [x0, 13]);
+      w(c, VSS, [x0, 15.4], [x0, yBot]);
+    } else {
+      // NMOS: series pull-down under a load, no complementary network
+      c.addResistor('RG', VDD, gated, x0, 2, { vert: true });
+      const gm = c.net();
+      c.addTransistor('GN1', 'nmos', RUN, gated, gm, x0, 8);
+      c.addTransistor('GN2', 'nmos', nets[stages - 1], gm, VSS, x0, 12.5);
+      w(c, VDD, [x0, yTop], [x0, 0.8]);
+      w(c, gated, [x0, 3.2], [x0, 8]);
+      w(c, gm, [x0, 10.4], [x0, 12.5]);
+      w(c, VSS, [x0, 14.9], [x0, yBot]);
+    }
+    w(c, RUN, [5.2, 8], [x0 - 2.4, 8], [x0 - 2.4, kind === 'cmos' ? 10.2 : 9.2]);
+
+    // the inverter chain
+    let input = gated;
+    for (let i = 0; i < stages; i++) {
+      const x = x0 + 10 + i * 11;
+      const out = nets[i];
+      if (kind === 'cmos') {
+        c.addTransistor(`P${i}`, 'pmos', input, VDD, out, x, 4);
+        c.addTransistor(`N${i}`, 'nmos', input, out, VSS, x, 10);
+        w(c, VDD, [x, yTop], [x, 4]);
+        w(c, out, [x, 6.4], [x, 10]);
+        w(c, VSS, [x, 12.4], [x, yBot]);
+      } else {
+        c.addResistor(`R${i}`, VDD, out, x, 3, { vert: true });
+        c.addTransistor(`N${i}`, 'nmos', input, out, VSS, x, 9);
+        w(c, VDD, [x, yTop], [x, 1.8]);
+        w(c, out, [x, 4.2], [x, 9]);
+        w(c, VSS, [x, 11.4], [x, yBot]);
+      }
+      w(c, input, [x - 1.5, kind === 'cmos' ? 5.2 : 10.2],
+        [x - 1.5, kind === 'cmos' ? 11.2 : 10.2]);
+      w(c, input, [x - 4, 8], [x - 1.5, 8]);
+      c.addLamp(`Q${i}`, out, x + 2.5, 8, { short: `Q${i}` });
+      input = out;
+    }
+    // close the ring: the last stage feeds the gate at the start
+    const xLast = x0 + 10 + (stages - 1) * 11;
+    w(c, nets[stages - 1], [xLast + 2.5, 8], [xLast + 5, 8],
+      [xLast + 5, yBot - 2], [x0 + 2, yBot - 2],
+      [x0 + 2, kind === 'cmos' ? 14.2 : 13.7]);
+    return c;
+  };
+}
+
+// CMOS AND / OR / XOR, built from the gate modules. Unlike the hand-routed
+// CMOS NAND and NOR next to them, these are composed — which is the honest
+// way to show what they cost: AND is a NAND plus an inverter, and XOR is
+// four NANDs, so the "simple" gates are the expensive ones.
+function buildCmosComposed(name, def, note) {
+  return () => {
+    const c = new Circuit(name);
+    c.implicitGround = false;
+    const yTop = -6, yBot = 46;
+    const a = c.net(), b = c.net();
+    c.addSwitch('A', a, 'toggle', 4, 6, { to: VSS });
+    c.addSwitch('B', b, 'toggle', 4, 12, { to: VSS });
+    const inst = instantiate(c, def, 18, 0, { a, b });
+
+    const bounds = c.bounds();
+    const xEnd = bounds.x1 + 8;
+    w(c, VDD, [0, yTop], [xEnd, yTop]);
+    w(c, VSS, [0, yBot], [xEnd, yBot]);
+    c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+    c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+    for (const s of c.switches) {
+      const t = switchSpdtT(s);
+      w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+      w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+    }
+    c.addLamp('OUT', inst.nets.y, xEnd - 4, 8);
+    c.region(note, 16, -3, bounds.x1 + 1, 24);
+    return c;
+  };
+}
+
 function buildNmosInverter() {
   const c = new Circuit('NMOS Inverter');
   const yTop = 0, yBot = 15;
@@ -1064,6 +1252,7 @@ export const GROUP_ORDER = [
   'CMOS · Memory',
   'CMOS · Arithmetic',
   'NMOS · Basics',
+  'NMOS · Gates',
   'NMOS · Arrays',
 ];
 
@@ -1100,6 +1289,15 @@ export const CIRCUITS = [
     desc: 'How it was done before CMOS, and how the 4004 itself was built: one transistor and a resistor load. It works — but the load only ever drives weakly, so whenever the output is low there is a permanent path from the rail to ground. That static current is why early chips ran hot and why the second transistor was worth adding.' },
   { id: 'diode', group: 'General', name: 'Diode Logic', build: buildDiodeLogic,
     desc: 'The one directional device here: a diode passes a 1 forward and a 0 backward, and blocks the other way. Point them one way with a pull-down and you get OR; turn them around under a pull-up and you get AND. No transistors at all — but also no gain, so the output is weaker than the input and these cannot be chained. That is exactly why amplifying devices had to be invented.' },
+  { id: 'cmosand', group: 'CMOS · Gates', name: 'CMOS AND',
+    build: buildCmosComposed('CMOS AND', And2, 'NAND + inverter'),
+    desc: 'There is no such thing as a CMOS AND gate — only a NAND with an inverter bolted on, which is what you are looking at. Six transistors where the NAND alone needs four, and one more gate delay. Compare the relay AND: two contacts in series, and inversion is the thing that costs extra there. Each technology makes a different gate cheap, and that shapes how logic gets written for it.' },
+  { id: 'cmosor', group: 'CMOS · Gates', name: 'CMOS OR',
+    build: buildCmosComposed('CMOS OR', Or2, 'NOR + inverter'),
+    desc: 'A NOR plus an inverter, for the same reason AND is a NAND plus an inverter: the complementary pull-up network of a static CMOS gate always inverts. Nothing in CMOS produces a non-inverted output for free.' },
+  { id: 'cmosxor', group: 'CMOS · Gates', name: 'CMOS XOR',
+    build: buildCmosComposed('CMOS XOR', Xor2, 'four NAND gates'),
+    desc: 'Four NAND gates — sixteen transistors for a function a single relay changeover contact gives you for nothing (see the relay XOR). XOR is the gate where relays genuinely beat transistors on device count, and it is why the relay adder is so much smaller than you would guess: its sum output is pure changeover staircase.' },
   { id: 'tgate', group: 'CMOS · Gates', name: 'Transmission Gate', build: buildTransmissionGate,
     desc: 'An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors.' },
   { id: 'tristate', group: 'CMOS · Buses', name: 'Tri-State Bus', build: buildTriState,
@@ -1174,6 +1372,24 @@ export const CIRCUITS = [
         };
       }),
     } },
+  { id: 'nmosring', group: 'NMOS · Basics', name: 'NMOS Ring Oscillator',
+    build: buildRing('NMOS Ring Oscillator', 'nmos', 2),
+    desc: 'The same trick as the relay Ring Oscillator — an odd number of inversions in a loop can never settle — but in silicon. Two inverters plus the run/stop NAND makes three, so raising RUN closes the ring and it never stops. Watch the asymmetry the relay version cannot show you: each stage snaps down hard through its transistor and drifts up slowly through its load resistor, so the waveform is lopsided. That is the NMOS pull-up being weak, and it is half of why CMOS won.' },
+  { id: 'cmosring', group: 'CMOS · Basics', name: 'CMOS Ring Oscillator',
+    build: buildRing('CMOS Ring Oscillator', 'cmos', 2),
+    desc: 'The same ring in complementary CMOS. Both edges are now driven hard — the P-channel pulls up as strongly as the N-channel pulls down — so the waveform is symmetric where the NMOS one drifts. Ring oscillators are how you actually measure a fabrication process: build one, count its frequency, and you know how fast the transistors came out.' },
+  { id: 'nmosnand', group: 'NMOS · Gates', name: 'NMOS NAND',
+    build: nmosGate('NMOS NAND', true, false),
+    desc: 'Two N-channels in series under a resistor load. Compare it with the CMOS NAND: same pull-down network, but no complementary pull-up above it — half the transistors, and the output is only ever pulled high weakly. Whenever the output is low there is a permanent path from the rail to ground through the load, which is the static current that made NMOS chips run hot.' },
+  { id: 'nmosnor', group: 'NMOS · Gates', name: 'NMOS NOR',
+    build: nmosGate('NMOS NOR', false, false),
+    desc: 'Two N-channels in parallel: either input high pulls the output down. In NMOS the NOR is the cheap gate — parallel transistors do not stack their resistance the way a series chain does, so NOR was the workhorse where CMOS designers prefer NAND.' },
+  { id: 'nmosand', group: 'NMOS · Gates', name: 'NMOS AND',
+    build: nmosGate('NMOS AND', true, true),
+    desc: 'A NAND followed by an inverter, and you can see the cost: AND needs a whole second stage with its own load resistor, so it burns current in two places instead of one. This is why the primitive gate of any technology is the inverting one, and why designers rewrite logic to avoid the non-inverted forms.' },
+  { id: 'nmosor', group: 'NMOS · Gates', name: 'NMOS OR',
+    build: nmosGate('NMOS OR', false, true),
+    desc: 'A NOR plus an inverter. Same story as AND: the extra stage doubles the static current and adds a full gate delay, for an output that a NOR feeding the next stage could often have given you for free.' },
   { id: 'rom8', group: 'NMOS · Arrays', name: 'Program ROM', build: buildRom8,
     desc: 'A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.',
     readout: v => {

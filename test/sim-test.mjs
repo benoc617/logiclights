@@ -943,6 +943,80 @@ function flipAndStep(c, label, on) {
   }
 }
 
+// ── NMOS gate family ─────────────────────────────────────────────────────
+// The pull-down network alone under a resistor load. Same shapes as CMOS —
+// series is NAND, parallel is NOR — but with no complementary pull-up, so
+// every 1 is driven only weakly and every 0 is driven hard. That asymmetry
+// is the whole difference between the technologies, so assert on strength.
+{
+  const gates = {
+    nmosnand: (a, b) => (a && b ? 0 : 1),
+    nmosnor: (a, b) => (a || b ? 0 : 1),
+    nmosand: (a, b) => (a && b ? 1 : 0),
+    nmosor: (a, b) => (a || b ? 1 : 0),
+  };
+  for (const [id, fn] of Object.entries(gates)) {
+    const c = buildCircuit(id);
+    for (let i = 0; i < 4; i++) {
+      const a = i & 1, b = (i >> 1) & 1;
+      sw(c, 'A', !!a); sw(c, 'B', !!b);
+      settle(c);
+      const want = fn(a, b);
+      expect(c, `${id}(${a},${b})`, lampV(c, 'OUT'), want ? HI : LO);
+      // a 1 comes from the load resistor and is WEAK; a 0 is pulled hard
+      // to ground by the transistor. Reversing this would mean the gate
+      // had somehow acquired a complementary pull-up.
+      expect(c, `${id}(${a},${b}) drive strength`,
+        lampStr(c, 'OUT'), want ? WEAK : STRONG);
+    }
+  }
+}
+
+// ── ring oscillators in silicon ──────────────────────────────────────────
+{
+  for (const id of ['nmosring', 'cmosring']) {
+    const c = buildCircuit(id);
+    // RUN low breaks the loop, so it must settle
+    sw(c, 'RUN', false);
+    settle(c);
+    // RUN high closes an odd number of inversions: it can never settle
+    sw(c, 'RUN', true);
+    clock += 5000; c.step(clock);
+    let events = 0;
+    for (let k = 0; k < 40; k++) {
+      const t = c.nextEventAt();
+      if (t === null) break;
+      clock = t + 0.001;
+      c.step(clock);
+      events++;
+    }
+    expect(c, `${id} keeps oscillating`, events, 40);
+  }
+  // The comparison worth making: a CMOS stage glitches through X on every
+  // handover — both halves briefly on, a real crowbar — while an NMOS
+  // stage cannot, because a resistor load never fights hard enough to
+  // short the rails. This is why CMOS burns power per transition and NMOS
+  // burns it continuously.
+  const seen = {};
+  for (const id of ['nmosring', 'cmosring']) {
+    const c = buildCircuit(id);
+    sw(c, 'RUN', true);
+    clock += 5000; c.step(clock);
+    let sawX = false;
+    for (let k = 0; k < 60; k++) {
+      const t = c.nextEventAt();
+      if (t === null) break;
+      clock = t + 0.001;
+      c.step(clock);
+      c.solve();
+      if (c.lamps.some(l => c.value[l.net] === X)) sawX = true;
+    }
+    seen[id] = sawX;
+  }
+  expect({ name: 'cmosring' }, 'CMOS handover glitches through X', seen.cmosring, true);
+  expect({ name: 'nmosring' }, 'NMOS handover never shorts the rails', seen.nmosring, false);
+}
+
 // ── picker grouping ──────────────────────────────────────────────────────
 // Sections are by technology, so a circuit's group has to match the devices
 // it is actually made of — otherwise a new circuit lands in the wrong
