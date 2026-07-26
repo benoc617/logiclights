@@ -1060,7 +1060,29 @@ export const CIRCUITS = [
   { id: 'tgate', group: 'Solid State', name: 'Transmission Gate', build: buildTransmissionGate,
     desc: 'An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors.' },
   { id: 'tristate', group: 'Solid State', name: 'Tri-State Bus', build: buildTriState,
-    desc: 'Two drivers, one shared wire, and nothing to arbitrate. Enable one and the bus follows it. Enable neither and the bus floats — dashed Z, holding its last value on stray capacitance until it leaks away. Enable both with different data and they fight: a red X, a rail-to-rail short. This is the thing relays cannot do, and it is what lets a CPU have buses instead of a multiplexer tree for every destination.' },
+    desc: 'Two drivers, one shared wire, and nothing to arbitrate. Enable one and the bus follows it. Enable neither and the bus floats — dashed Z, holding its last value on stray capacitance until it leaks away. Enable both with different data and they fight: a red X, a rail-to-rail short. This is the thing relays cannot do, and it is what lets a CPU have buses instead of a multiplexer tree for every destination.',
+    // D1/D2 and EN1/EN2 group into 2-bit buses D and EN by the trailing-
+    // digit rule, so bit 0 is driver 1 and bit 1 is driver 2.
+    hints: {
+      D: 'what each driver would put on the bus (bit 0 = driver 1)',
+      EN: 'which drivers are switched on (bit 0 = driver 1)',
+      BUS: 'the shared wire they all drive',
+    },
+    table: {
+      title: 'What the bus does',
+      select: v => {
+        const e1 = v.EN & 1, e2 = (v.EN >> 1) & 1;
+        const d1 = v.D & 1, d2 = (v.D >> 1) & 1;
+        if (e1 && e2) return d1 === d2 ? 1 : 3;
+        return (e1 || e2) ? 0 : 2;
+      },
+      rows: [
+        { code: '1', name: 'One driver enabled', note: 'the bus follows it' },
+        { code: '2', name: 'Both, agreeing', note: 'no conflict — same value' },
+        { code: 'Z', name: 'Neither enabled', note: 'floating, holds its last value' },
+        { code: 'X', name: 'Both, disagreeing', note: 'contention — a real short' },
+      ],
+    } },
   { id: 'tech3', group: 'Solid State', name: 'Three Technologies', build: buildThreeTech,
     desc: 'One NAND gate, built three ways from the same two inputs: two relays, two transistors and a resistor, then four transistors. Same truth table, same lamps, wildly different machines — and the CMOS output lands while the armatures are still travelling.' },
   { id: 'srlatch', group: 'Memory', name: 'SR Latch', build: buildSrLatch,
@@ -1071,16 +1093,68 @@ export const CIRCUITS = [
     desc: 'Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it.' },
   { id: 'regfile', group: 'Memory', name: '16×4 Register File', build: buildRegFile,
     desc: 'The 4004’s index registers: sixteen 4-bit words, written through one address port and read through another, so the machine can read one register while writing a different one. Every row drives the same four bit lines through tri-state gates — one shared bus, sixteen possible drivers. Set WA and D, raise WE to store, then read any address back. Drop WE before changing the address: these are level-sensitive latches, so moving the address with WE still high walks the word into the next register, exactly as the real part does.',
-    readout: v => `read r${v.RA} → ${v.Q}   ·   write r${v.WA} ← ${v.D}${v.WE ? '  (WE high — storing now)' : ''}` },
+    readout: v => `read r${v.RA} → ${v.Q}   ·   write r${v.WA} ← ${v.D}${v.WE ? '  (WE high — storing now)' : ''}`,
+    hints: {
+      WA: 'write address — which of the 16 registers to store into',
+      D: 'data to write',
+      WE: 'write enable — raise to store, then drop before changing WA',
+      RA: 'read address — independent of WA, so you can read while writing',
+      Q: 'contents of register RA (always live)',
+    },
+    table: {
+      title: 'Writing a register',
+      // only the "raise WE" step has a live state to reflect
+      select: v => (v.WE ? 1 : -1),
+      rows: [
+        { code: '1.', name: 'Set WA and D', note: 'with WE low' },
+        { code: '2.', name: 'Raise WE', note: 'stored while high' },
+        { code: '3.', name: 'Drop WE', note: 'before touching WA again' },
+        { code: '4.', name: 'Set RA', note: 'Q follows it immediately' },
+      ],
+    } },
   { id: 'rom8', group: 'Memory', name: 'Program ROM', build: buildRom8,
     desc: 'A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.',
     readout: v => {
       const ch = v.D;
       const glyph = ch >= 32 && ch < 127 ? String.fromCharCode(ch) : '·';
       return `addr ${v.A} → ${ch} = 0x${ch.toString(16).toUpperCase().padStart(2, '0')} = "${glyph}"`;
+    },
+    hints: {
+      A: 'address — which of the 8 stored words to read',
+      D: 'the word at that address (bit = 1 where the array has no transistor)',
+    },
+    table: {
+      title: 'Stored contents',
+      select: v => v.A,
+      rows: [...'LOGIC 42'].map((ch, i) => ({
+        code: String(i),
+        name: ch === ' ' ? '␣' : ch,
+        note: `0x${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+      })),
     } },
   { id: 'alu4', group: 'Arithmetic', name: '4-bit ALU', build: buildAlu4,
     desc: 'Six functions over two nibbles, chosen by F. Every function is computed at once and a transmission gate steers the selected one onto a shared result bus — one wire with six possible drivers, the way a CPU does it, not a mux tree per destination. 538 transistors, composed from gate modules rather than placed by hand. Codes 6 and 7 select nothing, and the bus floats.',
+    hints: {
+      A: 'first operand',
+      B: 'second operand',
+      F: 'function select — see the table below',
+      Y: 'result',
+      Cout: 'carry out of the top bit (borrow flag when subtracting)',
+    },
+    table: {
+      title: 'Function select (F)',
+      // codes 6 and 7 share the last row — both select nothing
+      select: v => (v.F <= 5 ? v.F : 6),
+      rows: [
+        { code: '000', name: 'ADD', note: 'A + B' },
+        { code: '001', name: 'SUB', note: 'A − B, two’s complement' },
+        { code: '010', name: 'AND', note: 'bitwise' },
+        { code: '011', name: 'OR', note: 'bitwise' },
+        { code: '100', name: 'XOR', note: 'bitwise' },
+        { code: '101', name: 'SHL', note: 'A shifted left one bit' },
+        { code: '11x', name: '—', note: 'nothing selected; the bus floats' },
+      ],
+    },
     readout: v => {
       const OPS = ['+', '−', 'AND', 'OR', 'XOR', '<<'];
       if (v.F > 5) return `F=${v.F}: no function selected — result bus floating`;
@@ -1113,5 +1187,7 @@ export function buildCircuit(id) {
   const c = entry.build();
   c.desc = entry.desc;
   c.readout = entry.readout;
+  c.hints = entry.hints;   // per-bus captions in the I/O table
+  c.table = entry.table;   // legend of selector codes, if the circuit has one
   return c;
 }

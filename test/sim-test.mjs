@@ -782,6 +782,81 @@ function flipAndStep(c, label, on) {
   expect(c, 'settled circuit reports no switchings', c.switchings, 0);
 }
 
+// ── guides: bus hints and selector legends ───────────────────────────────
+// A legend that drifts from the hardware is worse than no legend, so the
+// ALU's table is checked against the circuit it describes.
+{
+  const entry = CIRCUITS.find(e => e.id === 'alu4');
+  const c = buildCircuit('alu4');
+  const t = entry.table;
+  const setBus = (name, val, bits) => {
+    for (let i = 0; i < bits; i++) sw(c, `${name}${i}`, !!((val >> i) & 1));
+  };
+  const OPS = {
+    ADD: (a, b) => (a + b) & 15,
+    SUB: (a, b) => (a - b) & 15,
+    AND: (a, b) => a & b,
+    OR: (a, b) => a | b,
+    XOR: (a, b) => a ^ b,
+    SHL: (a) => (a << 1) & 15,
+  };
+  setBus('A', 12, 4); setBus('B', 10, 4);
+  for (let f = 0; f < 8; f++) {
+    setBus('F', f, 3);
+    const row = t.rows[t.select({ F: f })];
+    expect(c, `legend has a row for F=${f}`, !!row, true);
+    const fn = OPS[row.name];
+    if (!fn) {                       // the "nothing selected" row
+      settle(c);
+      expect(c, `F=${f} legend says unselected, bus is undriven`,
+        lampStr(c, 'Y0') !== STRONG, true);
+      continue;
+    }
+    settle(c);
+    let got = 0;
+    for (let i = 0; i < 4; i++) if (lampV(c, `Y${i}`) === HI) got |= 1 << i;
+    expect(c, `legend row "${row.name}" matches the hardware at F=${f}`,
+      got, fn(12, 10));
+  }
+}
+{
+  // Hints must name buses that actually exist, or they silently never show.
+  for (const entry of CIRCUITS) {
+    if (!entry.hints) continue;
+    const c = buildCircuit(entry.id);
+    const buses = deriveBuses(c);
+    const names = new Set([...buses.inputs, ...buses.outputs, ...buses.internals]
+      .map(b => b.name));
+    for (const key of Object.keys(entry.hints)) {
+      expect(c, `${entry.id}: hint "${key}" names a real bus`, names.has(key), true);
+    }
+  }
+}
+{
+  // Every legend's select() must land inside its own row list.
+  for (const entry of CIRCUITS) {
+    if (!entry.table) continue;
+    const c = buildCircuit(entry.id);
+    const buses = deriveBuses(c);
+    const t = entry.table;
+    // sweep each input bus over its full range, all combinations capped
+    const ins = buses.inputs.slice(0, 4);
+    const combos = 1 << ins.reduce((n, b) => n + Math.min(b.bits.length, 3), 0);
+    for (let k = 0; k < Math.min(combos, 256); k++) {
+      const vals = {};
+      let shift = 0;
+      for (const b of ins) {
+        const w = Math.min(b.bits.length, 3);
+        vals[b.name] = (k >> shift) & ((1 << w) - 1);
+        shift += w;
+      }
+      const i = t.select(vals);
+      expect(c, `${entry.id}: legend select in range`,
+        i === -1 || (i >= 0 && i < t.rows.length), true);
+    }
+  }
+}
+
 // every registered circuit builds, has geometry, and derives sane buses
 for (const e of CIRCUITS) {
   const c = e.build();

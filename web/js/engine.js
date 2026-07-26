@@ -48,6 +48,7 @@ export class Circuit {
     this.buses = [];   // declared internal buses, for the I/O table
     this.wires = [];   // { net, pts: [[x,y], ...] }
     this.labels = [];  // { text, x, y, size, color, align }
+    this.regions = []; // { text, x0, y0, x1, y1 } — annotation only
     this.hot = [true, false];
     this.value = [HI, LO];
     this.strength = [STRONG, STRONG];
@@ -155,6 +156,20 @@ export class Circuit {
 
   label(text, x, y, size = 1, color = null, align = 'center') {
     this.labels.push({ text, x, y, size, color, align });
+  }
+
+  // A named region of the canvas: a labelled box drawn behind the circuit,
+  // saying what this patch of devices is. Purely annotation — it conducts
+  // nothing and the simulation never reads it. On the composed machines a
+  // few hundred transistors otherwise look like undifferentiated texture,
+  // and this is what says "these sixteen rows are the registers".
+  region(text, x0, y0, x1, y1, opts = {}) {
+    this.regions.push({
+      text, x0, y0, x1, y1,
+      color: opts.color || null,
+      // where the caption sits: 'top' (default) or 'bottom'
+      side: opts.side || 'top',
+    });
   }
 
   // Mechanical/process variance: no two devices are quite alike. A
@@ -493,6 +508,8 @@ export class Circuit {
     for (const s of this.switches) grow(s.x, s.y, 2.5);
     for (const l of this.lamps) grow(l.x, l.y, 2.5);
     for (const t of this.labels) grow(t.x, t.y, 2);
+    // regions extend the drawn area, and their captions sit outside the box
+    for (const r of this.regions) { grow(r.x0, r.y0, 2.5); grow(r.x1, r.y1, 2.5); }
     if (x0 === Infinity) { x0 = y0 = 0; x1 = y1 = 10; }
     return { x0, y0, x1, y1 };
   }

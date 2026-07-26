@@ -119,6 +119,8 @@ export function romArray(words, width, addrBits) {
       const bind = {};
       for (let i = 0; i < addrBits; i++) bind[`a${i}`] = m.port(`a${i}`);
       const dec = m.instantiate(Dec, 0, 0, bind);
+      m.region('Row decoder — one line high per address',
+        -3, -3, dec.w + 2, dec.h + 2);
 
       const xArray = GATE_W * (8 + addrBits * 2);
       // The array is the wide part and the decoder is the tall part, so
@@ -162,6 +164,16 @@ export function romArray(words, width, addrBits) {
           // absent → the site is empty silicon and the line stays pulled up
         }
       }
+
+      // Three zones: the pull-ups on top, the array itself, and the output
+      // buffers below. The array box is the one that matters — the ragged
+      // pattern of transistors inside it *is* the stored program.
+      const xLast = xArray + (width - 1) * COL_PITCH;
+      m.region('Storage array — a transistor stores 0, an empty site stores 1',
+        xArray - 6, -4, xLast + 4, (rows - 1) * ROW_PITCH + 4);
+      m.region('Output buffers — restore full drive',
+        xArray - 6, rows * ROW_PITCH + 1,
+        xLast + 4, rows * ROW_PITCH + GATE_H * 2 + 6, { side: 'bottom' });
     },
   });
 }

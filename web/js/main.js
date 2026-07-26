@@ -95,6 +95,8 @@ const panelBody = document.getElementById('panel-body');
 const panelToggle = document.getElementById('panel-toggle');
 let rows = [];
 let readoutEl = null;
+let tableRows = null;     // selector-legend rows, if the circuit has a table
+let legendSelect = null;  // picks the live row index from the bus values
 
 // How much of the canvas the I/O panel covers, so fitting can avoid it:
 // docked right on wide screens, along the bottom on narrow ones.
@@ -132,9 +134,14 @@ function setBusValue(bus, v) {
   bus.bits.forEach((b, pos) => { b.sw.on = !!(v & (1 << pos)); });
 }
 
-function makeRow(bus, editable, readBit, charOf) {
+function makeRow(bus, editable, readBit, charOf, hint) {
   const row = el('div', `bus ${editable ? 'io-in' : 'io-out'}`);
-  row.appendChild(el('span', 'bus-name', bus.name));
+  const name = el('span', 'bus-name', bus.name);
+  // A bus name is not self-explanatory on the bigger circuits — "WA" and
+  // "F" mean nothing without a caption. The hint rides along as a tooltip
+  // and is also drawn under the row.
+  if (hint) name.title = hint;
+  row.appendChild(name);
 
   const bitsEl = el('div', 'bits');
   const cells = [];
@@ -185,7 +192,12 @@ function makeRow(bus, editable, readBit, charOf) {
   row.appendChild(dec);
 
   rows.push({ bus, cells, bin, dec, editable, readBit, charOf, width, shown: null });
-  return row;
+  if (!hint) return row;
+  // wrap so the caption sits under its row rather than beside it
+  const wrap = el('div', 'bus-wrap');
+  wrap.appendChild(row);
+  wrap.appendChild(el('div', 'bus-hint', hint));
+  return wrap;
 }
 
 function pad(v, width) {
@@ -203,10 +215,13 @@ function buildPanel() {
   const netChar = b => VALUE_CHAR[circuit.value[b.net]];
   const swChar = b => (b.sw.on ? '1' : '0');
 
+  const hints = circuit.hints || {};
   const section = (title, list, editable, readBit, charOf) => {
     if (!list.length) return;
     panelBody.appendChild(el('div', 'sec-title', title));
-    for (const bus of list) panelBody.appendChild(makeRow(bus, editable, readBit, charOf));
+    for (const bus of list) {
+      panelBody.appendChild(makeRow(bus, editable, readBit, charOf, hints[bus.name]));
+    }
   };
   section('Inputs', buses.inputs, true, swBit, swChar);
   section('Outputs', buses.outputs, false, hotBit, netChar);
@@ -215,6 +230,27 @@ function buildPanel() {
   if (circuit.readout) {
     readoutEl = el('div', 'readout', '');
     panelBody.appendChild(readoutEl);
+  }
+
+  // A selector legend, for circuits where an input is a code rather than a
+  // number: the ALU's F is the case that makes the circuit unusable without
+  // one. Rows highlight live as the selected code changes, so the table
+  // doubles as an indicator of what the machine is currently doing.
+  tableRows = null;
+  if (circuit.table) {
+    const t = circuit.table;
+    panelBody.appendChild(el('div', 'sec-title', t.title));
+    const box = el('div', 'legend');
+    tableRows = t.rows.map((r, i) => {
+      const row = el('div', 'legend-row');
+      row.appendChild(el('span', 'legend-code', r.code));
+      row.appendChild(el('span', 'legend-name', r.name));
+      if (r.note) row.appendChild(el('span', 'legend-note', r.note));
+      box.appendChild(row);
+      return { el: row, index: i, on: null };
+    });
+    panelBody.appendChild(box);
+    legendSelect = t.select;
   }
   updatePanel();
 }
@@ -251,6 +287,14 @@ function updatePanel() {
   if (readoutEl) {
     const text = circuit.readout(vals);
     if (readoutEl.textContent !== text) readoutEl.textContent = text;
+  }
+  if (tableRows) {
+    // -1 when the code selects nothing, so no row lights
+    const live = legendSelect(vals);
+    for (const r of tableRows) {
+      const on = r.index === live;
+      if (r.on !== on) { r.on = on; r.el.classList.toggle('live', on); }
+    }
   }
 }
 

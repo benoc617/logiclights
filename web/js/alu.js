@@ -92,7 +92,15 @@ const AluBit = defineModule('alubit', {
     const yLogic = GATE_H * 3.5;   // below the full adder
     m.instantiate(And2, 0, yLogic, { a, b, y: andY });
     m.instantiate(Or2, 0, yLogic + GATE_H + 2, { a, b, y: orY });
-    m.instantiate(Xor2, 0, yLogic + (GATE_H + 2) * 2, { a, b, y: xorY });
+    const lastLogic = m.instantiate(Xor2, 0, yLogic + (GATE_H + 2) * 2,
+      { a, b, y: xorY });
+
+    // Name the two halves of the slice: the adder up top (shared by ADD and
+    // SUB) and the bitwise gates below, all computing at once whether or
+    // not they are selected.
+    m.region('Adder', -4, -3, GATE_W * 7, fa.h + 2, { side: 'inside' });
+    m.region('AND · OR · XOR', -4, yLogic - 3, GATE_W * 7,
+      yLogic + (GATE_H + 2) * 2 + lastLogic.h + 2, { side: 'inside' });
 
     // steer one of them onto the bus. ADD and SUB share the adder's sum.
     const srcs = [
@@ -108,6 +116,12 @@ const AluBit = defineModule('alubit', {
         en: m.port(`s_${name}`), nen: m.port(`n_${name}`),
       });
     });
+    // The six gates onto one net are the whole idea of the circuit, so the
+    // box names it rather than leaving it as six anonymous pass gates.
+    // Kept short: this repeats once per bit slice, and the full explanation
+    // belongs in the circuit description rather than four times on canvas.
+    m.region('6→1 bus', GATE_W * 7.5 - 3, -3,
+      GATE_W * 7.5 + 12, srcs.length * 5 + 2, { side: 'inside' });
   },
 });
 
@@ -128,6 +142,7 @@ export const Alu4 = defineModule('alu4', {
     const dec = m.instantiate(Decode3, 0, 0, {
       f0: m.port('f0'), f1: m.port('f1'), f2: m.port('f2'),
     });
+    m.region('Function decoder — F to one-hot', -3, -3, dec.w + 2, dec.h + 2);
     const NAMES = ['add', 'sub', 'and', 'or', 'xor', 'shl'];
     const sel = {}, nsel = {};
     NAMES.forEach((name, i) => {
@@ -141,12 +156,16 @@ export const Alu4 = defineModule('alu4', {
     // SUB inverts B and forces Cin = 1. Both are just the sub select line:
     // bx_i = b_i XOR sub, and carry-in to bit 0 is sub itself.
     const bx = [];
+    let bxBottom = 0;
     for (let i = 0; i < ALU_BITS; i++) {
       bx[i] = m.net();
-      m.instantiate(Xor2, GATE_W * 9.5, i * (GATE_H * 2 + 4), {
+      const inst = m.instantiate(Xor2, GATE_W * 9.5, i * (GATE_H * 2 + 4), {
         a: m.port(`b${i}`), b: sel.sub, y: bx[i],
       });
+      bxBottom = i * (GATE_H * 2 + 4) + inst.h;
     }
+    m.region('B inverter — two’s complement for SUB',
+      GATE_W * 9.5 - 3, -3, GATE_W * 9.5 + 26, bxBottom + 2);
 
     let carry = sel.sub;   // Cin = 1 for two's-complement subtract
     const selBind = {};
@@ -157,7 +176,8 @@ export const Alu4 = defineModule('alu4', {
     // ripple carry reads naturally as a left-to-right chain.
     for (let i = 0; i < ALU_BITS; i++) {
       const cout = i === ALU_BITS - 1 ? m.port('cout') : m.net();
-      m.instantiate(AluBit, GATE_W * 15 + i * (GATE_W * 11), 0, {
+      const x = GATE_W * 15 + i * (GATE_W * 11);
+      const slice = m.instantiate(AluBit, x, 0, {
         a: m.port(`a${i}`),
         b: m.port(`b${i}`),
         bx: bx[i],
@@ -168,6 +188,11 @@ export const Alu4 = defineModule('alu4', {
         y: m.port(`y${i}`),
         ...selBind,
       }, { tag: `bit${i}` });
+      // One box per bit slice: the four of them side by side are the
+      // clearest statement that this is one circuit repeated, with the
+      // carry threaded left to right.
+      m.region(`Bit ${i}${i === 0 ? ' (LSB)' : i === ALU_BITS - 1 ? ' (MSB)' : ''}`,
+        x - 4, -3, x + GATE_W * 10.5, slice.h + 2);
       carry = cout;
     }
   },

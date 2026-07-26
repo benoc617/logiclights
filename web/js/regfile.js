@@ -128,12 +128,19 @@ export const RegFile16x4 = defineModule('regfile', {
     const wBind = { en: m.port('we') };
     for (let i = 0; i < REG_ADDR; i++) wBind[`a${i}`] = m.port(`wa${i}`);
     const wdec = m.instantiate(Decode4, 0, 0, wBind, { tag: 'wdec' });
+    // Boxes are derived from the instances' measured extents rather than
+    // hand-typed coordinates, so they follow the layout instead of drifting
+    // from it the next time a pitch changes.
+    m.region('Write decoder — WA selects one of 16 rows',
+      -3, -3, wdec.w + 2, wdec.h + 2);
 
     // read decoder, always enabled — reading is combinational
     const rBind = { en: VDD };
     for (let i = 0; i < REG_ADDR; i++) rBind[`a${i}`] = m.port(`ra${i}`);
     // clear of the write decoder, which is now two banks wide
     const rdec = m.instantiate(Decode4, GATE_W * 21, 0, rBind, { tag: 'rdec' });
+    m.region('Read decoder — RA selects one of 16 rows',
+      GATE_W * 21 - 2, -2, GATE_W * 21 + rdec.w + 2, rdec.h + 2);
 
     // Sixteen rows stacked is a tall thin block; the library is drawn wide
     // and short. Fold them into two banks of eight side by side — the rows
@@ -142,7 +149,7 @@ export const RegFile16x4 = defineModule('regfile', {
     // choice and costs nothing.
     const BANK = 8;
     const bankW = CELL_PITCH * REG_WIDTH + GATE_W * 8;
-    const xRows0 = GATE_W * 43;   // right of both decoders
+    const xRows0 = GATE_W * 47;   // clear of both decoders, with room for boxes
     for (let r = 0; r < REG_WORDS; r++) {
       const bank = Math.floor(r / BANK);
       const xRows = xRows0 + bank * bankW;
@@ -162,7 +169,28 @@ export const RegFile16x4 = defineModule('regfile', {
         bind[`d${b}`] = m.port(`d${b}`);   // data bus, shared by every row
         bind[`q${b}`] = m.port(`q${b}`);   // read bus, shared by every row
       }
-      m.instantiate(RegRow, xRows, y, bind, { tag: `r${r}` });
+      const row = m.instantiate(RegRow, xRows, y, bind, { tag: `r${r}` });
+
+      // Each register gets its own box, so "where is r9" has an answer you
+      // can point at. At a glance the sixteen boxes are also the clearest
+      // statement of what this circuit is: sixteen copies of one thing.
+      // caption inside the box: the rows are pitched too tightly for an
+      // outside label, which would land on the row above
+      m.region(`r${r}`, xRows - GATE_W * 4, y - 2,
+        xRows + row.w + 1, y + ROW_PITCH - 6, { side: 'inside' });
+    }
+
+    // and a box around each bank, naming the whole array
+    const bankH = BANK * ROW_PITCH;
+    for (let bank = 0; bank < REG_WORDS / BANK; bank++) {
+      const x = xRows0 + bank * bankW;
+      m.region(
+        bank === 0
+          ? 'Registers r0–r7 — four static latches each'
+          : 'Registers r8–r15 — tri-stated onto one shared read bus',
+        x - GATE_W * 5, -6,
+        x + CELL_PITCH * (REG_WIDTH - 1) + GATE_W * 6, bankH - 4,
+        { side: 'bottom' });
     }
   },
 });

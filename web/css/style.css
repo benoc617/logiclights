@@ -283,6 +283,49 @@ input.bin:focus {
   font-variant-numeric: tabular-nums;
 }
 
+/* Captions under a bus row. "WA" and "F" carry no meaning on their own,
+   so the bigger circuits label what each input actually selects. */
+.bus-hint {
+  font-size: 10.5px;
+  color: #6d7690;
+  margin: -1px 0 4px 44px;   /* line up under the bits, past the bus name */
+  line-height: 1.35;
+}
+
+/* Selector legend: the code table for circuits whose input is a function
+   code rather than a number. The live row highlights, so the table also
+   says what the machine is doing right now. */
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.legend-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
+  color: #8f98ad;
+  font-size: 11.5px;
+}
+.legend-row.live {
+  background: #232c42;
+  border-left-color: #ffb340;
+  color: #e8edf7;
+}
+.legend-code {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #7f8aa3;
+  min-width: 3ch;
+}
+.legend-row.live .legend-code { color: #ffb340; }
+.legend-name { font-weight: 600; }
+.legend-note { color: #6d7690; font-size: 10.5px; }
+.legend-row.live .legend-note { color: #9aa3b8; }
+
 /* Placement follows orientation, not width. A circuit is a wide, short
    thing: in portrait the screen's scarce axis is width, so the table docks
    along the bottom and leaves the full width to the circuit; in landscape
@@ -325,4 +368,8 @@ input.bin:focus {
   #panel-body { padding: 2px 10px 8px; }
   .sec-title { margin: 7px 0 3px; }
   .bus { padding: 1px 0; }
+  /* space is scarce here: the legend keeps its codes, the prose goes */
+  .bus-hint { display: none; }
+  .legend-note { display: none; }
+  .legend-row { padding: 1px 4px; font-size: 11px; }
 }

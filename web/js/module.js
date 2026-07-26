@@ -161,6 +161,15 @@ class ModuleBuilder {
     this.c.label(text, this.ox + x, this.oy + y, size, color, align);
   }
 
+  // A labelled box saying what this part of the module is. Annotation only:
+  // it conducts nothing, and it does not grow the instance extent, so
+  // drawing a box around a block never changes where the next one is
+  // placed.
+  region(text, x0, y0, x1, y1, opts) {
+    this.c.region(text, this.ox + x0, this.oy + y0,
+      this.ox + x1, this.oy + y1, opts);
+  }
+
   // Nest a module inside another. Offsets compose, so a block built from
   // blocks places its children in its own local frame.
   instantiate(def, x, y, bind, opts) {

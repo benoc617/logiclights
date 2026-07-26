@@ -19,6 +19,10 @@ const METAL = '#c7cfe0';
 const TEXT = '#8b93a7';
 const LAMP_ON = '#ffd67f';
 
+const REGION_EDGE = 'rgba(120, 136, 178, 0.34)';
+const REGION_FILL = 'rgba(86, 100, 140, 0.07)';
+const REGION_TEXT = '#7f8ba8';
+
 const WIRE_COL = [WIRE_OFF, WIRE_HOT, WIRE_X, WIRE_Z];
 const DOT_COL = ['#59637e', WIRE_HOT, WIRE_X, '#4a5470'];
 
@@ -74,6 +78,13 @@ export class Renderer {
     const val = c.value;
     const lod = s; // px per world unit
 
+    // Region annotations go down first, behind the circuit, so they read as
+    // zones rather than as more wiring. They matter most when zoomed out —
+    // that is exactly when a composed machine turns into undifferentiated
+    // texture — so unlike device labels they are drawn at every LOD, with
+    // the caption held at a readable pixel size instead of scaling away.
+    if (c.regions && c.regions.length) this.drawRegions(ctx, c, lod);
+
     // wires: glow pass for driven-high and contended nets, then core strokes
     // in one pass per logic value so the whole net reads at a glance
     if (lod > 2.5) {
@@ -125,6 +136,65 @@ export class Renderer {
     if (d.pending === null) return null;
     const delay = c.delayOf(d);
     return Math.max(0, Math.min(1, 1 - (d.pendingAt - now) / delay));
+  }
+
+  // Labelled boxes behind the circuit, saying what each patch of devices
+  // is. The caption is sized in *pixels* and converted back to world units,
+  // so it stays legible whether you are looking at the whole machine or one
+  // corner of it — the opposite of the device labels, which are meant to
+  // disappear as you zoom out.
+  drawRegions(ctx, c, lod) {
+    const px = 1 / lod;                       // one screen pixel in world units
+    ctx.save();
+    ctx.lineWidth = Math.max(0.04, px);
+    ctx.setLineDash([px * 5, px * 4]);
+    for (const r of c.regions) {
+      const w = r.x1 - r.x0, h = r.y1 - r.y0;
+      ctx.strokeStyle = r.color || REGION_EDGE;
+      ctx.fillStyle = REGION_FILL;
+      ctx.beginPath();
+      ctx.roundRect(r.x0, r.y0, w, h, px * 6);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Captions last, so no box edge crosses a word. Clamp the type size to
+    // a pixel range: big enough to read zoomed out, never so big zoomed in
+    // that it swamps the devices it is labelling.
+    const fontPx = Math.min(15, Math.max(9, lod * 1.1));
+    ctx.font = `600 ${fontPx * px}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    for (const r of c.regions) {
+      // 'inside' tucks the caption into the top-left corner of the box,
+      // for boxes packed tightly enough that an outside caption would
+      // land on the neighbour above.
+      const y = r.side === 'bottom' ? r.y1 + fontPx * px * 0.85
+              : r.side === 'inside' ? r.y0 + fontPx * px * 0.75
+              : r.y0 - fontPx * px * 0.85;
+      // Clip the caption to its own box. Without this, neighbouring blocks'
+      // labels run into each other the moment two boxes sit side by side —
+      // and a caption that overflows its box points at the wrong devices.
+      const maxW = (r.x1 - r.x0) - px * 4;
+      let text = r.text;
+      if (ctx.measureText(text).width > maxW) {
+        while (text.length > 1 && ctx.measureText(text + '…').width > maxW) {
+          text = text.slice(0, -1);
+        }
+        text = text.replace(/[\s—–-]+$/, '') + '…';
+      }
+      const tw = ctx.measureText(text).width;
+      // a slab behind the text so it stays readable over dense wiring
+      ctx.fillStyle = BG;
+      ctx.globalAlpha = 0.82;
+      ctx.fillRect(r.x0 - px * 2, y - fontPx * px * 0.62,
+        tw + px * 5, fontPx * px * 1.24);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = r.color || REGION_TEXT;
+      ctx.fillText(text, r.x0 + px * 1.5, y);
+    }
+    ctx.restore();
   }
 
   drawRelay(ctx, c, r, now, lod) {
