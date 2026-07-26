@@ -29,24 +29,12 @@ way through the machine. Every wire is a light: amber means driven high.
   with an equation line for the arithmetic circuits.
 - **Zoom & pan** — pinch/scroll from single-contact detail out to a whole
   machine on one tablet screen.
-- **Circuit library, organised by technology** — 48 circuits, because the
-  point is to build the *same* logic three ways and compare:
-  - **Relays** (18) — Meet the Relay, Buzzer, Ring Oscillator; NOT / AND /
-    OR / XOR / NAND / NOR; 2-to-4 Decoder; SR Latch, D Latch, 4-bit
-    Register; Half and Full Adder, 4-bit & 8-bit Ripple Adders, 4-bit
-    Adder/Subtractor (two's complement).
-  - **CMOS** (15) — Inverter, NAND / NOR / AND / OR / XOR, 2-to-4 Decoder,
-    D Latch, Full Adder, Ring Oscillator; Transmission Gate and Tri-State
-    Bus; and three composed machines: a 538-transistor **4-bit ALU**, a
-    1,488-transistor **16×4 register file**, and a dynamic **CMOS Program
-    ROM** that precharges its bit lines instead of burning static current.
-  - **NMOS** (12) — Inverter, NAND / NOR / AND / OR / XOR, 2-to-4 Decoder,
-    D Latch, Ring Oscillator, 4-bit Adder, 4-bit ALU, and the **mask ROM**
-    whose stored bits are visible as the presence or absence of a
-    transistor. Every 1 here is only weakly driven by a load resistor —
-    that asymmetry is why CMOS won.
-  - **General** (3) — the bridges: Meet the Transistor, Diode Logic, and
-    Three Technologies, which builds one NAND gate three ways at once.
+- **Circuit library, organised by technology** — the same logic built in
+  relays, CMOS and NMOS so the versions can be read side by side, plus the
+  bridge circuits that connect them. The full list, device counts and the
+  concept-by-technology matrix live in
+  [docs/INVENTORY.md](docs/INVENTORY.md), which is generated rather than
+  written, so it cannot drift.
 - **Guides for the big circuits** — a caption under every input explaining
   what it selects, a legend of function codes with the live one highlighted,
   a grid of internal state the outputs do not expose (all sixteen registers
@@ -55,8 +43,10 @@ way through the machine. Every wire is a light: amber means driven high.
 
 No frameworks, no build step: vanilla ES modules + canvas.
 
-**Docs:** [CLAUDE.md](CLAUDE.md) — conventions and gotchas for working in
-this repo · [docs/DATA.md](docs/DATA.md) — how a circuit is split between
+**Docs:** [docs/INVENTORY.md](docs/INVENTORY.md) — what is in the library:
+every circuit, its device counts, and the concept-by-technology matrix
+(generated, never hand-written) · [CLAUDE.md](CLAUDE.md) — conventions and
+gotchas for working in this repo · [docs/DATA.md](docs/DATA.md) — how a circuit is split between
 catalogue data and behaviour code · [docs/DEVICES.md](docs/DEVICES.md) — the device model and the
 switch-level solver · [docs/DESIGN.md](docs/DESIGN.md) — how the circuit
 topologies and renderer work · [docs/4004.md](docs/4004.md) — the plan for

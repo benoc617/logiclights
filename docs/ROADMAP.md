@@ -6,31 +6,25 @@ it is the handoff between sessions.
 
 ## Status (2026-07-26)
 
-**48 circuits across three technologies**, and the comparison between them
-is now the organising idea rather than an afterthought.
+The library builds the same logic in relays, CMOS and NMOS so the versions
+can be compared, and the comparison is now the organising idea rather than
+an afterthought. Current counts, the full circuit list and the
+concept-by-technology matrix are in [INVENTORY.md](INVENTORY.md) —
+generated, so this file does not repeat them.
 
-- **v1** shipped as a relay simulator: 18 circuits, binary I/O table,
-  orientation-aware layout, click sounds, zoom/pan.
+- **v1** shipped as a relay simulator: binary I/O table, orientation-aware
+  layout, click sounds, zoom/pan.
 - **v2** generalised the primitive from relays to physical devices. The
   engine is a four-state switch-level solver (`0` / `1` / `Z` / `X`, at
   strong / weak / charge strength) over relays, NMOS, PMOS, diodes and
   resistors, with both rails explicit. Every original relay truth table
   passes unchanged under it — that compatibility is what
   `Circuit.implicitGround` exists for.
-- **v3** filled the technology matrix. CMOS (15) and NMOS (12) now each
-  have the full gate family, a ring oscillator, a decoder, a latch, an
-  adder and an ALU, so most rows can be read across. Three bridge circuits
-  (diode logic, Meet the Transistor, Three Technologies) connect the
-  sections.
+- **v3** filled the technology matrix: CMOS and NMOS each gained the full
+  gate family, a ring oscillator, a decoder, a latch, an adder and an ALU,
+  so most rows can be read across.
 - The library is split into catalogue data (`web/data/circuits.json`) and
   per-circuit behaviour (`web/js/behaviour/`) — see [DATA.md](DATA.md).
-
-`node test/sim-test.mjs` → **146,622 checks, 0 failures** in ~9 s.
-
-Two things that cannot be filled in and are results rather than gaps:
-tri-state needs a complementary pair, so it exists only in CMOS; and the
-NMOS ALU is stuck with a mux tree for exactly that reason, which is what
-the Tri-State Bus circuit exists to explain.
 
 ## Ship it
 
@@ -62,16 +56,16 @@ the Tri-State Bus circuit exists to explain.
       4004 did.
 - [x] **ALU** — 4-bit, six functions (add / sub / AND / OR / XOR / shift
       left), one-hot decoded, steered onto a shared result bus by
-      transmission gates. 538 transistors, composed from gate modules
-      rather than hand-placed — the first circuit built that way. Full
+      transmission gates, composed from gate modules rather than
+      hand-placed — the first circuit built that way. Full
       sweep in the test suite: 6 functions × 16 × 16, asserting STRONG on
       every result bit so a second open driver (X) or none (Z) fails.
 - [x] **16 × 4 register file** — the 4004's index registers, dual-ported
       (separate read and write addresses), sixteen rows sharing four bit
-      lines through tri-state gates. 1,488 transistors — about 3× the ~500
-      the budget table guessed, because each cell is a full static latch
-      plus its tri-state buffer rather than a 6T SRAM cell. Solves in
-      8.4 µs, so it is comfortably real-time.
+      lines through tri-state gates. About 3× the ~500 devices the 4004
+      budget table guessed, because each cell is a full static latch plus
+      its tri-state buffer rather than a 6T SRAM cell — see
+      [INVENTORY.md](INVENTORY.md) for the measured count.
 - [ ] **Data RAM** — 6T SRAM cells would cut the per-cell cost
       substantially versus the latch-based register file; worth doing when
       the 16-nibble data store lands.

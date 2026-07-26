@@ -1287,5 +1287,24 @@ for (const e of CIRCUITS) {
   }
 }
 
+// docs/INVENTORY.md is generated from the catalogue, and it is the only
+// place any count lives — so a stale one is a test failure, not something
+// a reader finds later. Skipped if the generator is absent (the app ships
+// without tools/).
+try {
+  const { execFileSync } = await import('node:child_process');
+  execFileSync('node', ['tools/inventory.mjs', '--check'],
+    { cwd: new URL('..', import.meta.url).pathname, stdio: 'pipe' });
+  checks++;
+} catch (e) {
+  if (e.code === 'ENOENT') {
+    // no generator here; nothing to check
+  } else {
+    checks++; failures++;
+    console.error('FAIL [inventory] docs/INVENTORY.md is out of date — '
+      + 'run: node tools/inventory.mjs');
+  }
+}
+
 console.log(`${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);

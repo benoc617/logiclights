@@ -250,9 +250,9 @@ Two rendering choices differ from the device labels, on purpose:
 ## The circuit picker
 
 A native `<select>` cannot nest: optgroups do not contain optgroups. With
-48 circuits across four technology sections and fifteen groups, a flat list
-with indented labels made a heading indistinguishable from the circuits
-under it. `js/picker.js` is a custom widget instead — collapsed technology
+dozens of circuits across four technology sections, a flat list with
+indented labels made a heading indistinguishable from the circuits under
+it. `js/picker.js` is a custom widget instead — collapsed technology
 sections that expand to reveal their subsections — and it deliberately
 exposes the same small surface the `<select>` did (a readable and
 assignable `.value`, plus a `change` listener), so the rest of the app is
