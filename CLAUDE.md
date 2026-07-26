@@ -6,7 +6,7 @@ Guidance for Claude Code working in the Logic Lights repo.
 
 An interactive web app showing how logic is actually built out of physical
 devices — **relays, then transistors** — with lights on every wire, visible
-propagation delay, and optional click sounds. It runs from a single relay,
+propagation delay, and optional device sounds. It runs from a single relay,
 through CMOS gates and a tri-state bus, up to an 8-bit ripple adder today;
 the long arc is an Intel 4004 plus a build-your-own-circuit editor (see
 [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/4004.md](docs/4004.md)).
@@ -42,7 +42,7 @@ web/
   js/circuits.js      the circuit library + registry (CIRCUITS)
   js/buses.js         groups switches/lamps into binary buses
   js/render.js        canvas renderer (pan/zoom, glow, LOD)
-  js/sound.js         WebAudio relay clicks
+  js/sound.js         WebAudio relay clicks + transistor "zzzt"
   js/main.js          UI wiring, rAF loop, pointer input, binary I/O panel
 test/sim-test.mjs     headless truth-table suite (no runner, plain node)
 Dockerfile            nginx image serving /lights/ for the puzzleboss stack
@@ -109,6 +109,14 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
   independent delays, so there is always a brief `X` (both on — real crowbar
   current) or `Z` (both off) mid-handover. This is the model being honest,
   not a bug. Tests must assert on *settled* state.
+- **A transition takes two `step()` calls.** The first schedules it
+  (`nextEventAt()` goes non-null), a later one at or past the event time
+  applies it and counts it. Flipping a switch and stepping once reports
+  zero movements — step to `nextEventAt()` in a loop, as `settle()` does.
+- **`step()` returns clicks; switchings land on `c.switchings`.** Armature
+  movements are the return value, channel switchings a field, because the
+  app plays a different timbre for each and the oscillator tests sum the
+  return value. Keep the return type a number.
 - **Momentary switches** (`push`, `push-nc`) are held only while pressed,
   on canvas and in the I/O table. `push-nc` is closed at rest, so `on`
   means *pressed*, which *opens* it.

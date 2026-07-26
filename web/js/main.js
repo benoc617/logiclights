@@ -353,6 +353,7 @@ canvas.addEventListener('wheel', ev => {
 function frame(now) {
   const clicks = circuit.step(now);
   if (clicks) sound.clicks(clicks);
+  if (circuit.switchings) sound.zaps(circuit.switchings);
   renderer.draw(circuit, now, cssW, cssH);
   updatePanel();
   requestAnimationFrame(frame);

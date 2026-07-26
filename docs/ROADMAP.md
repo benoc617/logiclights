@@ -114,6 +114,9 @@ approximation, not an oversight. Roughly in order of how much they'd add:
 - [ ] **Charge decay** — stored charge is currently held forever. Needed for
       an authentic PMOS-era 4004, whose dynamic registers are why the real
       chip has a *minimum* clock frequency.
+- [x] Distinct timbres per device family — relays click (noise burst),
+      transistors get a swept-sawtooth "zzzt". A real MOSFET is silent, so
+      this is deliberate sonification, not physics.
 - [ ] Distinct pull-in vs drop-out sound timbres; per-device stereo position
 
 ## Polish backlog

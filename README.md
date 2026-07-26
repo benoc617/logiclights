@@ -10,7 +10,9 @@ way through the machine. Every wire is a light: amber means driven high.
   and resistors, with conduction undirected exactly like the real things
   (the circuits are designed sneak-path-free). Devices switch after a
   configurable delay, so you can *see* a carry ripple across an adder and
-  *hear* the armatures clack.
+  *hear* the armatures clack — and transistors get a "zzzt" of their own, so
+  the solid-state circuits aren't mute (real ones are silent; this is
+  deliberate sonification).
 - **Four-state nets** — `0` and `1`, but also `Z` for a floating wire
   (drawn dashed, holding its last value on stored charge) and `X` for
   contention (drawn red). Those are the two ways real circuits fail, and a

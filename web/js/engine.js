@@ -40,6 +40,7 @@ export class Circuit {
     this.netCount = 2; // net 0 is VDD, net 1 is VSS
     this.relays = [];
     this.transistors = [];
+    this.switchings = 0; // channel switchings in the last step(), for sound
     this.diodes = [];
     this.resistors = [];
     this.switches = [];
@@ -348,9 +349,12 @@ export class Circuit {
   }
 
   // Advance to `now` (ms). Returns the number of armature movements
-  // (audible contact clicks) — transistors switch silently.
+  // (audible contact clicks). Channel switchings are counted separately in
+  // `this.switchings` — a real transistor is silent, but the app sonifies
+  // it anyway so device circuits aren't mute; see sound.js.
   step(now) {
     let clicks = 0;
+    let switchings = 0;
     for (let guard = 0; guard < 64; guard++) {
       const v = this.solve();
       let changed = false;
@@ -364,10 +368,14 @@ export class Circuit {
         // An X or Z gate turns the channel off: this is a discrete model
         // and will not guess at an indeterminate level.
         const want = t.kind === 'nmos' ? v[t.gate] === HI : v[t.gate] === LO;
-        if (this._advance(t, want, now, 'on')) changed = true;
+        if (this._advance(t, want, now, 'on')) {
+          switchings++;
+          changed = true;
+        }
       }
       if (!changed) break;
     }
+    this.switchings = switchings;
     return clicks;
   }
 

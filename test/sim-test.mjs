@@ -417,6 +417,49 @@ for (const [id, fn] of [['cmosnand', (a, b) => !(a && b)], ['cmosnor', (a, b) =>
   expect(c, 'readout text', c.readout(vals), '9 − 4 = 5');
 }
 
+// ── sound counters: clicks vs channel switchings ─────────────────────────
+// step() returns armature movements and parks channel switchings on
+// c.switchings. The app plays a different timbre for each, so a circuit
+// made of one device family must not report the other's count.
+//
+// A transition takes two steps: the first schedules it, a later one at the
+// event time applies it and counts. Stepping once after a flip counts zero.
+function flipAndStep(c, label, on) {
+  sw(c, label, on);
+  c.step(clock);                      // schedules the transition
+  let clicks = 0, switchings = 0;
+  let guard = 0;
+  while (c.nextEventAt() !== null && guard++ < 5000) {
+    clock = c.nextEventAt() + 0.001;
+    clicks += c.step(clock);
+    switchings += c.switchings;
+  }
+  return { clicks, switchings };
+}
+{
+  // a relay inverter clicks and never switches a channel
+  const c = buildCircuit('not');
+  settle(c);
+  const n = flipAndStep(c, 'A', true);
+  expect(c, 'relay circuit clicks', n.clicks > 0, true);
+  expect(c, 'relay circuit has no channel switchings', n.switchings, 0);
+}
+{
+  // a CMOS inverter is the mirror image: silent armatures, live channels
+  const c = buildCircuit('cmosinv');
+  settle(c);
+  const n = flipAndStep(c, 'IN', true);
+  expect(c, 'CMOS circuit does not click', n.clicks, 0);
+  expect(c, 'CMOS circuit switches channels', n.switchings > 0, true);
+}
+{
+  // the counter is per-step, not cumulative: a settled circuit reports 0
+  const c = buildCircuit('cmosinv');
+  sw(c, 'IN', true); settle(c);
+  clock += 1000; c.step(clock);
+  expect(c, 'settled circuit reports no switchings', c.switchings, 0);
+}
+
 // every registered circuit builds, has geometry, and derives sane buses
 for (const e of CIRCUITS) {
   const c = e.build();
