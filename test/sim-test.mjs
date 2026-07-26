@@ -1,6 +1,7 @@
 // Headless truth-table tests for the device simulation.
 // Run: node test/sim-test.mjs
 
+import { readFileSync } from 'node:fs';
 import { buildCircuit, CIRCUITS, GROUP_ORDER } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
@@ -1122,6 +1123,53 @@ function flipAndStep(c, label, on) {
     sw(m, 'A', a); sw(m, 'B', b); settle(m);
     expect(n, `XOR agrees across technologies (${+a},${+b})`,
       lampV(n, 'OUT'), lampV(m, 'OUT'));
+  }
+}
+
+// ── catalogue data ───────────────────────────────────────────────────────
+// The declarative half of a circuit lives in web/data/circuits.json, and
+// the schema beside it is the reference for what a circuit may declare. A
+// schema nobody checks is just a comment, so check the essentials here —
+// no dependency, so this is a hand-rolled subset rather than a validator.
+{
+  const cat = JSON.parse(
+    readFileSync(new URL('../web/data/circuits.json', import.meta.url), 'utf8'));
+  const schema = JSON.parse(
+    readFileSync(new URL('../web/data/circuits.schema.json', import.meta.url), 'utf8'));
+  const allowed = new Set(Object.keys(schema.definitions.circuit.properties));
+  const required = schema.definitions.circuit.required;
+  const idPattern = new RegExp(schema.definitions.circuit.properties.id.pattern);
+  const ctx = { name: 'circuits.json' };
+
+  expect(ctx, 'catalogue covers every circuit', cat.circuits.length, CIRCUITS.length);
+  const ids = new Set();
+  for (const e of cat.circuits) {
+    for (const key of required) {
+      expect(ctx, `${e.id}: has required "${key}"`, typeof e[key], 'string');
+    }
+    for (const key of Object.keys(e)) {
+      expect(ctx, `${e.id}: "${key}" is a known field`, allowed.has(key), true);
+    }
+    expect(ctx, `${e.id}: id matches the schema pattern`, idPattern.test(e.id), true);
+    expect(ctx, `${e.id}: id is unique`, ids.has(e.id), false);
+    ids.add(e.id);
+    expect(ctx, `${e.id}: group is declared in groupOrder`,
+      cat.groupOrder.includes(e.group), true);
+    if (e.table) {
+      for (const row of e.table.rows) {
+        expect(ctx, `${e.id}: legend row has a code`, typeof row.code, 'string');
+        expect(ctx, `${e.id}: legend row has a name`, typeof row.name, 'string');
+      }
+    }
+    if (e.state && e.state.columns !== undefined) {
+      expect(ctx, `${e.id}: state columns in range`,
+        e.state.columns >= 1 && e.state.columns <= 8, true);
+    }
+  }
+  // Prose is the teaching material, so an empty desc is a real defect
+  // rather than a formatting nit.
+  for (const e of cat.circuits) {
+    expect(ctx, `${e.id}: desc says something`, e.desc.length > 30, true);
   }
 }
 

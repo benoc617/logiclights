@@ -45,7 +45,8 @@ way through the machine. Every wire is a light: amber means driven high.
 No frameworks, no build step: vanilla ES modules + canvas.
 
 **Docs:** [CLAUDE.md](CLAUDE.md) — conventions and gotchas for working in
-this repo · [docs/DEVICES.md](docs/DEVICES.md) — the device model and the
+this repo · [docs/DATA.md](docs/DATA.md) — how a circuit is split between
+catalogue data and behaviour code · [docs/DEVICES.md](docs/DEVICES.md) — the device model and the
 switch-level solver · [docs/DESIGN.md](docs/DESIGN.md) — how the circuit
 topologies and renderer work · [docs/4004.md](docs/4004.md) — the plan for
 building a 4004 · [docs/ROADMAP.md](docs/ROADMAP.md) — the queue and open

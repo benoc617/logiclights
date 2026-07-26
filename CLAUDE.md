@@ -39,7 +39,9 @@ web/
   css/style.css       all styling (orientation-aware, see below)
   js/engine.js        Circuit: nets, devices, four-state solver, timing
   js/geometry.js      symbol geometry shared by builders and renderer
-  js/circuits.js      the circuit library + registry (CIRCUITS)
+  js/circuits.js      joins catalogue data to behaviour (see docs/DATA.md)
+  js/behaviour/       per-circuit builders and readouts, by technology
+  data/circuits.json  the catalogue: names, prose, hints, legends
   js/module.js        sub-circuit modules: named ports, local coordinates
   js/gates.js         reusable CMOS gates built on module.js
   js/alu.js           4-bit ALU, composed from gates.js
@@ -69,7 +71,7 @@ Diodes are the only directional device. Full detail in
 
 Two ways to build, deliberately kept apart.
 
-The **library circuits** in `circuits.js` are hand-placed: every device at a
+The **library circuits** in `js/behaviour/` are hand-placed: every device at a
 chosen coordinate, every wire routed by eye. They are the teaching material,
 their layouts are the explanation, and they should stay that way.
 
@@ -87,7 +89,9 @@ these layouts want to be wide and short like the rest of the library.
 
 ## Adding a circuit
 
-1. Write a `buildX()` in `circuits.js` returning a `Circuit`. Use `c.net()`
+1. Write a `buildX()` in the behaviour module for its technology
+   (`js/behaviour/relays.js`, `cmos.js`, `nmos.js`, `general.js`) returning
+   a `Circuit`, and add it to that file's exported map. Use `c.net()`
    for signals, then `relay()`, `c.addTransistor()`, `c.addDiode()`,
    `c.addResistor()`, `c.addSwitch()`, `c.addLamp()`, and `w()` for wires.
    Coordinates are world units, hand-placed.
@@ -96,8 +100,11 @@ these layouts want to be wide and short like the rest of the library.
    - **Device circuits**: call `mosScaffold()`, which draws both rails,
      turns `implicitGround` off, and puts changeover inputs down the left.
      `cmosInv()` builds an inverter column and hands back its gate spine.
-2. Register it in `CIRCUITS` with `id`, `group`, `name`, `build`, `desc`.
-   Optionally `readout: v => ...` for an equation line in the I/O table.
+2. Add the catalogue entry to `web/data/circuits.json` with `id`, `group`,
+   `name`, `desc` — the id is what binds the two halves. Optional `hints`,
+   `table` and `state` blocks are documented in `circuits.schema.json`;
+   their function halves (`readout`, `select`, `read`) go in the behaviour
+   map. See [docs/DATA.md](docs/DATA.md).
 3. Add truth-table cases to `test/sim-test.mjs`. For anything with more
    than a couple of inputs, sweep the full input space — the 8-bit adder
    sweeps all 131,072 combinations and it still runs in seconds. For device

@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://benoc617.github.io/logiclights/data/circuits.schema.json",
+  "title": "Logic Lights circuit catalogue",
+  "description": "Everything a circuit *declares* — what it is called, where it sits in the picker, and how the app should present it. What a circuit *does* is code, and lives in web/js/behaviour/<id>.js keyed by the same id. See docs/DATA.md for where that boundary falls and why.",
+  "type": "object",
+  "required": ["groupOrder", "circuits"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "groupOrder": {
+      "description": "Picker section order. A group is 'Technology · Subsection', or just 'Technology' for a section with no subsections. Groups named here but unused simply do not appear; groups used but not named here are appended at the end.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "circuits": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/circuit" }
+    }
+  },
+  "definitions": {
+    "circuit": {
+      "type": "object",
+      "required": ["id", "group", "name", "desc"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Stable identifier. Used in the URL hash, and the key that binds this entry to its behaviour module.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+$"
+        },
+        "group": {
+          "description": "Which picker section this belongs in. Must appear in groupOrder, and must match the devices the circuit is actually built from — the test suite checks that a circuit in 'CMOS' really does use complementary pairs.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "Display name, shown in the picker and the title bar.",
+          "type": "string",
+          "minLength": 1
+        },
+        "desc": {
+          "description": "The prose under the canvas. This is the teaching material: say what the circuit is, what to try, and what the interesting failure or trade-off is. Prefer explaining *why* a thing is built this way over restating what the diagram shows.",
+          "type": "string",
+          "minLength": 1
+        },
+        "hints": {
+          "description": "Caption per bus in the I/O table, keyed by bus name. Bus names come from switch and lamp labels via the trailing-digit rule (A0..A3 group into bus A), so a hint keyed to an individual switch will never appear — the tests check every key names a real bus.",
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "table": {
+          "description": "A legend of selector codes, for circuits whose input is a code rather than a number. The live row highlights, so it doubles as an indicator of what the circuit is currently doing. The row-picking function lives in the behaviour module as `select`.",
+          "type": "object",
+          "required": ["title", "rows"],
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "rows": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["code", "name"],
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "description": "The literal code, e.g. '011'. Use an x for a don't-care bit ('11x') when several codes share a row.",
+                    "type": "string"
+                  },
+                  "name": { "type": "string" },
+                  "note": {
+                    "description": "Short gloss shown beside the name. Hidden in compact layouts, so nothing essential belongs here.",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "state": {
+          "description": "A grid of live internal values the circuit's own outputs do not expose — a register file's stored words, or every function an ALU computed. The reader function lives in the behaviour module as `read`, and must read the circuit's nets rather than recomputing: a display doing its own arithmetic would agree with a broken circuit.",
+          "type": "object",
+          "required": ["title"],
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "columns": {
+              "description": "Grid columns. Pick so the rows divide evenly — 4 for sixteen registers, 3 for six ALU functions.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "key": {
+              "description": "Legend under the grid, explaining any highlighting. Hidden in compact layouts.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

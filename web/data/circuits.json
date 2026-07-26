@@ -1,0 +1,495 @@
+{
+  "$schema": "./circuits.schema.json",
+  "groupOrder": [
+    "Relays · Basics",
+    "Relays · Gates",
+    "Relays · Memory",
+    "Relays · Arithmetic",
+    "General",
+    "CMOS · Basics",
+    "CMOS · Gates",
+    "CMOS · Buses",
+    "CMOS · Memory",
+    "CMOS · Arithmetic",
+    "NMOS · Basics",
+    "NMOS · Gates",
+    "NMOS · Memory",
+    "NMOS · Arithmetic",
+    "NMOS · Arrays"
+  ],
+  "circuits": [
+    {
+      "id": "relay101",
+      "group": "Relays · Basics",
+      "name": "Meet the Relay",
+      "desc": "One relay: energize the coil and the armature snaps over, closing the normally-open contact and opening the normally-closed one. Everything else here is built from just this."
+    },
+    {
+      "id": "buzzer",
+      "group": "Relays · Basics",
+      "name": "Buzzer",
+      "desc": "The relay interrupts its own coil through its NC contact, so it chatters forever — the classic doorbell buzzer. Hold PRESS and crank the speed up."
+    },
+    {
+      "id": "osc",
+      "group": "Relays · Basics",
+      "name": "Ring Oscillator",
+      "desc": "Three NOT relays in a loop. An odd number of inversions can never settle, so the pulse chases itself around the ring at a speed set by the relay delay."
+    },
+    {
+      "id": "not",
+      "group": "Relays · Gates",
+      "name": "NOT",
+      "desc": "Inversion is free with relays: the normally-closed contact conducts exactly when the coil is off."
+    },
+    {
+      "id": "and",
+      "group": "Relays · Gates",
+      "name": "AND",
+      "desc": "Two normally-open contacts in series — current only gets through when both relays pull in."
+    },
+    {
+      "id": "or",
+      "group": "Relays · Gates",
+      "name": "OR",
+      "desc": "Two normally-open contacts in parallel — either relay can complete the path."
+    },
+    {
+      "id": "xor",
+      "group": "Relays · Gates",
+      "name": "XOR",
+      "desc": "Two changeover paths criss-cross like a hallway light with two wall switches: the lamp is on when the switches disagree."
+    },
+    {
+      "id": "nand",
+      "group": "Relays · Gates",
+      "name": "NAND",
+      "desc": "Parallel normally-closed contacts: the light stays on unless both relays pull in. NAND alone is enough to build everything else."
+    },
+    {
+      "id": "nor",
+      "group": "Relays · Gates",
+      "name": "NOR",
+      "desc": "Series normally-closed contacts: on only when both relays are at rest."
+    },
+    {
+      "id": "dec24",
+      "group": "Relays · Gates",
+      "name": "2-to-4 Decoder",
+      "desc": "A contact tree: relay A splits the current two ways, relay B splits each again. Two inputs select exactly one of four lamps — this is how addresses select memory rows."
+    },
+    {
+      "id": "t101",
+      "group": "General",
+      "name": "Meet the Transistor",
+      "desc": "A MOSFET is a relay with no moving parts: the gate is isolated from the channel exactly like a coil is isolated from its contacts. N-channel conducts when the gate is high, P-channel when it is low — the two throws of a relay, split into two devices. Each output needs a resistor to hold it down, because a transistor that is off does not pull anything low; it just lets go."
+    },
+    {
+      "id": "cmosinv",
+      "group": "CMOS · Basics",
+      "name": "CMOS Inverter",
+      "desc": "Two transistors, and the whole of CMOS in miniature: the P-channel pulls the output up, the N-channel pulls it down, and the input turns exactly one of them on. Slow the clock right down and watch the handover — for a moment both are on (a red X, a dead short through the pair) or both are off (a dashed Z, the output floating on its own charge). Real chips fight both."
+    },
+    {
+      "id": "cmosnand",
+      "group": "CMOS · Gates",
+      "name": "CMOS NAND",
+      "desc": "Four transistors. The pull-down network is the logic — two N-channels in series, so both inputs must be high to reach ground — and the pull-up is its exact complement, two P-channels in parallel. Every static CMOS gate is built this way, and the pull-up is always the dual of the pull-down."
+    },
+    {
+      "id": "cmosnor",
+      "group": "CMOS · Gates",
+      "name": "CMOS NOR",
+      "desc": "The mirror image of NAND: series P-channels above, parallel N-channels below. Swap series for parallel in both networks and the gate inverts — which is why NAND and NOR come in pairs and why either one alone can build a computer."
+    },
+    {
+      "id": "nmosinv",
+      "group": "NMOS · Basics",
+      "name": "NMOS Inverter",
+      "desc": "How it was done before CMOS, and how the 4004 itself was built: one transistor and a resistor load. It works — but the load only ever drives weakly, so whenever the output is low there is a permanent path from the rail to ground. That static current is why early chips ran hot and why the second transistor was worth adding."
+    },
+    {
+      "id": "diode",
+      "group": "General",
+      "name": "Diode Logic",
+      "desc": "The one directional device here: a diode passes a 1 forward and a 0 backward, and blocks the other way. Point them one way with a pull-down and you get OR; turn them around under a pull-up and you get AND. No transistors at all — but also no gain, so the output is weaker than the input and these cannot be chained. That is exactly why amplifying devices had to be invented."
+    },
+    {
+      "id": "cmosand",
+      "group": "CMOS · Gates",
+      "name": "CMOS AND",
+      "desc": "There is no such thing as a CMOS AND gate — only a NAND with an inverter bolted on, which is what you are looking at. Six transistors where the NAND alone needs four, and one more gate delay. Compare the relay AND: two contacts in series, and inversion is the thing that costs extra there. Each technology makes a different gate cheap, and that shapes how logic gets written for it."
+    },
+    {
+      "id": "cmosor",
+      "group": "CMOS · Gates",
+      "name": "CMOS OR",
+      "desc": "A NOR plus an inverter, for the same reason AND is a NAND plus an inverter: the complementary pull-up network of a static CMOS gate always inverts. Nothing in CMOS produces a non-inverted output for free."
+    },
+    {
+      "id": "cmosxor",
+      "group": "CMOS · Gates",
+      "name": "CMOS XOR",
+      "desc": "Four NAND gates — sixteen transistors for a function a single relay changeover contact gives you for nothing (see the relay XOR). XOR is the gate where relays genuinely beat transistors on device count, and it is why the relay adder is so much smaller than you would guess: its sum output is pure changeover staircase."
+    },
+    {
+      "id": "cmosdec",
+      "group": "CMOS · Gates",
+      "name": "CMOS 2-to-4 Decoder",
+      "desc": "The same one-hot decode as the relay contact tree and the NMOS version, in complementary CMOS. This is the exact circuit that sits in front of the ROM array and the register file, choosing which row an address refers to — addressing is the operation all memory is built on."
+    },
+    {
+      "id": "cmoslatch",
+      "group": "CMOS · Memory",
+      "name": "CMOS D Latch",
+      "desc": "Two inverters and two transmission gates on complementary enables, so exactly one path is ever open: EN high and Q follows D, EN low and the inverter pair closes a loop that holds. NEN must be the complement of EN — drive them the same and you will see the cell contend. Compare the NMOS latch, which cannot use pass gates at all and needs cross-coupled NORs instead."
+    },
+    {
+      "id": "cmosfa",
+      "group": "CMOS · Arithmetic",
+      "name": "CMOS Full Adder",
+      "desc": "Sum is A XOR B XOR Cin, carry is the majority vote — the same logic as the relay full adder, built from CMOS gate modules. The relay version does it in three relays and eleven contacts; this takes 50 transistors, almost all of them spent on the two XORs."
+    },
+    {
+      "id": "tgate",
+      "group": "CMOS · Gates",
+      "name": "Transmission Gate",
+      "desc": "An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors."
+    },
+    {
+      "id": "tristate",
+      "group": "CMOS · Buses",
+      "name": "Tri-State Bus",
+      "desc": "Two drivers, one shared wire, and nothing to arbitrate. Enable one and the bus follows it. Enable neither and the bus floats — dashed Z, holding its last value on stray capacitance until it leaks away. Enable both with different data and they fight: a red X, a rail-to-rail short. This is the thing relays cannot do, and it is what lets a CPU have buses instead of a multiplexer tree for every destination.",
+      "hints": {
+        "D": "what each driver would put on the bus (bit 0 = driver 1)",
+        "EN": "which drivers are switched on (bit 0 = driver 1)",
+        "BUS": "the shared wire they all drive"
+      },
+      "table": {
+        "title": "What the bus does",
+        "rows": [
+          {
+            "code": "1",
+            "name": "One driver enabled",
+            "note": "the bus follows it"
+          },
+          {
+            "code": "2",
+            "name": "Both, agreeing",
+            "note": "no conflict — same value"
+          },
+          {
+            "code": "Z",
+            "name": "Neither enabled",
+            "note": "floating, holds its last value"
+          },
+          {
+            "code": "X",
+            "name": "Both, disagreeing",
+            "note": "contention — a real short"
+          }
+        ]
+      }
+    },
+    {
+      "id": "tech3",
+      "group": "General",
+      "name": "Three Technologies",
+      "desc": "One NAND gate, built three ways from the same two inputs: two relays, two transistors and a resistor, then four transistors. Same truth table, same lamps, wildly different machines — and the CMOS output lands while the armatures are still travelling."
+    },
+    {
+      "id": "srlatch",
+      "group": "Relays · Memory",
+      "name": "SR Latch",
+      "desc": "Tap SET and the relay feeds its own coil through its own contact — it remembers. RESET breaks the hold path. One bit of memory."
+    },
+    {
+      "id": "dlatch",
+      "group": "Relays · Memory",
+      "name": "D Latch",
+      "desc": "While EN is on, Q follows D through one path; when EN drops, a second path lets Q hold itself. Flip D with EN off — nothing happens until you open the gate."
+    },
+    {
+      "id": "reg4",
+      "group": "Relays · Memory",
+      "name": "4-bit Register",
+      "desc": "Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it."
+    },
+    {
+      "id": "regfile",
+      "group": "CMOS · Memory",
+      "name": "16×4 Register File",
+      "desc": "The 4004’s index registers: sixteen 4-bit words, written through one address port and read through another, so the machine can read one register while writing a different one. Every row drives the same four bit lines through tri-state gates — one shared bus, sixteen possible drivers. Set WA and D, raise WE to store, then read any address back. Drop WE before changing the address: these are level-sensitive latches, so moving the address with WE still high walks the word into the next register, exactly as the real part does.",
+      "hints": {
+        "WA": "write address — which of the 16 registers to store into",
+        "D": "data to write",
+        "WE": "write enable — raise to store, then drop before changing WA",
+        "RA": "read address — independent of WA, so you can read while writing",
+        "Q": "contents of register RA (always live)"
+      },
+      "table": {
+        "title": "Writing a register",
+        "rows": [
+          {
+            "code": "1.",
+            "name": "Set WA and D",
+            "note": "with WE low"
+          },
+          {
+            "code": "2.",
+            "name": "Raise WE",
+            "note": "stored while high"
+          },
+          {
+            "code": "3.",
+            "name": "Drop WE",
+            "note": "before touching WA again"
+          },
+          {
+            "code": "4.",
+            "name": "Set RA",
+            "note": "Q follows it immediately"
+          }
+        ]
+      },
+      "state": {
+        "title": "Register contents",
+        "columns": 4,
+        "key": "amber = the register RA is reading · blue = where WA would write"
+      }
+    },
+    {
+      "id": "nmosring",
+      "group": "NMOS · Basics",
+      "name": "NMOS Ring Oscillator",
+      "desc": "The same trick as the relay Ring Oscillator — an odd number of inversions in a loop can never settle — but in silicon. Two inverters plus the run/stop NAND makes three, so raising RUN closes the ring and it never stops. Watch the asymmetry the relay version cannot show you: each stage snaps down hard through its transistor and drifts up slowly through its load resistor, so the waveform is lopsided. That is the NMOS pull-up being weak, and it is half of why CMOS won."
+    },
+    {
+      "id": "cmosring",
+      "group": "CMOS · Basics",
+      "name": "CMOS Ring Oscillator",
+      "desc": "The same ring in complementary CMOS. Both edges are now driven hard — the P-channel pulls up as strongly as the N-channel pulls down — so the waveform is symmetric where the NMOS one drifts. Ring oscillators are how you actually measure a fabrication process: build one, count its frequency, and you know how fast the transistors came out."
+    },
+    {
+      "id": "nmosxor",
+      "group": "NMOS · Gates",
+      "name": "NMOS XOR",
+      "desc": "Four NAND gates: 8 transistors and 4 load resistors. Set it beside the CMOS XOR (16 transistors) and the relay XOR (two changeover contacts) and you have the clearest device-count comparison in the library. XOR is the function that punishes transistor logic — every technology pays for it, and the relay pays least."
+    },
+    {
+      "id": "nmosdec",
+      "group": "NMOS · Gates",
+      "name": "NMOS 2-to-4 Decoder",
+      "desc": "Two address lines select exactly one of four outputs — the same job the relay contact tree does, and the same operation a memory row decoder performs. Every AND here is a NAND plus an inverter, so a decoder is one of the places the non-inverting tax gets paid four times over."
+    },
+    {
+      "id": "nmoslatch",
+      "group": "NMOS · Memory",
+      "name": "NMOS D Latch",
+      "desc": "Cross-coupled NORs with steering, not the transmission-gate latch CMOS uses — a pass gate needs a complementary pair, and NMOS has no P-channel. Watch the strengths: a held 1 is only weakly driven by the load resistor while a held 0 is pulled hard to ground. The CMOS latch holds both hard."
+    },
+    {
+      "id": "nmosadd4",
+      "group": "NMOS · Arithmetic",
+      "name": "NMOS 4-bit Adder",
+      "desc": "Four full adders chained carry to carry — the same topology as the relay ripple adder, built from NMOS gates. 100 transistors and 56 resistors. Set A=1111 and flip B0 to watch the carry ripple the whole length of the chain, exactly as the relay version does but far faster."
+    },
+    {
+      "id": "nmosalu",
+      "group": "NMOS · Arithmetic",
+      "name": "NMOS 4-bit ALU",
+      "desc": "Four functions instead of the CMOS ALU’s six, and the difference is the whole lesson. The CMOS version steers its result onto a shared bus with transmission gates — which need a complementary pair. NMOS has no P-channel, so no pass gate, no tri-state, and no shared bus: every function must be AND-ed with its select line and the results OR-ed back together. That mux tree is what a machine without tri-state costs, and it is precisely what the Tri-State Bus circuit exists to explain.",
+      "hints": {
+        "A": "first operand",
+        "B": "second operand",
+        "F": "function select — see the table below",
+        "Y": "result",
+        "Cout": "carry out (add only)"
+      },
+      "table": {
+        "title": "Function select (F)",
+        "rows": [
+          {
+            "code": "00",
+            "name": "ADD",
+            "note": "A + B"
+          },
+          {
+            "code": "01",
+            "name": "AND",
+            "note": "bitwise"
+          },
+          {
+            "code": "10",
+            "name": "OR",
+            "note": "bitwise"
+          },
+          {
+            "code": "11",
+            "name": "XOR",
+            "note": "bitwise"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nmosnand",
+      "group": "NMOS · Gates",
+      "name": "NMOS NAND",
+      "desc": "Two N-channels in series under a resistor load. Compare it with the CMOS NAND: same pull-down network, but no complementary pull-up above it — half the transistors, and the output is only ever pulled high weakly. Whenever the output is low there is a permanent path from the rail to ground through the load, which is the static current that made NMOS chips run hot."
+    },
+    {
+      "id": "nmosnor",
+      "group": "NMOS · Gates",
+      "name": "NMOS NOR",
+      "desc": "Two N-channels in parallel: either input high pulls the output down. In NMOS the NOR is the cheap gate — parallel transistors do not stack their resistance the way a series chain does, so NOR was the workhorse where CMOS designers prefer NAND."
+    },
+    {
+      "id": "nmosand",
+      "group": "NMOS · Gates",
+      "name": "NMOS AND",
+      "desc": "A NAND followed by an inverter, and you can see the cost: AND needs a whole second stage with its own load resistor, so it burns current in two places instead of one. This is why the primitive gate of any technology is the inverting one, and why designers rewrite logic to avoid the non-inverted forms."
+    },
+    {
+      "id": "nmosor",
+      "group": "NMOS · Gates",
+      "name": "NMOS OR",
+      "desc": "A NOR plus an inverter. Same story as AND: the extra stage doubles the static current and adds a full gate delay, for an output that a NOR feeding the next stage could often have given you for free."
+    },
+    {
+      "id": "rom8",
+      "group": "NMOS · Arrays",
+      "name": "Program ROM",
+      "desc": "A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.",
+      "hints": {
+        "A": "address — which of the 8 stored words to read",
+        "D": "the word at that address (bit = 1 where the array has no transistor)"
+      },
+      "state": {
+        "title": "Stored contents",
+        "columns": 4,
+        "key": "amber = the word the address lines are selecting"
+      }
+    },
+    {
+      "id": "romcmos",
+      "group": "CMOS · Memory",
+      "name": "CMOS Program ROM",
+      "desc": "The same 8 × 8 array with no resistors anywhere — a P-channel per bit line instead. It reads in two phases: with PRE low the pull-ups charge every line high, then PRE goes high, the pull-ups switch off, and the selected row discharges only the lines that have a transistor. Nothing ever fights, so unlike the NMOS version there is no path from rail to ground and no static current — which is the whole reason CMOS replaced NMOS. The cost is that a line reading 1 is only floating on its own charge (dashed, Z), so the reading is valid until the charge leaks away. That is dynamic logic, and it is why such chips have a minimum clock speed as well as a maximum.",
+      "hints": {
+        "A": "address — which of the 8 stored words to read",
+        "PRE": "low charges every bit line; raise it to evaluate the word",
+        "D": "the word at that address"
+      },
+      "table": {
+        "title": "Read cycle",
+        "rows": [
+          {
+            "code": "1.",
+            "name": "PRE low",
+            "note": "pull-ups on, every line charged high"
+          },
+          {
+            "code": "2.",
+            "name": "PRE high",
+            "note": "pull-ups off, the row discharges its 0s"
+          }
+        ]
+      },
+      "state": {
+        "title": "Stored contents",
+        "columns": 4,
+        "key": "amber = the word the address lines are selecting"
+      }
+    },
+    {
+      "id": "alu4",
+      "group": "CMOS · Arithmetic",
+      "name": "4-bit ALU",
+      "desc": "Six functions over two nibbles, chosen by F. Every function is computed at once and a transmission gate steers the selected one onto a shared result bus — one wire with six possible drivers, the way a CPU does it, not a mux tree per destination. 538 transistors, composed from gate modules rather than placed by hand. Codes 6 and 7 select nothing, and the bus floats.",
+      "hints": {
+        "A": "first operand",
+        "B": "second operand",
+        "F": "function select — see the table below",
+        "Y": "result",
+        "Cout": "carry out of the top bit (borrow flag when subtracting)"
+      },
+      "table": {
+        "title": "Function select (F)",
+        "rows": [
+          {
+            "code": "000",
+            "name": "ADD",
+            "note": "A + B"
+          },
+          {
+            "code": "001",
+            "name": "SUB",
+            "note": "A − B, two’s complement"
+          },
+          {
+            "code": "010",
+            "name": "AND",
+            "note": "bitwise"
+          },
+          {
+            "code": "011",
+            "name": "OR",
+            "note": "bitwise"
+          },
+          {
+            "code": "100",
+            "name": "XOR",
+            "note": "bitwise"
+          },
+          {
+            "code": "101",
+            "name": "SHL",
+            "note": "A shifted left one bit"
+          },
+          {
+            "code": "11x",
+            "name": "—",
+            "note": "nothing selected; the bus floats"
+          }
+        ]
+      },
+      "state": {
+        "title": "All six results",
+        "columns": 3,
+        "key": "read off the circuit, not recomputed. The logic gates all compute at once; ADD and SUB share one adder, so only the selected one has a value (· = not being computed)."
+      }
+    },
+    {
+      "id": "halfadd",
+      "group": "Relays · Arithmetic",
+      "name": "Half Adder",
+      "desc": "XOR gives the sum bit, a series pair gives the carry: 1+1=10. Five contacts on two relays."
+    },
+    {
+      "id": "fulladd",
+      "group": "Relays · Arithmetic",
+      "name": "Full Adder",
+      "desc": "Three relays add three bits: a changeover staircase computes the parity (sum) and three series pairs vote on the majority (carry). The building block of every adder."
+    },
+    {
+      "id": "add4",
+      "group": "Relays · Arithmetic",
+      "name": "4-bit Ripple Adder",
+      "desc": "Four full adders chained carry-to-carry. Set A=1111 then flip B0 on and watch the carry ripple down the whole row — this is why adders have a \"critical path\"."
+    },
+    {
+      "id": "add8",
+      "group": "Relays · Arithmetic",
+      "name": "8-bit Ripple Adder",
+      "desc": "24 relays, 88 contacts, numbers up to 255. Zoom out to see the machine, zoom in to watch any single contact. Try 11111111 + 1."
+    },
+    {
+      "id": "addsub4",
+      "group": "Relays · Arithmetic",
+      "name": "4-bit Adder / Subtractor",
+      "desc": "Flip SUB and a relay bank inverts every B bit while the same signal injects a carry-in: two’s complement, A−B = A+(~B)+1, in hardware. The seed of an ALU."
+    }
+  ]
+}

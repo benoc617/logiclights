@@ -108,7 +108,10 @@ what `Circuit.implicitGround` exists for.
       read back as source.
 - [ ] **Circuit editor** — place devices, drag wires, name signals; save to
       localStorage, export/import JSON. The headline feature after the ALU.
-      Now has to offer a device palette, not just relays.
+      Now has to offer a device palette, not just relays. Its file format is
+      the "full JSON circuits" TODO in [DATA.md](DATA.md) — the catalogue
+      half of that split already landed, so the remaining work is a netlist
+      schema and a small expression language, not a format from scratch.
 - [ ] **Saved circuits alongside the examples** — localStorage first; a
       shared library would need a small API (the ECS service could host it,
       but that turns a static app into a stateful one — decide deliberately)
