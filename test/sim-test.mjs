@@ -1214,6 +1214,23 @@ function flipAndStep(c, label, on) {
   for (const e of cat.circuits) {
     expect(ctx, `${e.id}: desc says something`, e.desc.length > 30, true);
   }
+
+  // Every string in the catalogue is shown to a reader verbatim, so a
+  // literal backslash-u sequence is a visible defect — it reaches the page
+  // as the six characters "\u2014" instead of an em dash. This happens
+  // when the file is written by a tool that escapes twice, which is exactly
+  // how it got in once already.
+  const escapes = [];
+  const scan = (o, path) => {
+    if (typeof o === 'string') {
+      if (/\\u[0-9a-fA-F]{4}/.test(o)) escapes.push(path);
+    } else if (o && typeof o === 'object') {
+      for (const [k, v] of Object.entries(o)) scan(v, `${path}.${k}`);
+    }
+  };
+  for (const e of cat.circuits) scan(e, e.id);
+  expect(ctx, 'no literal escape sequences in catalogue prose',
+    escapes.join(', '), '');
 }
 
 // ── clocked state: flip-flops and counters ───────────────────────────────
