@@ -12,6 +12,11 @@ import { Alu4, ALU_BITS } from './alu.js';
 import { And2, Or2, Xor2 } from './gates.js';
 import { romArray } from './rom.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from './regfile.js';
+import {
+  NDecode2, NDLatch, NXor2, nRippleAdder, nAlu,
+} from './nmos.js';
+import { Xor2 as CXor2, DLatch as CDLatch, FullAdder as CFullAdder } from './gates.js';
+import { decoder as cmosDecoder } from './rom.js';
 
 // ── small builder helpers ────────────────────────────────────────────────
 
@@ -1223,6 +1228,52 @@ function buildRegFile() {
   return c;
 }
 
+
+// A generic wrapper for module-built solid-state circuits: switches down
+// the left, lamps down the right, rails top and bottom. The module supplies
+// the logic; this only gives it I/O and a frame to sit in.
+//
+// `inputs` and `outputs` are [label, portName] pairs. A port left out of
+// `inputs` is bound to whatever the module allocates, which is how the
+// carry-in of an adder can default to 0 without a switch for it.
+function buildFromModule(name, def, inputs, outputs, opts = {}) {
+  return () => {
+    const c = new Circuit(name);
+    c.implicitGround = false;
+    const bind = {};
+    let y = 4;
+    for (const [label, port] of inputs) {
+      const n = c.net();
+      c.addSwitch(label, n, 'toggle', 4, y, { to: VSS });
+      bind[port] = n;
+      y += 4.5;
+    }
+    for (const [port, net] of Object.entries(opts.tie || {})) bind[port] = net;
+
+    const inst = instantiate(c, def, 24, 0, bind);
+
+    const b = c.bounds();
+    const xEnd = b.x1 + 10;
+    const yTop = -10, yBot = Math.max(b.y1 + 6, y + 6);
+    w(c, VDD, [0, yTop], [xEnd, yTop]);
+    w(c, VSS, [0, yBot], [xEnd, yBot]);
+    c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+    c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+    for (const s of c.switches) {
+      const t = switchSpdtT(s);
+      w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+      w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+    }
+    let ly = 4;
+    for (const [label, port] of outputs) {
+      c.addLamp(label, inst.nets[port], xEnd - 5, ly, { short: label });
+      ly += 5;
+    }
+    if (opts.after) opts.after(c, inst);
+    return c;
+  };
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 // The picker is organised by *technology* first, then by what the circuit
@@ -1253,6 +1304,8 @@ export const GROUP_ORDER = [
   'CMOS · Arithmetic',
   'NMOS · Basics',
   'NMOS · Gates',
+  'NMOS · Memory',
+  'NMOS · Arithmetic',
   'NMOS · Arrays',
 ];
 
@@ -1298,6 +1351,19 @@ export const CIRCUITS = [
   { id: 'cmosxor', group: 'CMOS · Gates', name: 'CMOS XOR',
     build: buildCmosComposed('CMOS XOR', Xor2, 'four NAND gates'),
     desc: 'Four NAND gates — sixteen transistors for a function a single relay changeover contact gives you for nothing (see the relay XOR). XOR is the gate where relays genuinely beat transistors on device count, and it is why the relay adder is so much smaller than you would guess: its sum output is pure changeover staircase.' },
+  { id: 'cmosdec', group: 'CMOS · Gates', name: 'CMOS 2-to-4 Decoder',
+    build: buildFromModule('CMOS 2-to-4 Decoder', cmosDecoder(2),
+      [['A0','a0'],['A1','a1']], [['Y0','r0'],['Y1','r1'],['Y2','r2'],['Y3','r3']]),
+    desc: 'The same one-hot decode as the relay contact tree and the NMOS version, in complementary CMOS. This is the exact circuit that sits in front of the ROM array and the register file, choosing which row an address refers to \u2014 addressing is the operation all memory is built on.' },
+  { id: 'cmoslatch', group: 'CMOS · Memory', name: 'CMOS D Latch',
+    build: buildFromModule('CMOS D Latch', CDLatch,
+      [['D','d'],['EN','en'],['NEN','nen']], [['Q','q']]),
+    desc: 'Two inverters and two transmission gates on complementary enables, so exactly one path is ever open: EN high and Q follows D, EN low and the inverter pair closes a loop that holds. NEN must be the complement of EN \u2014 drive them the same and you will see the cell contend. Compare the NMOS latch, which cannot use pass gates at all and needs cross-coupled NORs instead.' },
+  { id: 'cmosfa', group: 'CMOS · Arithmetic', name: 'CMOS Full Adder',
+    build: buildFromModule('CMOS Full Adder', CFullAdder,
+      [['A','a'],['B','b'],['Cin','cin']], [['S','sum'],['Cout','cout']]),
+    desc: 'Sum is A XOR B XOR Cin, carry is the majority vote \u2014 the same logic as the relay full adder, built from CMOS gate modules. The relay version does it in three relays and eleven contacts; this takes 50 transistors, almost all of them spent on the two XORs.',
+    readout: v => `${v.A} + ${v.B} + ${v.Cin} = ${v.Cout * 2 + v.S}` },
   { id: 'tgate', group: 'CMOS · Gates', name: 'Transmission Gate', build: buildTransmissionGate,
     desc: 'An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors.' },
   { id: 'tristate', group: 'CMOS · Buses', name: 'Tri-State Bus', build: buildTriState,
@@ -1378,6 +1444,44 @@ export const CIRCUITS = [
   { id: 'cmosring', group: 'CMOS · Basics', name: 'CMOS Ring Oscillator',
     build: buildRing('CMOS Ring Oscillator', 'cmos', 2),
     desc: 'The same ring in complementary CMOS. Both edges are now driven hard — the P-channel pulls up as strongly as the N-channel pulls down — so the waveform is symmetric where the NMOS one drifts. Ring oscillators are how you actually measure a fabrication process: build one, count its frequency, and you know how fast the transistors came out.' },
+  { id: 'nmosxor', group: 'NMOS · Gates', name: 'NMOS XOR',
+    build: buildFromModule('NMOS XOR', NXor2, [['A','a'],['B','b']], [['OUT','y']]),
+    desc: 'Four NAND gates: 8 transistors and 4 load resistors. Set it beside the CMOS XOR (16 transistors) and the relay XOR (two changeover contacts) and you have the clearest device-count comparison in the library. XOR is the function that punishes transistor logic — every technology pays for it, and the relay pays least.' },
+  { id: 'nmosdec', group: 'NMOS · Gates', name: 'NMOS 2-to-4 Decoder',
+    build: buildFromModule('NMOS 2-to-4 Decoder', NDecode2,
+      [['A0','a0'],['A1','a1']], [['Y0','y0'],['Y1','y1'],['Y2','y2'],['Y3','y3']]),
+    desc: 'Two address lines select exactly one of four outputs — the same job the relay contact tree does, and the same operation a memory row decoder performs. Every AND here is a NAND plus an inverter, so a decoder is one of the places the non-inverting tax gets paid four times over.' },
+  { id: 'nmoslatch', group: 'NMOS · Memory', name: 'NMOS D Latch',
+    build: buildFromModule('NMOS D Latch', NDLatch, [['D','d'],['EN','en']], [['Q','q']]),
+    desc: 'Cross-coupled NORs with steering, not the transmission-gate latch CMOS uses — a pass gate needs a complementary pair, and NMOS has no P-channel. Watch the strengths: a held 1 is only weakly driven by the load resistor while a held 0 is pulled hard to ground. The CMOS latch holds both hard.' },
+  { id: 'nmosadd4', group: 'NMOS · Arithmetic', name: 'NMOS 4-bit Adder',
+    build: buildFromModule('NMOS 4-bit Adder', nRippleAdder(4),
+      [['A0','a0'],['A1','a1'],['A2','a2'],['A3','a3'],
+       ['B0','b0'],['B1','b1'],['B2','b2'],['B3','b3'],['Cin','cin']],
+      [['S0','s0'],['S1','s1'],['S2','s2'],['S3','s3'],['Cout','cout']]),
+    desc: 'Four full adders chained carry to carry — the same topology as the relay ripple adder, built from NMOS gates. 100 transistors and 56 resistors. Set A=1111 and flip B0 to watch the carry ripple the whole length of the chain, exactly as the relay version does but far faster.',
+    readout: v => `${v.A} + ${v.B} + ${v.Cin} = ${v.Cout * 16 + v.S}` },
+  { id: 'nmosalu', group: 'NMOS · Arithmetic', name: 'NMOS 4-bit ALU',
+    build: buildFromModule('NMOS 4-bit ALU', nAlu(4),
+      [['A0','a0'],['A1','a1'],['A2','a2'],['A3','a3'],
+       ['B0','b0'],['B1','b1'],['B2','b2'],['B3','b3'],['F0','f0'],['F1','f1']],
+      [['Y0','y0'],['Y1','y1'],['Y2','y2'],['Y3','y3'],['Cout','cout']]),
+    desc: 'Four functions instead of the CMOS ALU\u2019s six, and the difference is the whole lesson. The CMOS version steers its result onto a shared bus with transmission gates \u2014 which need a complementary pair. NMOS has no P-channel, so no pass gate, no tri-state, and no shared bus: every function must be AND-ed with its select line and the results OR-ed back together. That mux tree is what a machine without tri-state costs, and it is precisely what the Tri-State Bus circuit exists to explain.',
+    hints: {
+      A: 'first operand', B: 'second operand',
+      F: 'function select \u2014 see the table below', Y: 'result',
+      Cout: 'carry out (add only)',
+    },
+    table: {
+      title: 'Function select (F)',
+      select: v => v.F,
+      rows: [
+        { code: '00', name: 'ADD', note: 'A + B' },
+        { code: '01', name: 'AND', note: 'bitwise' },
+        { code: '10', name: 'OR', note: 'bitwise' },
+        { code: '11', name: 'XOR', note: 'bitwise' },
+      ],
+    } },
   { id: 'nmosnand', group: 'NMOS · Gates', name: 'NMOS NAND',
     build: nmosGate('NMOS NAND', true, false),
     desc: 'Two N-channels in series under a resistor load. Compare it with the CMOS NAND: same pull-down network, but no complementary pull-up above it — half the transistors, and the output is only ever pulled high weakly. Whenever the output is low there is a permanent path from the rail to ground through the load, which is the static current that made NMOS chips run hot.' },

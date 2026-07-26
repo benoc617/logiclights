@@ -1017,6 +1017,114 @@ function flipAndStep(c, label, on) {
   expect({ name: 'nmosring' }, 'NMOS handover never shorts the rails', seen.nmosring, false);
 }
 
+// ── the same logic in two technologies ───────────────────────────────────
+// These circuits exist to be compared, so they are tested as pairs: the
+// NMOS and CMOS versions of a function must agree on every input, or the
+// comparison the library invites is a lie.
+{
+  // decoders: exactly one output high, and it must be the addressed one
+  for (const id of ['nmosdec', 'cmosdec']) {
+    const c = buildCircuit(id);
+    for (let a = 0; a < 4; a++) {
+      sw(c, 'A0', !!(a & 1)); sw(c, 'A1', !!(a & 2));
+      settle(c);
+      const hot = [0, 1, 2, 3].filter(i => lampV(c, `Y${i}`) === HI);
+      expect(c, `${id} addr ${a} selects one line`, hot.length, 1);
+      expect(c, `${id} addr ${a} selects the right line`, hot[0], a);
+    }
+  }
+}
+{
+  // D latches: transparent while enabled, holding when not. Both
+  // technologies, though they are built from entirely different shapes —
+  // pass gates in CMOS, cross-coupled NORs in NMOS.
+  for (const id of ['nmoslatch', 'cmoslatch']) {
+    const c = buildCircuit(id);
+    const en = on => {
+      sw(c, 'EN', on);
+      if (c.switches.some(s => s.label === 'NEN')) sw(c, 'NEN', !on);
+    };
+    sw(c, 'D', true); en(true); settle(c);
+    expect(c, `${id} follows D=1 while enabled`, lampV(c, 'Q'), HI);
+    sw(c, 'D', false); settle(c);
+    expect(c, `${id} follows D=0 while enabled`, lampV(c, 'Q'), LO);
+    sw(c, 'D', true); settle(c);
+    en(false); settle(c);
+    expect(c, `${id} holds after enable falls`, lampV(c, 'Q'), HI);
+    sw(c, 'D', false); settle(c);
+    expect(c, `${id} ignores D while held`, lampV(c, 'Q'), HI);
+    en(true); settle(c);
+    expect(c, `${id} transparent again`, lampV(c, 'Q'), LO);
+  }
+}
+{
+  // full adder, one bit, both technologies
+  const c = buildCircuit('cmosfa');
+  for (let i = 0; i < 8; i++) {
+    const a = i & 1, b = (i >> 1) & 1, cin = (i >> 2) & 1;
+    sw(c, 'A', !!a); sw(c, 'B', !!b); sw(c, 'Cin', !!cin);
+    settle(c);
+    const t = a + b + cin;
+    expect(c, `cmosfa ${a}+${b}+${cin} sum`, lampV(c, 'S'), (t & 1) ? HI : LO);
+    expect(c, `cmosfa ${a}+${b}+${cin} carry`, lampV(c, 'Cout'), t > 1 ? HI : LO);
+  }
+}
+{
+  // 4-bit NMOS ripple adder — full sweep, the same guarantee the relay
+  // adders get
+  const c = buildCircuit('nmosadd4');
+  const set = (p, v, n) => { for (let i = 0; i < n; i++) sw(c, `${p}${i}`, !!((v >> i) & 1)); };
+  for (let a = 0; a < 16; a++) {
+    for (let b = 0; b < 16; b++) {
+      set('A', a, 4); set('B', b, 4); sw(c, 'Cin', false);
+      settle(c);
+      let s = 0;
+      for (let i = 0; i < 4; i++) if (lampV(c, `S${i}`) === HI) s |= 1 << i;
+      const co = lampV(c, 'Cout') === HI ? 1 : 0;
+      expect(c, `nmosadd4 ${a}+${b}`, co * 16 + s, a + b);
+    }
+  }
+}
+{
+  // NMOS ALU: four functions over the whole input space. No tri-state here
+  // — the result is an OR of gated candidates — so every output bit must
+  // be a settled level, never floating.
+  const c = buildCircuit('nmosalu');
+  const set = (p, v, n) => { for (let i = 0; i < n; i++) sw(c, `${p}${i}`, !!((v >> i) & 1)); };
+  const fns = [(a, b) => (a + b) & 15, (a, b) => a & b, (a, b) => a | b, (a, b) => a ^ b];
+  const names = ['ADD', 'AND', 'OR', 'XOR'];
+  for (let f = 0; f < 4; f++) {
+    set('F', f, 2);
+    for (let a = 0; a < 16; a++) {
+      for (let b = 0; b < 16; b++) {
+        set('A', a, 4); set('B', b, 4);
+        settle(c);
+        let got = 0, clean = true;
+        for (let i = 0; i < 4; i++) {
+          const v = lampV(c, `Y${i}`);
+          if (v === HI) got |= 1 << i;
+          else if (v !== LO) clean = false;
+        }
+        expect(c, `nmosalu ${names[f]} ${a},${b}`, got, fns[f](a, b));
+        expect(c, `nmosalu ${names[f]} ${a},${b} settled`, clean, true);
+      }
+    }
+  }
+}
+{
+  // The comparison itself: NMOS and CMOS XOR must agree, or the library's
+  // invitation to compare them is misleading.
+  const n = buildCircuit('nmosxor');
+  const m = buildCircuit('cmosxor');
+  for (let i = 0; i < 4; i++) {
+    const a = !!(i & 1), b = !!(i & 2);
+    sw(n, 'A', a); sw(n, 'B', b); settle(n);
+    sw(m, 'A', a); sw(m, 'B', b); settle(m);
+    expect(n, `XOR agrees across technologies (${+a},${+b})`,
+      lampV(n, 'OUT'), lampV(m, 'OUT'));
+  }
+}
+
 // ── picker grouping ──────────────────────────────────────────────────────
 // Sections are by technology, so a circuit's group has to match the devices
 // it is actually made of — otherwise a new circuit lands in the wrong

@@ -174,6 +174,126 @@ export const NFullAdder = defineModule('nfa', {
   },
 });
 
+// A 2-to-4 decoder: two address lines in, exactly one of four outputs high.
+// The same job as the relay contact tree, and the same job the ROM's row
+// decoder does — an address selecting a line is the operation memory is
+// built on.
+export const NDecode2 = defineModule('ndec2', {
+  ports: [
+    { name: 'a0', x: -1.5, y: 6, side: 'in' },
+    { name: 'a1', x: -1.5, y: 14, side: 'in' },
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `y${i}`, x: NGATE_W * 4, y: i * 8, side: 'out',
+    })),
+  ],
+  build(m) {
+    const a0 = m.port('a0'), a1 = m.port('a1');
+    const n0 = m.net(), n1 = m.net();
+    m.instantiate(NInverter, 0, 0, { a: a0, y: n0 });
+    m.instantiate(NInverter, 0, NGATE_H + 2, { a: a1, y: n1 });
+    for (let i = 0; i < 4; i++) {
+      m.instantiate(NAnd2, NGATE_W * 2, i * (NGATE_H + 2), {
+        a: (i & 1) ? a0 : n0,
+        b: (i & 2) ? a1 : n1,
+        y: m.port(`y${i}`),
+      });
+    }
+  },
+});
+
+// A 4-bit ripple adder: four full adders chained carry to carry, exactly
+// like the relay one. Watching the carry ripple is the point — it is the
+// same critical path, just at transistor speed.
+export function nRippleAdder(bits) {
+  return defineModule(`nadd${bits}`, {
+    ports: [
+      ...Array.from({ length: bits }, (_, i) => ({ name: `a${i}`, x: -1.5, y: i * 4, side: 'in' })),
+      ...Array.from({ length: bits }, (_, i) => ({ name: `b${i}`, x: -1.5, y: 20 + i * 4, side: 'in' })),
+      { name: 'cin', x: -1.5, y: 40, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({ name: `s${i}`, x: 400, y: i * 4, side: 'out' })),
+      { name: 'cout', x: 400, y: 20, side: 'out' },
+    ],
+    build(m) {
+      let carry = m.port('cin');
+      for (let i = 0; i < bits; i++) {
+        const cout = i === bits - 1 ? m.port('cout') : m.net();
+        m.instantiate(NFullAdder, i * (NGATE_W * 9), 0, {
+          a: m.port(`a${i}`), b: m.port(`b${i}`), cin: carry,
+          sum: m.port(`s${i}`), cout,
+        }, { tag: `fa${i}` });
+        carry = cout;
+      }
+    },
+  });
+}
+
+// A 4-bit ALU. Four functions rather than the CMOS version's six, and the
+// difference is instructive: the CMOS ALU steers its result with
+// transmission gates onto a shared bus, and a transmission gate needs a
+// complementary pair. NMOS has no P-channel, so there is no pass gate, no
+// tri-state, and no shared bus — every function has to be gated and then
+// OR-ed together into an ordinary wired result. That is a mux tree, and it
+// is exactly the cost the tri-state circuit exists to explain.
+export function nAlu(bits) {
+  const OPS = ['add', 'and', 'or', 'xor'];
+  return defineModule(`nalu${bits}`, {
+    ports: [
+      ...Array.from({ length: bits }, (_, i) => ({ name: `a${i}`, x: -1.5, y: i * 4, side: 'in' })),
+      ...Array.from({ length: bits }, (_, i) => ({ name: `b${i}`, x: -1.5, y: 20 + i * 4, side: 'in' })),
+      { name: 'f0', x: -1.5, y: 40, side: 'in' },
+      { name: 'f1', x: -1.5, y: 44, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({ name: `y${i}`, x: 600, y: i * 4, side: 'out' })),
+      { name: 'cout', x: 600, y: 20, side: 'out' },
+    ],
+    build(m) {
+      // decode the 2-bit function code to one-hot
+      const dec = m.instantiate(NDecode2, 0, 0, {
+        a0: m.port('f0'), a1: m.port('f1'),
+      });
+      const sel = OPS.map((_, i) => dec.nets[`y${i}`]);
+
+      const xBody = NGATE_W * 6;
+      let carry = VSS;   // no subtract here: that needs a fifth function
+      for (let i = 0; i < bits; i++) {
+        const x = xBody + i * (NGATE_W * 13);
+        const sum = m.net(), cout = i === bits - 1 ? m.port('cout') : m.net();
+        m.instantiate(NFullAdder, x, 0, {
+          a: m.port(`a${i}`), b: m.port(`b${i}`), cin: carry, sum, cout,
+        }, { tag: `fa${i}` });
+        carry = cout;
+
+        const andY = m.net(), orY = m.net(), xorY = m.net();
+        const yLogic = NGATE_H * 4;
+        m.instantiate(NAnd2, x, yLogic,
+          { a: m.port(`a${i}`), b: m.port(`b${i}`), y: andY });
+        m.instantiate(NOr2, x, yLogic + NGATE_H + 2,
+          { a: m.port(`a${i}`), b: m.port(`b${i}`), y: orY });
+        m.instantiate(NXor2, x, yLogic + (NGATE_H + 2) * 2,
+          { a: m.port(`a${i}`), b: m.port(`b${i}`), y: xorY });
+
+        // Gate each candidate with its select line, then OR the four
+        // together. Four ANDs and three ORs per bit — against the CMOS
+        // version's one pass gate per function — and this is the whole
+        // reason a machine without tri-state costs more.
+        const srcs = [sum, andY, orY, xorY];
+        const gated = srcs.map((src, k) => {
+          const g = m.net();
+          m.instantiate(NAnd2, x + NGATE_W * 4, yLogic + k * (NGATE_H + 2),
+            { a: src, b: sel[k], y: g });
+          return g;
+        });
+        const o1 = m.net(), o2 = m.net();
+        m.instantiate(NOr2, x + NGATE_W * 7, yLogic,
+          { a: gated[0], b: gated[1], y: o1 });
+        m.instantiate(NOr2, x + NGATE_W * 7, yLogic + NGATE_H + 2,
+          { a: gated[2], b: gated[3], y: o2 });
+        m.instantiate(NOr2, x + NGATE_W * 10, yLogic,
+          { a: o1, b: o2, y: m.port(`y${i}`) });
+      }
+    },
+  });
+}
+
 // A D latch. No transmission gates here — those need a complementary pair,
 // which is exactly what NMOS does not have. Instead this is the classic
 // cross-coupled NOR latch with steering: the shape used before pass gates
