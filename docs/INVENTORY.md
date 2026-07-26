@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**48 circuits** across 4 sections.
+**50 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (15)
+### CMOS (17)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -88,6 +88,8 @@ circuit exists to explain.
 | CMOS D Latch | Memory | · | 8 | · | · | 8 |
 | 16×4 Register File | Memory | · | 1488 | · | · | 635 |
 | CMOS Program ROM | Memory | · | 189 | · | · | 89 |
+| 4-bit Counter | Sequential | · | 180 | · | · | 87 |
+| 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -112,10 +114,10 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 48 |
-| Groups | 15 |
+| Circuits | 50 |
+| Groups | 16 |
 | Relays | 91 |
-| Transistors | 2944 |
+| Transistors | 3656 |
 | Diodes | 4 |
 | Resistors | 256 |
 
@@ -125,13 +127,13 @@ circuit exists to explain.
 |---|--:|--:|
 | 16×4 Register File | 1488 | 635 |
 | 4-bit ALU | 538 | 262 |
+| 12-bit Program Counter | 532 | 247 |
 | NMOS 4-bit ALU | 408 | 246 |
 | CMOS Program ROM | 189 | 89 |
-| Program ROM | 181 | 80 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **146623 checks, 0 failures**
+`node test/sim-test.mjs` → **146710 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

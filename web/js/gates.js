@@ -216,3 +216,127 @@ export const Xor2 = defineModule('xor2', {
     m.instantiate(Nand2, GATE_W * 2, 0, { a: t1, b: t2, y: m.port('y') });
   },
 });
+
+// A master-slave D flip-flop: two latches on opposite clock phases.
+//
+// This is what a *counter* needs and a plain latch cannot give. A latch is
+// transparent while enabled, so a counter built from latches would feed its
+// own incremented output straight back through the adder and race around
+// several times per clock pulse. The master-slave pair breaks that: while
+// the clock is low the master follows d and the slave holds; when the clock
+// rises the master shuts and the slave takes what the master captured. New
+// data can never reach the output in the same phase it arrived, so the
+// feedback path always sees last cycle's value.
+//
+// The cost is one clock of latency and twice the devices, which is the
+// trade every synchronous machine makes.
+//
+// `nclk` must be the complement of `clk`; the caller supplies it so a
+// register bank can share one inverter across every bit.
+export const DFlipFlop = defineModule('dff', {
+  ports: [
+    { name: 'd', x: -1.5, y: 8, side: 'in' },
+    { name: 'q', x: GATE_W * 8, y: 8, side: 'out' },
+    { name: 'clk', x: 0, y: -3, side: 'top' },
+    { name: 'nclk', x: 0, y: -1, side: 'top' },
+  ],
+  build(m) {
+    const clk = m.port('clk'), nclk = m.port('nclk');
+    const mid = m.net();
+    // master: transparent while the clock is LOW
+    m.instantiate(DLatch, 0, 0, {
+      d: m.port('d'), q: mid, en: nclk, nen: clk,
+    });
+    // slave: transparent while it is HIGH, so the value moves on the edge
+    m.instantiate(DLatch, GATE_W * 4.5, 0, {
+      d: mid, q: m.port('q'), en: clk, nen: nclk,
+    });
+  },
+});
+
+// One bit of a synchronous counter: the flip-flop plus the half-adder that
+// produces the next value. `cin` is the carry from the bit below, `cout`
+// goes to the bit above, and a chain of these counts on every clock edge.
+//
+// next = q XOR cin, and the carry propagates when q was already 1 — the
+// same half-adder shape as the arithmetic circuits, wired back on itself.
+export const CounterBit = defineModule('cntbit', {
+  ports: [
+    { name: 'cin', x: -1.5, y: 4, side: 'in' },
+    { name: 'nrst', x: -1.5, y: 12, side: 'in' },
+    { name: 'q', x: GATE_W * 14, y: 8, side: 'out' },
+    { name: 'cout', x: GATE_W * 14, y: 24, side: 'out' },
+    { name: 'clk', x: 0, y: -3, side: 'top' },
+    { name: 'nclk', x: 0, y: -1, side: 'top' },
+  ],
+  build(m) {
+    const q = m.port('q'), cin = m.port('cin'), nrst = m.port('nrst');
+    const toggled = m.net(), next = m.net();
+    // the incremented value, computed from the *current* q
+    m.instantiate(Xor2, 0, 0, { a: q, b: cin, y: toggled });
+    // Reset feeds the flip-flop's input rather than masking its output —
+    // masking would leave the real state counting behind a zero. It also
+    // has to be here because these cells power up at Z: without a defined
+    // value reaching the storage, q XOR cin stays undefined forever and
+    // the counter never starts.
+    //
+    // Note this costs one clock: while reset is held the input is 0, so
+    // the first edge after releasing it re-clocks that 0 and the count
+    // begins on the *second* edge. That is exactly how a real synchronous
+    // reset behaves — it is a value clocked in like any other, not a wire
+    // that yanks the flip-flop directly — and a machine bringing itself up
+    // has to allow for it.
+    m.instantiate(And2, GATE_W * 3, 0, { a: toggled, b: nrst, y: next });
+    // carry out: this bit rolls over only if it was 1 and is being toggled
+    m.instantiate(And2, 0, GATE_H * 2 + 4, { a: q, b: cin, y: m.port('cout') });
+    // the flip-flop is what makes the feedback safe — it is why this needs
+    // an edge-triggered cell and not a latch
+    m.instantiate(DFlipFlop, GATE_W * 6, 0, {
+      d: next, q, clk: m.port('clk'), nclk: m.port('nclk'),
+    });
+  },
+});
+
+// A synchronous binary counter of `bits` stages — the shape of a program
+// counter. Every flip-flop sees the same clock edge, so the whole word
+// advances at once rather than rippling; the carry chain settles between
+// edges instead.
+//
+// `en` gates counting: it feeds the LSB's carry-in, so with it low the
+// counter holds. `rst` forces every bit low, which is what brings a machine
+// up in a known state — without it the flip-flops power up undefined and
+// the count would start from nowhere.
+//
+// The reset is *synchronous*: it is clocked in like any other value, so
+// releasing it costs one edge before counting begins. Real synchronous
+// resets behave the same way, and a caller sequencing a bring-up needs to
+// know it.
+export function counter(bits) {
+  return defineModule(`cnt${bits}`, {
+    ports: [
+      { name: 'clk', x: 0, y: -3, side: 'top' },
+      { name: 'nclk', x: 0, y: -1, side: 'top' },
+      { name: 'en', x: -1.5, y: 4, side: 'in' },
+      { name: 'rst', x: -1.5, y: 8, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `q${i}`, x: 400, y: i * 4, side: 'out',
+      })),
+      { name: 'cout', x: 400, y: bits * 4, side: 'out' },
+    ],
+    build(m) {
+      const clk = m.port('clk'), nclk = m.port('nclk');
+      const nrst = m.net();
+      m.instantiate(Inverter, 0, 0, { a: m.port('rst'), y: nrst });
+
+      let carry = m.port('en');
+      for (let i = 0; i < bits; i++) {
+        const x = GATE_W * 4 + i * (GATE_W * 15);
+        const cout = i === bits - 1 ? m.port('cout') : m.net();
+        m.instantiate(CounterBit, x, 0, {
+          cin: carry, nrst, q: m.port(`q${i}`), cout, clk, nclk,
+        }, { tag: `b${i}` });
+        carry = cout;
+      }
+    },
+  });
+}

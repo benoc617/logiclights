@@ -135,6 +135,21 @@ select {
   font-weight: 600;
 }
 
+/* Clock controls, shown only for circuits that declare a clock. */
+.clockctl button {
+  background: #242b3d;
+  color: #dfe5f1;
+  border: 1px solid #3a445c;
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.clockctl button:hover { border-color: #4d5878; }
+.clockctl button.on { border-color: #ffb340; color: #ffc463; }
+.clockctl #clk-label { min-width: 4.5em; }
+.clockctl input { width: 90px; }
+
 .ctl {
   display: flex;
   align-items: center;

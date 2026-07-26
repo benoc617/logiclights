@@ -49,6 +49,7 @@ export class Circuit {
     this.wires = [];   // { net, pts: [[x,y], ...] }
     this.labels = [];  // { text, x, y, size, color, align }
     this.regions = []; // { text, x0, y0, x1, y1 } — annotation only
+    this.clock = null; // set by addClock() for circuits that have one
     this.hot = [true, false];
     this.value = [HI, LO];
     this.strength = [STRONG, STRONG];
@@ -187,6 +188,49 @@ export class Circuit {
       diodes: this.diodes.length,
       resistors: this.resistors.length,
     };
+  }
+
+  // ── clock ──────────────────────────────────────────────────────────────
+  //
+  // A circuit that has a clock declares it, and the app grows a run / pause
+  // / step control for it. The circuit still owns the switch — the clock is
+  // an ordinary input being driven, not a special signal the solver knows
+  // about — so a paused clock is genuinely just a switch nobody is
+  // flipping, and stepping it by hand is identical to flipping it.
+  //
+  // `period` is the wall-clock time for a full cycle in ms. The app drives
+  // the edges; the engine only records the intent so nothing here has to
+  // know about rAF.
+  addClock(sw, opts = {}) {
+    this.clock = {
+      sw,
+      period: opts.period ?? 1200,
+      running: opts.running ?? false,
+      // half-cycles elapsed, so the UI can show where in the cycle it is
+      ticks: 0,
+      nextAt: 0,
+    };
+    return this.clock;
+  }
+
+  // Advance the clock if it is running and due. Returns true on a rising
+  // edge, which is what the machine's state actually moves on.
+  tickClock(now) {
+    const k = this.clock;
+    if (!k || !k.running) return false;
+    if (now < k.nextAt) return false;
+    k.nextAt = now + k.period / 2;
+    return this.stepClock();
+  }
+
+  // One half-cycle, by hand. Same path the free-running clock takes, so a
+  // manually stepped machine and a running one cannot diverge.
+  stepClock() {
+    const k = this.clock;
+    if (!k) return false;
+    k.sw.on = !k.sw.on;
+    k.ticks++;
+    return k.sw.on;   // true on the rising edge
   }
 
   // ── simulation ─────────────────────────────────────────────────────────

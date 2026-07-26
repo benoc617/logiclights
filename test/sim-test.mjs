@@ -1214,6 +1214,103 @@ function flipAndStep(c, label, on) {
   }
 }
 
+// ── clocked state: flip-flops and counters ───────────────────────────────
+// The first circuits that have to remember where they were. A latch would
+// race here — transparent while enabled, so the incremented value would run
+// straight back around — so these must be edge-triggered, and the tests
+// assert the edge behaviour rather than just the count.
+{
+  const c = buildCircuit('cmospc4');
+  const tick = () => {
+    // one full cycle through the circuit's own clock, which is the same
+    // path the UI's run and step controls take
+    c.stepClock(); settle(c);   // rising
+    c.stepClock(); settle(c);   // falling
+  };
+  const val = () => {
+    let v = 0;
+    for (let i = 0; i < 4; i++) if (lampV(c, `Q${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  expect(c, 'counter declares a clock', !!c.clock, true);
+
+  sw(c, 'RST', true); sw(c, 'RUN', true); settle(c);
+  expect(c, 'reset clears the count', val(), 0);
+  sw(c, 'RST', false); settle(c);
+  // Synchronous reset costs one edge: the first rising edge re-clocks the
+  // zero that reset was holding at the input. Real synchronous resets do
+  // exactly this, so the test encodes it rather than hiding it.
+  tick();
+  expect(c, 'first edge after reset re-clocks zero', val(), 0);
+  for (let n = 1; n <= 15; n++) {
+    tick();
+    expect(c, `counts to ${n}`, val(), n);
+  }
+  tick();
+  expect(c, 'rolls over at 16', val(), 0);
+
+  // RUN low holds the value: the clock keeps going, the count does not
+  for (let n = 0; n < 3; n++) tick();
+  const held = val();
+  sw(c, 'RUN', false); settle(c);
+  tick(); tick();
+  expect(c, 'RUN low holds the count', val(), held);
+  sw(c, 'RUN', true); settle(c);
+  tick();
+  expect(c, 'RUN high resumes', val(), (held + 1) & 15);
+
+  // Every stored bit is driven hard — these are static flip-flops, so a
+  // paused machine holds its state indefinitely rather than decaying.
+  for (let i = 0; i < 4; i++) {
+    expect(c, `Q${i} is statically driven`, lampStr(c, `Q${i}`), STRONG);
+  }
+}
+{
+  // The 12-bit program counter: same module, three times as wide, and the
+  // width that actually addresses the 4004's program space.
+  const c = buildCircuit('cmospc12');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const val = () => {
+    let v = 0;
+    for (let i = 0; i < 12; i++) if (lampV(c, `Q${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  sw(c, 'RST', true); sw(c, 'RUN', true); settle(c);
+  sw(c, 'RST', false); settle(c);
+  tick();                       // the reset edge
+  for (const n of [1, 2, 3]) { tick(); expect(c, `PC reaches ${n}`, val(), n); }
+  // carry has to cross a byte boundary correctly — the bug a 4-bit test
+  // cannot see
+  for (let n = 4; n <= 260; n++) tick();
+  expect(c, 'PC crosses 8-bit boundary', val(), 260);
+}
+{
+  // Stepping by hand and running free must take the identical path, or a
+  // machine you single-step would diverge from one you let run.
+  const a = buildCircuit('cmospc4');
+  const b = buildCircuit('cmospc4');
+  for (const c of [a, b]) {
+    sw(c, 'RST', true); sw(c, 'RUN', true); settle(c);
+    sw(c, 'RST', false); settle(c);
+  }
+  // a: driven by stepClock, as the step button does
+  for (let k = 0; k < 12; k++) { a.stepClock(); settle(a); }
+  // b: driven by tickClock on a timer, as the run loop does
+  b.clock.running = true;
+  let now = 0;
+  for (let k = 0; k < 12; k++) {
+    now += b.clock.period;      // always past due, so every call ticks
+    b.tickClock(now);
+    settle(b);
+  }
+  const read = c => {
+    let v = 0;
+    for (let i = 0; i < 4; i++) if (lampV(c, `Q${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  expect(a, 'stepping and running agree', read(a), read(b));
+}
+
 // ── picker grouping ──────────────────────────────────────────────────────
 // Sections are by technology, so a circuit's group has to match the devices
 // it is actually made of — otherwise a new circuit lands in the wrong
@@ -1280,7 +1377,10 @@ for (const e of CIRCUITS) {
   }
   for (const bus of [...buses.inputs, ...buses.outputs, ...buses.internals]) {
     checks++;
-    if (!bus.name || !bus.bits.length || bus.bits.length > 8) {
+    // The upper bound is a sanity check against a derivation bug inventing
+    // an absurd bus, not a real constraint — 12 is the 4004's program
+    // counter, and a wider machine would legitimately go past it.
+    if (!bus.name || !bus.bits.length || bus.bits.length > 16) {
       failures++;
       console.error(`FAIL [${e.id}] bad bus ${bus.name} (${bus.bits.length} bits)`);
     }

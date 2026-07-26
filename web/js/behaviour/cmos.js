@@ -8,7 +8,7 @@
 import { Circuit, VDD, VSS, VALUE_CHAR } from '../engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from '../geometry.js';
 import { instantiate } from '../module.js';
-import { And2, Or2, Xor2, DLatch, FullAdder } from '../gates.js';
+import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter } from '../gates.js';
 import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
 import { buildRom8 } from './rom-circuit.js';
@@ -277,6 +277,55 @@ function buildRegFile() {
 }
 
 
+
+// A program counter: the first circuit in the library with a clock.
+//
+// Everything before this was combinational or level-sensitive — you flipped
+// a switch and watched the consequence settle. A counter is different: it
+// has to remember where it was and advance exactly once per clock edge,
+// which is why it needs edge-triggered flip-flops rather than latches. A
+// latch is transparent while enabled, so the incremented value would race
+// straight back around through the adder and the count would jump several
+// times per pulse.
+//
+// `bits` is 4 for the demo and 12 for the 4004's real program counter.
+function buildCounter(bits, name) {
+  return () => {
+    const c = new Circuit(name);
+    c.implicitGround = false;
+
+    const clkNet = c.net(), nclk = c.net(), en = c.net(), rst = c.net();
+    const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+    c.addSwitch('RUN', en, 'toggle', 4, 11, { to: VSS });
+    c.addSwitch('RST', rst, 'toggle', 4, 16, { to: VSS });
+    // the app grows run / pause / step controls from this
+    c.addClock(clkSw, { period: 1200 });
+
+    const inst = instantiate(c, Inverter, 20, 30, { a: clkNet, y: nclk });
+    const K = instantiate(c, counter(bits), 36, 0,
+      { clk: clkNet, nclk, en, rst });
+
+    const b = c.bounds();
+    const xEnd = b.x1 + 10;
+    const yTop = -12, yBot = Math.max(b.y1 + 6, 30);
+    w(c, VDD, [0, yTop], [xEnd, yTop]);
+    w(c, VSS, [0, yBot], [xEnd, yBot]);
+    c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+    c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+    for (const sw of c.switches) {
+      const t = switchSpdtT(sw);
+      w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+      w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+    }
+    for (let i = 0; i < bits; i++) {
+      c.addLamp(`Q${i}`, K.nets[`q${i}`], xEnd - 5, 4 + i * 4.5, { short: `Q${i}` });
+    }
+    c.addLamp('Cout', K.nets.cout, xEnd - 5, 4 + bits * 4.5, { short: 'Cout' });
+    c.region('Clock inverter', 16, 26, 30, 44, { side: 'top' });
+    return c;
+  };
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -346,6 +395,14 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  cmospc4: {
+    build: buildCounter(4, '4-bit Counter'),
+    readout: v => `count = ${v.Q}${v.Cout ? '  (rolling over)' : ''}`,
+  },
+  cmospc12: {
+    build: buildCounter(12, '12-bit Program Counter'),
+    readout: v => `PC = ${v.Q}  (0x${v.Q.toString(16).toUpperCase().padStart(3, '0')})`,
   },
   alu4: {
     build: buildAlu4,

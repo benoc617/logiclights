@@ -29,6 +29,62 @@ function applySpeed() {
 }
 speed.addEventListener('input', applySpeed);
 
+// ── clock ────────────────────────────────────────────────────────────────
+//
+// Only circuits that declare a clock get these controls. The clock is an
+// ordinary switch being driven on a timer, so pausing it really is just
+// nobody flipping the switch, and stepping by hand takes the identical
+// path — a stepped machine and a running one cannot diverge.
+
+const clockCtl = document.getElementById('clockctl');
+const clkRun = document.getElementById('clk-run');
+const clkStep = document.getElementById('clk-step');
+const clkRate = document.getElementById('clk-rate');
+const clkLabel = document.getElementById('clk-label');
+
+function clockPeriod() {
+  // slider 0..100 → 4 s .. 60 ms, log scale. Slow enough at the top to
+  // watch a carry propagate between edges.
+  return Math.round(4000 * Math.pow(60 / 4000, clkRate.value / 100));
+}
+function applyClockRate() {
+  const p = clockPeriod();
+  if (circuit && circuit.clock) circuit.clock.period = p;
+  clkLabel.textContent = p >= 1000 ? `${(p / 1000).toFixed(1)} s` : `${p} ms`;
+}
+function setRunning(on) {
+  if (!circuit || !circuit.clock) return;
+  circuit.clock.running = on;
+  circuit.clock.nextAt = performance.now() + circuit.clock.period / 2;
+  clkRun.textContent = on ? '⏸' : '▶';
+  clkRun.classList.toggle('on', on);
+  // stepping by hand only makes sense while paused
+  clkStep.disabled = on;
+}
+clkRun.addEventListener('click', () => {
+  if (circuit && circuit.clock) setRunning(!circuit.clock.running);
+});
+clkStep.addEventListener('click', () => {
+  if (!circuit || !circuit.clock || circuit.clock.running) return;
+  circuit.stepClock();
+  sound.ensure();
+});
+clkRate.addEventListener('input', applyClockRate);
+
+// keyboard: space runs/pauses, right arrow steps — the controls you reach
+// for without looking when watching a machine
+document.addEventListener('keydown', ev => {
+  if (!circuit || !circuit.clock) return;
+  if (ev.target.tagName === 'INPUT') return;
+  if (ev.code === 'Space') {
+    ev.preventDefault();
+    setRunning(!circuit.clock.running);
+  } else if (ev.code === 'ArrowRight' && !circuit.clock.running) {
+    ev.preventDefault();
+    circuit.stepClock();
+  }
+});
+
 const soundBtn = document.getElementById('sound');
 soundBtn.addEventListener('click', () => {
   sound.enabled = !sound.enabled;
@@ -58,6 +114,8 @@ function load(id) {
   circuit.step(performance.now());
   document.getElementById('desc').textContent = circuit.desc;
   document.getElementById('stats').textContent = statsText(circuit.counts());
+  clockCtl.hidden = !circuit.clock;
+  if (circuit.clock) { applyClockRate(); setRunning(false); }
   buildPanel(circuit);  // sized before fitting — the panel's width is an inset
   fitView();
   // sandboxed viewers (opaque origins) can refuse URL writes — never fatal
@@ -199,6 +257,7 @@ canvas.addEventListener('wheel', ev => {
 // ── main loop ────────────────────────────────────────────────────────────
 
 function frame(now) {
+  if (circuit.clock) circuit.tickClock(now);
   const clicks = circuit.step(now);
   if (clicks) sound.clicks(clicks);
   if (circuit.switchings) sound.zaps(circuit.switchings);

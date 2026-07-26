@@ -10,6 +10,7 @@
     "CMOS · Gates",
     "CMOS · Buses",
     "CMOS · Memory",
+    "CMOS · Sequential",
     "CMOS · Arithmetic",
     "NMOS · Basics",
     "NMOS · Gates",
@@ -257,6 +258,32 @@
         "title": "Register contents",
         "columns": 4,
         "key": "amber = the register RA is reading · blue = where WA would write"
+      }
+    },
+    {
+      "id": "cmospc4",
+      "group": "CMOS · Sequential",
+      "name": "4-bit Counter",
+      "desc": "The first circuit here with a clock, and the first that has to remember where it was. Press RUN, then use the clock controls to step it by hand or let it free-run. Each stage is a master-slave flip-flop: two latches on opposite clock phases, so a new value can never reach the output in the same phase it arrived. That is what makes the feedback safe — built from plain latches the incremented value would race straight back through the adder and the count would jump several times per pulse. RST is synchronous, so releasing it costs one edge before counting starts, exactly as a real synchronous reset does.",
+      "hints": {
+        "CLK": "the clock — use the controls above, or flip it by hand",
+        "RUN": "enable counting; low holds the current value",
+        "RST": "clear to zero (synchronous — costs one edge)",
+        "Q": "the count",
+        "Cout": "carry out of the top bit — high on the tick that rolls over"
+      }
+    },
+    {
+      "id": "cmospc12",
+      "group": "CMOS · Sequential",
+      "name": "12-bit Program Counter",
+      "desc": "The 4004's program counter: twelve bits, addressing 4 KB of program space. Same circuit as the 4-bit counter, three times as wide — which is the point of building it from a module. This is the piece that makes a machine able to run a program rather than compute one answer: something has to say which instruction is next, and advance on its own.",
+      "hints": {
+        "CLK": "the clock — use the controls above, or flip it by hand",
+        "RUN": "enable counting; low holds the current address",
+        "RST": "clear to zero (synchronous — costs one edge)",
+        "Q": "the program address",
+        "Cout": "carry out of the top bit — wraps at 4096"
       }
     },
     {
