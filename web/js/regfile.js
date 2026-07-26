@@ -90,8 +90,13 @@ const RegRow = defineModule('reg', {
     { name: 'nrd', x: 0, y: 0, side: 'top' },
   ],
   build(m) {
+    // The stored nets are internal — nothing outside the row would be able
+    // to see them, since the read bus only shows the one selected register.
+    // Hand them back so the app can display all sixteen words at once.
+    m.stored = [];
     for (let b = 0; b < REG_WIDTH; b++) {
       const stored = m.net();
+      m.stored.push(stored);
       m.instantiate(DLatch, b * CELL_PITCH, 0, {
         d: m.port(`d${b}`), q: stored,
         en: m.port('we'), nen: m.port('nwe'),
@@ -124,6 +129,11 @@ export const RegFile16x4 = defineModule('regfile', {
     })),
   ],
   build(m) {
+    // every register's stored nets, so the app can show the whole file at
+    // once rather than one word at a time through the read port
+    const cells = [];
+    m.stored = cells;
+
     // write decoder, gated by WE so nothing is written between writes
     const wBind = { en: m.port('we') };
     for (let i = 0; i < REG_ADDR; i++) wBind[`a${i}`] = m.port(`wa${i}`);
@@ -170,6 +180,7 @@ export const RegFile16x4 = defineModule('regfile', {
         bind[`q${b}`] = m.port(`q${b}`);   // read bus, shared by every row
       }
       const row = m.instantiate(RegRow, xRows, y, bind, { tag: `r${r}` });
+      cells.push(row.stored);   // this register's four stored nets, LSB first
 
       // Each register gets its own box, so "where is r9" has an answer you
       // can point at. At a glance the sixteen boxes are also the clearest

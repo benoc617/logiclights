@@ -89,6 +89,10 @@ const AluBit = defineModule('alubit', {
     // pitched to the blocks' measured heights (a gate is GATE_H tall, Xor2
     // is two rows) so the slice packs instead of scattering.
     const andY = m.net(), orY = m.net(), xorY = m.net();
+    // published so a display can read what each function computed, rather
+    // than recomputing it in JS — the circuit is the source of truth
+    m.stored = { sum: fa.nets.sum, and: andY, or: orY, xor: xorY,
+                 shl: m.port('ashl') };
     const yLogic = GATE_H * 3.5;   // below the full adder
     m.instantiate(And2, 0, yLogic, { a, b, y: andY });
     m.instantiate(Or2, 0, yLogic + GATE_H + 2, { a, b, y: orY });
@@ -137,6 +141,11 @@ export const Alu4 = defineModule('alu4', {
     { name: 'cout', x: 200, y: 20, side: 'out' },
   ],
   build(m) {
+    // each bit slice's per-function nets, so a display can read the six
+    // results the circuit actually computed
+    const slices = [];
+    m.stored = slices;
+
     // decode the function code to one-hot, and complement each line for the
     // pass gates
     const dec = m.instantiate(Decode3, 0, 0, {
@@ -188,6 +197,7 @@ export const Alu4 = defineModule('alu4', {
         y: m.port(`y${i}`),
         ...selBind,
       }, { tag: `bit${i}` });
+      slices.push(slice.stored);
       // One box per bit slice: the four of them side by side are the
       // clearest statement that this is one circuit repeated, with the
       // carry threaded left to right.

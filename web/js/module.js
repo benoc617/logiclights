@@ -72,6 +72,11 @@ export function instantiate(c, def, x, y, bind = {}, opts = {}) {
     w: b._maxX - b._minX === -Infinity ? 0 : b._maxX - b._minX,
     h: b._maxY - b._minY === -Infinity ? 0 : b._maxY - b._minY,
     ports: def.ports,
+    // Anything the module chose to publish about its internals. Ports are
+    // the electrical contract; this is for nets a display wants to read but
+    // nothing wires to — a register's stored bits, say, which the read bus
+    // only ever shows one of.
+    stored: b.stored,
   };
 }
 

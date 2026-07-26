@@ -833,6 +833,44 @@ function flipAndStep(c, label, on) {
   }
 }
 {
+  // A state readout must agree with the circuit it claims to describe —
+  // one that did its own arithmetic would agree with a broken circuit too.
+  const c = buildCircuit('alu4');
+  const entry = CIRCUITS.find(e => e.id === 'alu4');
+  const setBus = (n, v, b) => {
+    for (let i = 0; i < b; i++) sw(c, `${n}${i}`, !!((v >> i) & 1));
+  };
+  const want = { AND: (a, b) => a & b, OR: (a, b) => a | b, XOR: (a, b) => a ^ b };
+  for (const [a, b] of [[12, 10], [7, 3], [15, 1], [0, 0]]) {
+    setBus('A', a, 4); setBus('B', b, 4); setBus('F', 2, 3);
+    settle(c);
+    const items = entry.state.read(c, { A: a, B: b, F: 2 });
+    for (const it of items) {
+      if (!want[it.label]) continue;   // ADD/SUB share the adder
+      expect(c, `state ${it.label} of ${a},${b} matches the circuit`,
+        it.text, String(want[it.label](a, b)));
+    }
+    // exactly one entry is marked as the selected function
+    expect(c, `state marks one selection at F=2`,
+      items.filter(i => i.mark === 'read').length, 1);
+  }
+  // the register file's state must reflect an actual write
+  const rf = buildCircuit('regfile');
+  const rfEntry = CIRCUITS.find(e => e.id === 'regfile');
+  const set2 = (n, v, b) => {
+    for (let i = 0; i < b; i++) sw(rf, `${n}${i}`, !!((v >> i) & 1));
+  };
+  sw(rf, 'WE', false); settle(rf);
+  set2('WA', 6, 4); set2('D', 9, 4); settle(rf);
+  sw(rf, 'WE', true); settle(rf);
+  sw(rf, 'WE', false); settle(rf);
+  const cells = rfEntry.state.read(rf, { RA: 6, WA: 6 });
+  expect(rf, 'state shows the written register', cells[6].text, '9');
+  // and writing one register must not have disturbed the rest — a
+  // never-written latch is genuinely floating, shown as a dash
+  expect(rf, 'state shows neighbours untouched', cells[7].text, '–');
+}
+{
   // Every legend's select() must land inside its own row list.
   for (const entry of CIRCUITS) {
     if (!entry.table) continue;

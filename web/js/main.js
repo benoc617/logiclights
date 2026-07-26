@@ -97,6 +97,8 @@ let rows = [];
 let readoutEl = null;
 let tableRows = null;     // selector-legend rows, if the circuit has a table
 let legendSelect = null;  // picks the live row index from the bus values
+let stateCells = null;    // live internal-state cells, if the circuit has any
+let stateRead = null;     // reads that state off the circuit each frame
 
 // How much of the canvas the I/O panel covers, so fitting can avoid it:
 // docked right on wide screens, along the bottom on narrow ones.
@@ -252,6 +254,29 @@ function buildPanel() {
     panelBody.appendChild(box);
     legendSelect = t.select;
   }
+
+  // Live internal state. A register file's stored words are invisible
+  // otherwise — the read port shows one at a time, so you would have to
+  // walk RA through all sixteen addresses to learn what the file holds.
+  stateCells = null;
+  if (circuit.state) {
+    const st = circuit.state;
+    panelBody.appendChild(el('div', 'sec-title', st.title));
+    const grid = el('div', 'state-grid');
+    grid.style.gridTemplateColumns = `repeat(${st.columns || 4}, 1fr)`;
+    const initial = st.read(circuit, {});
+    stateCells = initial.map(item => {
+      const cell = el('div', 'state-cell');
+      cell.appendChild(el('span', 'state-label', item.label));
+      const val = el('span', 'state-val', item.text);
+      cell.appendChild(val);
+      grid.appendChild(cell);
+      return { cell, val, shown: null, mark: null };
+    });
+    panelBody.appendChild(grid);
+    if (st.key) panelBody.appendChild(el('div', 'state-key', st.key));
+    stateRead = st.read;
+  }
   updatePanel();
 }
 
@@ -294,6 +319,24 @@ function updatePanel() {
     for (const r of tableRows) {
       const on = r.index === live;
       if (r.on !== on) { r.on = on; r.el.classList.toggle('live', on); }
+    }
+  }
+  if (stateCells) {
+    const items = stateRead(circuit, vals);
+    for (let i = 0; i < stateCells.length; i++) {
+      const c = stateCells[i], item = items[i];
+      if (c.shown !== item.text) {
+        c.shown = item.text;
+        c.val.textContent = item.text;
+        // a value that never settled is worth flagging, however it is
+        // spelled — 'Z', 'X', or a dash standing in for a floating word
+        c.val.classList.toggle('bad', /[XZ]/.test(item.text) || item.text === '–');
+      }
+      if (c.mark !== item.mark) {
+        c.mark = item.mark;
+        c.cell.classList.toggle('is-read', item.mark === 'read');
+        c.cell.classList.toggle('is-write', item.mark === 'write');
+      }
     }
   }
 }

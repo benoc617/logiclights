@@ -5,7 +5,7 @@
 // undirected, so these topologies are designed sneak-path-free, like the
 // real thing.
 
-import { Circuit, VCC, VDD, VSS } from './engine.js';
+import { Circuit, VCC, VDD, VSS, VALUE_CHAR } from './engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from './geometry.js';
 import { instantiate } from './module.js';
 import { Alu4, ALU_BITS } from './alu.js';
@@ -916,6 +916,7 @@ function buildAlu4() {
   }
 
   const inst = instantiate(c, Alu4, 24, 0, bind);
+  c.slices = inst.stored;   // per-bit nets for each function, for display
 
   // rails span the whole block
   const b = c.bounds();
@@ -1019,6 +1020,11 @@ function buildRegFile() {
   for (let i = 0; i < REG_WIDTH; i++) {
     c.addLamp(`Q${i}`, inst.nets[`q${i}`], xEnd - 5, 6 + i * 5, { short: `Q${i}` });
   }
+  // The read port shows one register at a time; this exposes all sixteen,
+  // read straight off the latch nets. Stored state is otherwise invisible —
+  // you would have to walk RA through every address to find out what the
+  // file holds.
+  c.cells = inst.stored;
   return c;
 }
 
@@ -1111,6 +1117,25 @@ export const CIRCUITS = [
         { code: '3.', name: 'Drop WE', note: 'before touching WA again' },
         { code: '4.', name: 'Set RA', note: 'Q follows it immediately' },
       ],
+    },
+    state: {
+      title: 'Register contents',
+      columns: 4,
+      key: 'amber = the register RA is reading · blue = where WA would write',
+      // one entry per register, read straight off its latch nets
+      read: (c, v) => c.cells.map((nets, i) => {
+        const bits = nets.map(n => VALUE_CHAR[c.value[n]]);
+        const settled = bits.every(b => b === '0' || b === '1');
+        return {
+          label: `r${i}`,
+          // A never-written latch is genuinely floating, and saying so
+          // matters — but four Z's per cell swamps the grid, so it reads
+          // as a single dash and keeps the colour that flags it.
+          text: settled ? String(parseInt(bits.slice().reverse().join(''), 2)) : '–',
+          // flag the two registers the ports are pointed at
+          mark: i === v.RA ? 'read' : i === v.WA ? 'write' : null,
+        };
+      }),
     } },
   { id: 'rom8', group: 'Memory', name: 'Program ROM', build: buildRom8,
     desc: 'A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.',
@@ -1123,13 +1148,16 @@ export const CIRCUITS = [
       A: 'address — which of the 8 stored words to read',
       D: 'the word at that address (bit = 1 where the array has no transistor)',
     },
-    table: {
+    state: {
       title: 'Stored contents',
-      select: v => v.A,
-      rows: [...'LOGIC 42'].map((ch, i) => ({
-        code: String(i),
-        name: ch === ' ' ? '␣' : ch,
-        note: `0x${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+      columns: 4,
+      key: 'amber = the word the address lines are selecting',
+      // The ROM's contents are fixed at build time, so this is a listing
+      // rather than a live reading — but which word is selected *is* live.
+      read: (c, v) => [...'LOGIC 42'].map((ch, i) => ({
+        label: String(i),
+        text: ch === ' ' ? '␣' : ch,
+        mark: i === v.A ? 'read' : null,
       })),
     } },
   { id: 'alu4', group: 'Arithmetic', name: '4-bit ALU', build: buildAlu4,
@@ -1154,6 +1182,38 @@ export const CIRCUITS = [
         { code: '101', name: 'SHL', note: 'A shifted left one bit' },
         { code: '11x', name: '—', note: 'nothing selected; the bus floats' },
       ],
+    },
+    state: {
+      title: 'All six results',
+      columns: 3,
+      key: 'read off the circuit, not recomputed. The logic gates all compute at once; ADD and SUB share one adder, so only the selected one has a value (· = not being computed).',
+      // The circuit really does compute all six simultaneously; the pass
+      // gates just decide which one is visible. Showing them together is
+      // the clearest statement of what "steered onto a shared bus" means.
+      read: (c, v) => {
+        // read the nets the circuit actually settled to, never recompute:
+        // a display that does its own arithmetic would agree with a broken
+        // circuit, which is the one thing it must never do
+        const word = key => {
+          let n = 0;
+          for (let i = 0; i < c.slices.length; i++) {
+            const ch = VALUE_CHAR[c.value[c.slices[i][key]]];
+            if (ch === '1') n |= 1 << i;
+            else if (ch !== '0') return '—';
+          }
+          return String(n);
+        };
+        // ADD and SUB share the adder; which one it computed depends on F
+        const sum = word('sum');
+        return [
+          { label: 'ADD', text: v.F === 1 ? '·' : sum },
+          { label: 'SUB', text: v.F === 1 ? sum : '·' },
+          { label: 'AND', text: word('and') },
+          { label: 'OR', text: word('or') },
+          { label: 'XOR', text: word('xor') },
+          { label: 'SHL', text: word('shl') },
+        ].map((it, i) => ({ ...it, mark: i === v.F ? 'read' : null }));
+      },
     },
     readout: v => {
       const OPS = ['+', '−', 'AND', 'OR', 'XOR', '<<'];
@@ -1189,5 +1249,6 @@ export function buildCircuit(id) {
   c.readout = entry.readout;
   c.hints = entry.hints;   // per-bus captions in the I/O table
   c.table = entry.table;   // legend of selector codes, if the circuit has one
+  c.state = entry.state;   // live internal state, for circuits that store any
   return c;
 }
