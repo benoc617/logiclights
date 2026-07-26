@@ -8,6 +8,7 @@ import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/
 import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
+import { InstructionDecoder } from '../web/js/decode.js';
 
 let failures = 0;
 let checks = 0;
@@ -1309,6 +1310,86 @@ function flipAndStep(c, label, on) {
     return v;
   };
   expect(a, 'stepping and running agree', read(a), read(b));
+}
+
+// ── instruction decoder ──────────────────────────────────────────────────
+// Every one of the 256 possible instruction bytes must decode to exactly
+// one opcode line. A decoder that lit two lines, or none, would send the
+// sequencer down two paths at once — the failure that is hardest to see
+// downstream and easiest to check here.
+{
+  const c = buildCircuit('fetch');
+  // drive the instruction register directly by walking the ROM: the
+  // machine only holds 8 bytes, so the exhaustive sweep is on the module
+  const twoByteWant = (op, opa) =>
+    op === 1 || op === 4 || op === 5 || op === 7 || (op === 2 && (opa & 1) === 0);
+  for (let byte = 0; byte < 256; byte++) {
+    const d = new Circuit('idec');
+    d.implicitGround = false;
+    const bind = {};
+    for (let i = 0; i < 8; i++) {
+      const n = d.net();
+      d.addSwitch(`I${i}`, n, 'toggle', 0, 0, { from: 0, to: 1 }).on =
+        !!((byte >> i) & 1);
+      bind[`i${i}`] = n;
+    }
+    const D = instantiate(d, InstructionDecoder, 0, 0, bind);
+    settle(d);
+    const op = (byte >> 4) & 15, opa = byte & 15;
+    let hot = 0, which = -1;
+    for (let i = 0; i < 16; i++) {
+      if (d.value[D.nets[`op${i}`]] === HI) { hot++; which = i; }
+    }
+    expect(d, `0x${byte.toString(16)} lights exactly one line`, hot, 1);
+    expect(d, `0x${byte.toString(16)} decodes to OPR ${op}`, which, op);
+    expect(d, `0x${byte.toString(16)} twoByte`,
+      d.value[D.nets.twoByte] === HI, twoByteWant(op, opa));
+  }
+}
+
+// ── the fetch machine ────────────────────────────────────────────────────
+// PC → ROM → instruction register → decoder, running on a clock. The first
+// circuit that executes rather than computes.
+{
+  const c = buildCircuit('fetch');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  sw(c, 'RST', true); sw(c, 'RUN', true); settle(c);
+  sw(c, 'RST', false); settle(c);
+  tick();                       // the synchronous-reset edge
+
+  // The instruction register lags the PC by one cycle: the byte in the
+  // register was fetched at the *previous* address. That is a pipeline,
+  // not an off-by-one — the register is what makes a fetched instruction
+  // stable for a whole cycle, and every later stage depends on it.
+  const seen = [];
+  for (let k = 0; k < 8; k++) {
+    seen.push({ pc: rd('PC', 3), ir: rd('IR', 8) });
+    tick();
+  }
+  for (let k = 1; k < 8; k++) {
+    expect(c, `IR at step ${k} holds the byte from PC ${k - 1}`,
+      seen[k].ir, c.program[k - 1]);
+  }
+  // and the PC walks 0..7 then wraps, because three bits is the whole ROM
+  for (let k = 0; k < 8; k++) {
+    expect(c, `PC reaches ${k}`, seen[k].pc, k);
+  }
+  // the loop above already ticked past the last address, so the PC has
+  // wrapped: three bits is the whole ROM, and it runs in a ring
+  expect(c, 'PC wraps to 0 at the end of the ROM', rd('PC', 3), 0);
+
+  // exactly one decoded line at all times, for whatever is in the register
+  for (let k = 0; k < 8; k++) {
+    let hot = 0;
+    for (let i = 0; i < 16; i++) if (c.value[c.decoded[i]] === HI) hot++;
+    expect(c, 'exactly one instruction decoded', hot, 1);
+    tick();
+  }
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────

@@ -11,6 +11,7 @@
     "CMOS · Buses",
     "CMOS · Memory",
     "CMOS · Sequential",
+    "CMOS · Machines",
     "CMOS · Arithmetic",
     "NMOS · Basics",
     "NMOS · Gates",
@@ -284,6 +285,25 @@
         "RST": "clear to zero (synchronous — costs one edge)",
         "Q": "the program address",
         "Cout": "carry out of the top bit — wraps at 4096"
+      }
+    },
+    {
+      "id": "fetch",
+      "group": "CMOS · Machines",
+      "name": "Fetch Machine",
+      "desc": "The first circuit here that executes rather than computes. A program counter addresses a ROM, the byte at that address lands in an instruction register on the next clock edge, and a decoder lights the line for whichever instruction that is. Give it a clock and it runs on its own — everything before this needed you to flip a switch. Nothing acts on the decoded instruction yet: that is control sequencing, the next piece. So this is a machine that reads a program and understands it without doing anything about it, which is exactly the first milestone worth reaching. Two-byte instructions light TWO but are not yet honoured — the machine reads the operand byte as if it were an instruction, and watching that go wrong is the argument for building the sequencer next.",
+      "hints": {
+        "CLK": "the clock — run it, or step one edge at a time",
+        "RUN": "let the program counter advance",
+        "RST": "back to address 0 (synchronous — costs one edge)",
+        "PC": "program counter: which byte is being fetched",
+        "IR": "instruction register: the byte fetched last edge",
+        "TWO": "this instruction takes an address byte after it"
+      },
+      "state": {
+        "title": "Decoded instruction",
+        "columns": 4,
+        "key": "amber = the line the decoder is driving high right now"
       }
     },
     {

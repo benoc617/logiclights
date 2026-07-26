@@ -11,6 +11,8 @@ import { instantiate } from '../module.js';
 import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter } from '../gates.js';
 import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
+import { romArray } from '../rom.js';
+import { InstructionDecoder, OPR_NAMES } from '../decode.js';
 import { buildRom8 } from './rom-circuit.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from '../regfile.js';
 import { mosScaffold, cmosInv, buildRing, w } from './mos-scaffold.js';
@@ -326,6 +328,109 @@ function buildCounter(bits, name) {
   };
 }
 
+
+// P0 — the fetch machine. A program counter, a program ROM, an instruction
+// register and a decoder, wired into a loop that runs on its own.
+//
+// This is the first circuit here that *executes* rather than computes. Give
+// it a clock and it fetches: the PC addresses the ROM, the byte at that
+// address lands in the instruction register on the next edge, and the
+// decoder lights the line for whatever instruction that is. Nothing acts on
+// the decoded instruction yet — that is control sequencing, the next stage
+// — so this is a machine that reads a program and understands it without
+// doing anything about it.
+//
+// The 4004 plan calls this the first integration milestone, and the reason
+// is that fetch is where a pile of parts becomes a machine. Everything
+// before this needed you to flip a switch; this one only needs a clock.
+//
+// The program is deliberately a mix of one-byte instructions so the decoder
+// visibly changes as the PC advances. Two-byte instructions are decoded
+// (`twoByte` goes high) but not yet honoured — the sequencer will use that
+// line to fetch the operand before executing, and until it exists the
+// machine simply reads the operand byte as if it were an instruction. That
+// gap is real and worth seeing rather than hiding.
+const P0_PROGRAM = [
+  0x00,   // NOP
+  0xD5,   // LDM 5
+  0x60,   // INC 0
+  0xB0,   // XCH 0
+  0x80,   // ADD 0
+  0xA1,   // LD 1
+  0xF1,   // (escape — accumulator group)
+  0x40,   // JUN — two-byte, so twoByte lights
+];
+
+function buildFetch() {
+  const c = new Circuit('Fetch Machine');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), run = c.net(), rst = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RUN', run, 'toggle', 4, 11, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 16, { to: VSS });
+  c.addClock(clkSw, { period: 1600 });
+  instantiate(c, Inverter, 20, 40, { a: clkNet, y: nclk });
+
+  // The program counter. Three bits is all the demo ROM needs; the real
+  // 4004 PC is the 12-bit one in the Sequential group, and it is the same
+  // module at a different width.
+  const PC = instantiate(c, counter(3), 40, 0,
+    { clk: clkNet, nclk, en: run, rst }, { tag: 'pc' });
+
+  // The program store, addressed by the PC.
+  const Rom = romArray(P0_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, 150, 0,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  // The instruction register: eight flip-flops capturing the fetched byte
+  // on the clock edge. Without it the decoder would follow the ROM
+  // combinationally and flicker through garbage while the address settles
+  // — the register is what makes the fetched instruction *stable* for a
+  // whole cycle, which is the only reason the rest of a CPU can rely on it.
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    instantiate(c, DFlipFlop, 330, i * 26,
+      { d: rom.nets[`d${i}`], q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+
+  const bind = {};
+  for (let i = 0; i < 8; i++) bind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, 420, 0, bind, { tag: 'dec' });
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -14, yBot = Math.max(b.y1 + 8, 40);
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 4 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 22 + i * 4.5, { short: `IR${i}` });
+  }
+  c.addLamp('2BYTE', dec.nets.twoByte, xEnd - 5, 62, { short: 'TWO' });
+
+  c.region('Program counter', 34, -6, 140, 34);
+  c.region('Program ROM', 146, -6, 322, 34);
+  c.region('Instruction register', 324, -6, 404, 34);
+  c.region('Instruction decoder', 412, -6, b.x1 - 2, 34);
+
+  // published so the state grid can show which instruction is decoded
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.program = P0_PROGRAM;
+  return c;
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -395,6 +500,25 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  fetch: {
+    build: buildFetch,
+    readout: v => {
+      const name = OPR_NAMES[(v.IR >> 4) & 15];
+      const label = name || 'escape group';
+      return `PC ${v.PC} → 0x${v.IR.toString(16).toUpperCase().padStart(2, '0')}`
+        + `  ·  ${label}${v.TWO ? '  (needs a second byte)' : ''}`;
+    },
+    // `read` sits flat on the behaviour; the title/columns/key half of the
+    // state block is catalogue data. See docs/DATA.md.
+    read: (c) => OPR_NAMES.map((name, i) => {
+      const on = VALUE_CHAR[c.value[c.decoded[i]]] === '1';
+      return {
+        label: name || (i === 14 ? 'esc0' : 'esc1'),
+        text: on ? '◀' : '·',
+        mark: on ? 'read' : null,
+      };
+    }),
   },
   cmospc4: {
     build: buildCounter(4, '4-bit Counter'),
