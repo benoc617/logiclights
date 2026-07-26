@@ -10,7 +10,12 @@
 <body>
 <header>
   <h1>⚡ Logic Lights</h1>
-  <select id="circuit" title="Choose a circuit"></select>
+  <div id="picker" class="picker">
+    <button id="picker-btn" type="button" title="Choose a circuit" aria-haspopup="listbox" aria-expanded="false">
+      <span id="picker-label">…</span><span class="caret">▾</span>
+    </button>
+    <div id="picker-menu" class="picker-menu" role="listbox" hidden></div>
+  </div>
   <div class="ctl">
     <label for="speed" title="Device switching time">🐢</label>
     <input id="speed" type="range" min="0" max="100" value="35">
