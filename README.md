@@ -34,7 +34,9 @@ way through the machine. Every wire is a light: amber means driven high.
   / NAND / NOR, NMOS Inverter, Diode Logic, Transmission Gate, Tri-State
   Bus, Three Technologies; SR Latch, D Latch, 4-bit Register; Half/Full
   Adder, 4-bit & 8-bit Ripple Adders, 4-bit Adder/Subtractor (two's
-  complement).
+  complement), and a 538-transistor **4-bit ALU** — six functions steered
+  onto a shared result bus, composed from gate modules rather than placed
+  by hand.
 
 No frameworks, no build step: vanilla ES modules + canvas.
 

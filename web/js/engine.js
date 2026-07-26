@@ -64,6 +64,7 @@ export class Circuit {
 
   net() {
     this.netCount++;
+    this._built = false;   // net count changed: static tables are stale
     return this.netCount - 1;
   }
 
@@ -80,6 +81,7 @@ export class Circuit {
       to: opts.to ?? null,
     };
     this.switches.push(s);
+    this._built = false;
     return s;
   }
 
@@ -95,6 +97,7 @@ export class Circuit {
       delayFactor: this._variance(),
     };
     this.relays.push(r);
+    this._built = false;
     return r;
   }
 
@@ -110,6 +113,7 @@ export class Circuit {
       delayFactor: this._variance(),
     };
     this.transistors.push(t);
+    this._built = false;
     return t;
   }
 
@@ -118,6 +122,7 @@ export class Circuit {
   addDiode(name, anode, cathode, x, y, opts = {}) {
     const d = { name, anode, cathode, x, y, vert: !!opts.vert };
     this.diodes.push(d);
+    this._built = false;
     return d;
   }
 
@@ -126,6 +131,7 @@ export class Circuit {
   addResistor(name, a, b, x, y, opts = {}) {
     const r = { name, a, b, x, y, vert: !!opts.vert };
     this.resistors.push(r);
+    this._built = false;
     return r;
   }
 
@@ -176,30 +182,92 @@ export class Circuit {
     return Math.max(15, this.baseDelay * d.delayFactor) * d.delayScale;
   }
 
+  // Build the static conduction tables. The topology never changes — only
+  // *which* of a contact's two throws is selected, and whether a channel is
+  // on — so every edge that could ever exist is laid out once in flat CSR
+  // arrays (`_eHead`/`_eNext`/`_eTo`, an intrusive per-net linked list) and
+  // a solve only flips the per-edge `_eOn` byte. That turns the old
+  // rebuild-every-call — clearing n sub-arrays and pushing into them — into
+  // a write per switched device.
+  //
+  // Undirected edges are stored as two half-edges, `i` and `i^1`, so one
+  // enable flag pair is toggled by index arithmetic. Diodes go in the same
+  // structure with a polarity tag, since they are always conducting in one
+  // direction and never in the other.
   _buildStatic() {
     const n = this.netCount;
-    this._adj = Array.from({ length: n }, () => []);   // rebuilt every solve
-    this._res = Array.from({ length: n }, () => []);   // resistors — static
-    this._dHi = Array.from({ length: n }, () => []);   // anode → cathode
-    this._dLo = Array.from({ length: n }, () => []);   // cathode → anode
-    for (const d of this.diodes) {
-      this._dHi[d.anode].push(d.cathode);
-      this._dLo[d.cathode].push(d.anode);
+
+    // Count the half-edges first so the arrays are allocated exactly once.
+    let m = 0;
+    for (const s of this.switches) m += s.to !== null ? 4 : 2;
+    for (const r of this.relays) {
+      for (const k of r.contacts) {
+        if (k.no !== null && k.no !== undefined) m += 2;
+        if (k.nc !== null && k.nc !== undefined) m += 2;
+      }
     }
+    m += this.transistors.length * 2;
+    m += this.diodes.length * 2;
+
+    this._eTo = new Int32Array(m);
+    this._eNext = new Int32Array(m).fill(-1);
+    this._eOn = new Uint8Array(m);
+    // 0 = plain conductor, 1 = passes HI only, 2 = passes LO only
+    this._ePol = new Uint8Array(m);
+    this._eHead = new Int32Array(n).fill(-1);
+    this._eCount = 0;
+
+    // Switched devices record their edge slots so solve() can address them
+    // directly instead of searching.
+    for (const s of this.switches) {
+      s._e = s.to !== null
+        ? [this._edge(s.net, s.from), this._edge(s.net, s.to)]
+        : [this._edge(s.net, s.from)];
+    }
+    for (const r of this.relays) {
+      for (const k of r.contacts) {
+        k._eNo = (k.no !== null && k.no !== undefined) ? this._edge(k.c, k.no) : -1;
+        k._eNc = (k.nc !== null && k.nc !== undefined) ? this._edge(k.c, k.nc) : -1;
+      }
+    }
+    for (const t of this.transistors) t._e = this._edge(t.a, t.b);
+    // A diode is a permanent one-way conductor: enabled once, never toggled.
+    for (const d of this.diodes) {
+      const e = this._edge(d.anode, d.cathode);
+      this._eOn[e] = 1; this._eOn[e ^ 1] = 1;
+      this._ePol[e] = 1;      // anode → cathode carries HI
+      this._ePol[e ^ 1] = 2;  // cathode → anode carries LO
+    }
+
+    this._res = Array.from({ length: n }, () => []);   // resistors — static
     for (const r of this.resistors) {
       this._res[r.a].push(r.b);
       this._res[r.b].push(r.a);
     }
+
     this.value = new Array(n).fill(Z);
     this.strength = new Array(n).fill(NONE);
     this.hot = new Array(n).fill(false);
     this._stored = new Array(n).fill(Z);  // charge held on net capacitance
-    this._sH = new Uint8Array(n);
-    this._sL = new Uint8Array(n);
-    this._wH = new Uint8Array(n);
-    this._wL = new Uint8Array(n);
+    // Generation-stamped visit marks: each flood writes its own generation
+    // number, so bumping the counter retires the whole array and no clear
+    // is ever needed. A flood costs the nets it reaches, not every net.
+    this._sH = new Int32Array(n);
+    this._sL = new Int32Array(n);
+    this._wH = new Int32Array(n);
+    this._wL = new Int32Array(n);
     this._stack = new Int32Array(n);
+    this._gen = 0;
     this._built = true;
+  }
+
+  // Add an undirected edge as the half-edge pair (i, i^1). Returns i.
+  _edge(a, b) {
+    const i = this._eCount;
+    this._eTo[i] = b; this._eNext[i] = this._eHead[a]; this._eHead[a] = i;
+    this._eTo[i + 1] = a; this._eNext[i + 1] = this._eHead[b]; this._eHead[b] = i + 1;
+    this._eCount += 2;
+    return i;
   }
 
   // Flood one polarity from a rail through channels, contacts and diodes.
@@ -210,26 +278,30 @@ export class Circuit {
   // itself does not then carry the wrong polarity onward into every other
   // net hanging off it. Without this stop a single crowbar anywhere turns
   // the entire machine X, which is neither useful nor true.
-  _flood(mark, start, dir, stopAt) {
-    const adj = this._adj, stack = this._stack;
-    mark.fill(0);
+  // `pol` is the diode polarity this pass may traverse (1 = HI, 2 = LO).
+  // Marks reached nets by stamping `mark[net] = gen` and returns `gen`, so
+  // no array ever has to be cleared: a flood costs the nets it reaches, not
+  // every net in the circuit. Callers test `mark[i] === gen`.
+  _flood(mark, start, pol, stopAt) {
+    const head = this._eHead, next = this._eNext, to = this._eTo;
+    const on = this._eOn, ep = this._ePol;
+    const stack = this._stack;
+    const gen = ++this._gen;
     let sp = 0;
-    mark[start] = 1;
+    mark[start] = gen;
     stack[sp++] = start;
     while (sp > 0) {
       const a = stack[--sp];
       if (a === stopAt) continue;
-      const nb = adj[a];
-      for (let i = 0; i < nb.length; i++) {
-        const b = nb[i];
-        if (!mark[b]) { mark[b] = 1; stack[sp++] = b; }
-      }
-      const db = dir[a];
-      for (let i = 0; i < db.length; i++) {
-        const b = db[i];
-        if (!mark[b]) { mark[b] = 1; stack[sp++] = b; }
+      for (let e = head[a]; e !== -1; e = next[e]) {
+        if (!on[e]) continue;
+        const p = ep[e];
+        if (p !== 0 && p !== pol) continue;   // diode blocks this polarity
+        const b = to[e];
+        if (mark[b] !== gen) { mark[b] = gen; stack[sp++] = b; }
       }
     }
+    return gen;
   }
 
   // The weak pass. Its sources are the far ends of resistors whose near end
@@ -237,70 +309,86 @@ export class Circuit {
   // channels — but it stops dead at any net a strong driver already holds.
   // A clamped node cannot pass a weak drive along to its neighbours, which
   // is what keeps a pull-up on one gate out of the net next door.
-  _floodWeak(mark, seeds, dir) {
-    const adj = this._adj, stack = this._stack;
+  // Same stamping scheme. `gH`/`gL` are the generations of the two strong
+  // passes, so "already strongly driven" is a stamp comparison too.
+  _floodWeak(mark, seeds, pol, gH, gL) {
+    const head = this._eHead, next = this._eNext, to = this._eTo;
+    const on = this._eOn, ep = this._ePol;
+    const stack = this._stack;
     const sH = this._sH, sL = this._sL;
-    mark.fill(0);
+    const gen = ++this._gen;
     let sp = 0;
     for (let i = 0; i < seeds.length; i++) {
       const s = seeds[i];
-      if (!mark[s] && !sH[s] && !sL[s]) { mark[s] = 1; stack[sp++] = s; }
+      if (mark[s] !== gen && sH[s] !== gH && sL[s] !== gL) {
+        mark[s] = gen; stack[sp++] = s;
+      }
     }
     while (sp > 0) {
       const a = stack[--sp];
-      const nb = adj[a];
-      for (let i = 0; i < nb.length; i++) {
-        const b = nb[i];
-        if (!mark[b] && !sH[b] && !sL[b]) { mark[b] = 1; stack[sp++] = b; }
-      }
-      const db = dir[a];
-      for (let i = 0; i < db.length; i++) {
-        const b = db[i];
-        if (!mark[b] && !sH[b] && !sL[b]) { mark[b] = 1; stack[sp++] = b; }
+      for (let e = head[a]; e !== -1; e = next[e]) {
+        if (!on[e]) continue;
+        const p = ep[e];
+        if (p !== 0 && p !== pol) continue;
+        const b = to[e];
+        if (mark[b] !== gen && sH[b] !== gH && sL[b] !== gL) {
+          mark[b] = gen; stack[sp++] = b;
+        }
       }
     }
+    return gen;
   }
 
   // Resolve every net to a value and a strength.
   solve() {
     if (!this._built) this._buildStatic();
-    const n = this.netCount, adj = this._adj;
-    for (let i = 0; i < n; i++) adj[i].length = 0;
+    const n = this.netCount;
+    const on = this._eOn;
 
+    // Select conduction by flipping edge flags — the edges themselves and
+    // their adjacency were laid out once in _buildStatic().
     for (const s of this.switches) {
       const closed = s.kind === 'push-nc' ? !s.on : s.on;
       if (s.to !== null) {
-        const t = closed ? s.from : s.to;   // changeover: always driving
-        adj[t].push(s.net); adj[s.net].push(t);
-      } else if (closed) {
-        adj[s.from].push(s.net); adj[s.net].push(s.from);
+        // changeover: always driving, one throw or the other
+        const a = s._e[0], b = s._e[1];
+        const f = closed ? a : b, o = closed ? b : a;
+        on[f] = 1; on[f ^ 1] = 1;
+        on[o] = 0; on[o ^ 1] = 0;
+      } else {
+        const e = s._e[0], v = closed ? 1 : 0;
+        on[e] = v; on[e ^ 1] = v;
       }
     }
     for (const r of this.relays) {
+      const en = r.energized;
       for (const k of r.contacts) {
-        const t = r.energized ? k.no : k.nc;
-        if (t !== null && t !== undefined) { adj[k.c].push(t); adj[t].push(k.c); }
+        const a = k._eNo, b = k._eNc;
+        if (a !== -1) { const v = en ? 1 : 0; on[a] = v; on[a ^ 1] = v; }
+        if (b !== -1) { const v = en ? 0 : 1; on[b] = v; on[b ^ 1] = v; }
       }
     }
     for (const t of this.transistors) {
-      if (t.on) { adj[t.a].push(t.b); adj[t.b].push(t.a); }
+      const e = t._e, v = t.on ? 1 : 0;
+      on[e] = v; on[e ^ 1] = v;
     }
 
-    this._flood(this._sH, VDD, this._dHi, VSS);
-    this._flood(this._sL, VSS, this._dLo, VDD);
+    const gH = this._flood(this._sH, VDD, 1, VSS);
+    const gL = this._flood(this._sL, VSS, 2, VDD);
+    // -1 never matches a stamp (generations count up from 1, and the arrays
+    // are zero-filled), so an unrun weak pass reads as "reached nothing"
+    // without touching the array.
+    let gWH = -1, gWL = -1;
     if (this.resistors.length) {
       const seedH = [], seedL = [];
       for (const r of this.resistors) {
         for (const [near, far] of [[r.a, r.b], [r.b, r.a]]) {
-          if (this._sH[near] && !this._sL[near]) seedH.push(far);
-          else if (this._sL[near] && !this._sH[near]) seedL.push(far);
+          if (this._sH[near] === gH && this._sL[near] !== gL) seedH.push(far);
+          else if (this._sL[near] === gL && this._sH[near] !== gH) seedL.push(far);
         }
       }
-      this._floodWeak(this._wH, seedH, this._dHi);
-      this._floodWeak(this._wL, seedL, this._dLo);
-    } else {
-      this._wH.fill(0);
-      this._wL.fill(0);
+      gWH = this._floodWeak(this._wH, seedH, 1, gH, gL);
+      gWL = this._floodWeak(this._wL, seedL, 2, gH, gL);
     }
 
     const val = this.value, str = this.strength, hot = this.hot;
@@ -308,12 +396,13 @@ export class Circuit {
     const sH = this._sH, sL = this._sL, wH = this._wH, wL = this._wL;
     for (let i = 0; i < n; i++) {
       let v, s;
-      if (sH[i] && sL[i]) { v = X; s = STRONG; }        // rail-to-rail short
-      else if (sH[i]) { v = HI; s = STRONG; }
-      else if (sL[i]) { v = LO; s = STRONG; }
-      else if (wH[i] && wL[i]) { v = X; s = WEAK; }     // divider — undefined
-      else if (wH[i]) { v = HI; s = WEAK; }
-      else if (wL[i]) { v = LO; s = WEAK; }
+      const isH = sH[i] === gH, isL = sL[i] === gL;
+      if (isH && isL) { v = X; s = STRONG; }            // rail-to-rail short
+      else if (isH) { v = HI; s = STRONG; }
+      else if (isL) { v = LO; s = STRONG; }
+      else if (wH[i] === gWH && wL[i] === gWL) { v = X; s = WEAK; }  // divider
+      else if (wH[i] === gWH) { v = HI; s = WEAK; }
+      else if (wL[i] === gWL) { v = LO; s = WEAK; }
       else if (this.implicitGround) { v = LO; s = NONE; }
       else if (stored[i] !== Z) { v = stored[i]; s = CHARGE; }
       else { v = Z; s = NONE; }

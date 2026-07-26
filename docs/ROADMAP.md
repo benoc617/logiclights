@@ -42,10 +42,12 @@ what `Circuit.implicitGround` exists for.
 - [ ] **CMOS latch and flip-flop** — a transmission-gate latch is two
       inverters and two pass gates; the master-slave pair is the memory
       primitive the CPU needs. The relay side already has SR/D/register.
-- [ ] **ALU** — function select (add / sub / AND / OR / XOR / shift) over
-      the existing adder core. Natural next step; mostly a bigger selector
-      tree, and now cheaper because tri-state steering replaces the
-      mux-per-destination the relay version would have needed.
+- [x] **ALU** — 4-bit, six functions (add / sub / AND / OR / XOR / shift
+      left), one-hot decoded, steered onto a shared result bus by
+      transmission gates. 538 transistors, composed from gate modules
+      rather than hand-placed — the first circuit built that way. Full
+      sweep in the test suite: 6 functions × 16 × 16, asserting STRONG on
+      every result bit so a second open driver (X) or none (Z) fails.
 - [ ] **Memory unit** — address decoder feeding a register file (start 4×4,
       then 8×8), with read/write enable. 6T SRAM cells rather than latch
       pairs once the CMOS latch exists.
@@ -61,16 +63,20 @@ what `Circuit.implicitGround` exists for.
 
 ## Engineering to unblock the big machines
 
-- [ ] **Sub-circuit abstraction** — reusable modules with named ports,
-      instantiated at a position, so an ALU is composed rather than hand-
-      routed. `faCell()` and `cmosInv()` are the informal prototypes;
-      formalize them.
+- [x] **Sub-circuit abstraction** — `module.js`: modules declare named
+      ports, build in local coordinates, and namespace their device names by
+      instance tag. Modules nest (`And2` is a NAND plus an inverter; the
+      full adder is five gate instances). `gates.js` is the reusable CMOS
+      gate library built on it. The hand-routed library circuits are
+      deliberately left alone — they are the teaching material.
 - [ ] **Auto-routing** for inter-module wires (channel routing between rows).
       Wires are decorative, so a router only has to be legible, not correct.
-- [ ] **Performance** — `solve()` still rebuilds its adjacency lists every
-      call and runs two to four floods over them. Fine at 24 relays, needs a
-      static CSR edge list and a reusable typed-array stack at thousands of
-      devices.
+- [x] **Performance** — `solve()` now precomputes a flat CSR edge list once
+      and only flips per-edge enable flags; floods are generation-stamped so
+      nothing is cleared per pass. Real circuits 1.6–3.6× faster (`add8`
+      3.16 → 0.89 µs); at 4004 scale ~65 → ~32 µs, and a realistic fan-out
+      topology solves 4,610 nets in 36 µs. Tiny circuits pay ~1 µs more for
+      the per-device flag loop, which is the right trade.
 - [ ] **Renderer caching** — build a `Path2D` per net once and reuse it;
       currently every wire is re-pathed each frame, now once per logic value.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module

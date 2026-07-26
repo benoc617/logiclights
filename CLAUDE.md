@@ -40,6 +40,9 @@ web/
   js/engine.js        Circuit: nets, devices, four-state solver, timing
   js/geometry.js      symbol geometry shared by builders and renderer
   js/circuits.js      the circuit library + registry (CIRCUITS)
+  js/module.js        sub-circuit modules: named ports, local coordinates
+  js/gates.js         reusable CMOS gates built on module.js
+  js/alu.js           4-bit ALU, composed from gates.js
   js/buses.js         groups switches/lamps into binary buses
   js/render.js        canvas renderer (pan/zoom, glow, LOD)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"
@@ -59,6 +62,26 @@ charge. Relays and transistors are the same thing wearing different clothes
 `addRelay` and `addTransistor` share one solver and one delay scheduler.
 Diodes are the only directional device. Full detail in
 [docs/DEVICES.md](docs/DEVICES.md).
+
+## Hand-routed circuits vs composed machines
+
+Two ways to build, deliberately kept apart.
+
+The **library circuits** in `circuits.js` are hand-placed: every device at a
+chosen coordinate, every wire routed by eye. They are the teaching material,
+their layouts are the explanation, and they should stay that way.
+
+The **composed machines** (`alu.js`, and whatever follows) are assembled from
+modules in `gates.js` via `module.js`. A module declares named ports, builds
+in local coordinates, and gets instantiated at a position with its ports
+bound to caller nets; device names are namespaced by instance tag so a fault
+in one of sixteen copies is identifiable. Modules nest.
+
+The rule of thumb: if you would place it by eye, hand-route it. If it needs
+more than a few dozen devices or the same block more than three times,
+compose it. When composing, pitch instances to the blocks' measured extents
+(`inst.w` / `inst.h`) — guessing leaves a sparse, unreadable circuit, and
+these layouts want to be wide and short like the rest of the library.
 
 ## Adding a circuit
 
@@ -109,6 +132,12 @@ interesting internal signal group with `c.addBus('CARRY', nets)`.
   independent delays, so there is always a brief `X` (both on — real crowbar
   current) or `Z` (both off) mid-handover. This is the model being honest,
   not a bug. Tests must assert on *settled* state.
+- **Conduction tables are precomputed and must be invalidated.** `solve()`
+  builds a static CSR edge list on first use and thereafter only flips
+  per-edge enable flags. Anything that changes the *topology* — `net()` or
+  any `add*()` device call — must set `this._built = false`, or the circuit
+  solves against a stale graph. Adding a new device type means adding its
+  edges to `_buildStatic()` as well as handling it in `solve()`.
 - **A transition takes two `step()` calls.** The first schedules it
   (`nextEventAt()` goes non-null), a later one at or past the event time
   applies it and counts it. Flipping a switch and stepping once reports
