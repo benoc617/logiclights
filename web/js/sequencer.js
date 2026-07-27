@@ -474,6 +474,144 @@ export const TwoPhaseClock = defineModule('phi', {
   },
 });
 
+// DAA — decimal adjust, and the condition that drives it.
+//
+// The 4004 was a calculator chip, so it works in BCD: each nibble holds
+// one decimal digit, 0-9, and 10-15 are illegal. After a binary ADD a
+// digit can land in that illegal range, or can have carried out — and
+// either way adding 6 pushes it back into a valid digit with the right
+// carry. That is the whole instruction.
+//
+// From Intel's manual, page 3-34, and both halves matter:
+//
+//   "If the contents of the accumulator are greater than 9, or if the
+//    carry bit = 1, the accumulator is incremented by 6."
+//   "If the result of incrementing the accumulator produces a carry out
+//    of the high order bit position, the carry bit is set. Otherwise the
+//    carry bit is unaffected (in particular, it is not reset)."
+//
+// That second sentence is underlined in the original and it is the part a
+// reimplementation gets wrong. DAA can *set* the carry but never clears
+// it, so `A=5, carry=1` adds 6 and leaves the carry set even though
+// nothing carried out of bit 3. Treating it as an ordinary add — carry
+// out replaces carry — would clear it and quietly break multi-digit BCD.
+//
+// `gt9` is `a3 & (a2 | a1)`: two gates, because 10-15 are exactly the
+// values with bit 3 set and either bit 2 or bit 1 also set.
+export const DecimalAdjust = defineModule('daa', {
+  ports: [
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `a${i}`, x: -1.5, y: i * 4, side: 'in',
+    })),
+    { name: 'carry', x: -1.5, y: 18, side: 'in' },
+    // high when this instruction should add 6
+    { name: 'adjust', x: GATE_W * 12, y: 0, side: 'out' },
+    // the constant to add: 0110 when adjusting, 0000 otherwise
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `b${i}`, x: GATE_W * 12, y: 8 + i * 4, side: 'out',
+    })),
+  ],
+  build(m) {
+    const a = [0, 1, 2, 3].map(i => m.port(`a${i}`));
+    const or21 = m.net(), gt9 = m.net();
+    m.instantiate(Or2, 0, 0, { a: a[2], b: a[1], y: or21 });
+    m.instantiate(And2, GATE_W * 4, 0, { a: a[3], b: or21, y: gt9 });
+    m.instantiate(Or2, GATE_W * 8, 0,
+      { a: gt9, b: m.port('carry'), y: m.port('adjust') });
+
+    // 6 is 0110, so bits 1 and 2 follow `adjust` and bits 0 and 3 are
+    // always low. Buffered so the adder is driven by a gate.
+    const t1 = m.net(), t2 = m.net();
+    m.instantiate(Inverter, GATE_W * 8, GATE_H * 2,
+      { a: m.port('adjust'), y: t1 });
+    m.instantiate(Inverter, GATE_W * 10, GATE_H * 2, { a: t1, y: m.port('b1') });
+    m.instantiate(Inverter, GATE_W * 8, GATE_H * 4,
+      { a: m.port('adjust'), y: t2 });
+    m.instantiate(Inverter, GATE_W * 10, GATE_H * 4, { a: t2, y: m.port('b2') });
+    // bits 0 and 3 of 0110 are always low — an inverter from VDD, so the
+    // port is driven rather than left floating
+    m.instantiate(Inverter, GATE_W * 10, GATE_H * 6, { a: VDD, y: m.port('b0') });
+    m.instantiate(Inverter, GATE_W * 10, GATE_H * 8, { a: VDD, y: m.port('b3') });
+  },
+});
+
+// KBP — keyboard process, and the smallest interesting truth table on the
+// chip.
+//
+// The 4004 was designed for a calculator, and this instruction exists to
+// turn a keyboard scan into a digit. A row of key contacts gives you a
+// one-of-n code — one wire high, the rest low — and KBP converts it to
+// the binary position of that wire. From Intel's manual, page 3-35:
+//
+//   0000 → 0000     nothing pressed, unchanged
+//   0001 → 0001     bit 0 → 1
+//   0010 → 0010     bit 1 → 2
+//   0100 → 0011     bit 2 → 3
+//   1000 → 0100     bit 3 → 4
+//   anything else → 1111
+//
+// That last line is the part worth reading twice. Two keys pressed at once
+// is not an encoding error to be papered over — it is a real thing that
+// happens on a real keyboard, and the chip reports it as 1111 so the
+// program can tell "no valid key" from "key 0". A priority encoder, which
+// is what you would reach for by instinct, would silently return the
+// highest key and lose that distinction.
+//
+// The logic is smaller than the table suggests. For a single set bit:
+//
+//   o0 = a0 | a2     o1 = a1 | a2     o2 = a3     o3 = 0
+//
+// and then a "more than one bit set" detector forces all four outputs
+// high, overriding the encode. Verified against all sixteen rows.
+//
+// The carry is not affected — the manual says so explicitly, and it is
+// why this block has no carry port at all.
+export const KeyboardProcess = defineModule('kbp', {
+  ports: [
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `a${i}`, x: -1.5, y: i * 4, side: 'in',
+    })),
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `y${i}`, x: GATE_W * 22, y: i * 4, side: 'out',
+    })),
+  ],
+  build(m) {
+    const a = [0, 1, 2, 3].map(i => m.port(`a${i}`));
+
+    // "more than one bit set" — the OR of every pair. Six pairs at four
+    // bits, which is fewer gates than counting and then comparing.
+    const pairs = [];
+    let px = 0;
+    for (let i = 0; i < 4; i++) {
+      for (let j = i + 1; j < 4; j++) {
+        const t = m.net();
+        m.instantiate(And2, GATE_W * 3, (px++) * (GATE_H + 2),
+          { a: a[i], b: a[j], y: t });
+        pairs.push(t);
+      }
+    }
+    const o1 = m.net(), o2 = m.net(), o3 = m.net(), o4 = m.net();
+    const multi = m.net();
+    m.instantiate(Or2, GATE_W * 7, 0, { a: pairs[0], b: pairs[1], y: o1 });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 2, { a: pairs[2], b: pairs[3], y: o2 });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 4, { a: pairs[4], b: pairs[5], y: o3 });
+    m.instantiate(Or2, GATE_W * 11, 0, { a: o1, b: o2, y: o4 });
+    m.instantiate(Or2, GATE_W * 11, GATE_H * 3, { a: o4, b: o3, y: multi });
+
+    // the single-bit encode, then multi forces every output high
+    const e0 = m.net(), e1 = m.net();
+    m.instantiate(Or2, GATE_W * 15, 0, { a: a[0], b: a[2], y: e0 });
+    m.instantiate(Or2, GATE_W * 15, GATE_H * 2, { a: a[1], b: a[2], y: e1 });
+    m.instantiate(Or2, GATE_W * 19, 0, { a: e0, b: multi, y: m.port('y0') });
+    m.instantiate(Or2, GATE_W * 19, GATE_H * 2, { a: e1, b: multi, y: m.port('y1') });
+    m.instantiate(Or2, GATE_W * 19, GATE_H * 4, { a: a[3], b: multi, y: m.port('y2') });
+    // y3 is only ever set by the multi case
+    const mn = m.net();
+    m.instantiate(Inverter, GATE_W * 19, GATE_H * 6, { a: multi, y: mn });
+    m.instantiate(Inverter, GATE_W * 21, GATE_H * 6, { a: mn, y: m.port('y3') });
+  },
+});
+
 // SUB's operand conditioning.
 //
 // The 4004 subtracts the way every two's-complement machine does — add the

@@ -97,7 +97,7 @@ generated, so this file does not repeat them.
       conditional jumps, two-byte fetch, the accumulator group, and SUB
       and LD with the first register-to-accumulator path — which also
       makes XCH a real exchange. What remains is
-      instruction-set coverage rather than new structure — seventeen of
+      instruction-set coverage rather than new structure — twenty-one of
       the 45 defined instructions now act on hardware. See the checklist
       in [4004.md](4004.md), which has the full plan and program corpus
       too.

@@ -98,7 +98,7 @@ circuit exists to explain.
 | Conditional Machine | Machines | · | 3599 | · | 8 | 1628 |
 | Two-Byte Machine | Machines | · | 3840 | · | 8 | 1740 |
 | Subtract and Exchange | Machines | · | 3984 | · | 8 | 1815 |
-| Accumulator Group | Machines | · | 2451 | · | 8 | 1187 |
+| Accumulator Group | Machines | · | 2846 | · | 8 | 1386 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -126,7 +126,7 @@ circuit exists to explain.
 | Circuits | 59 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 27208 |
+| Transistors | 27603 |
 | Diodes | 4 |
 | Resistors | 328 |
 
@@ -138,7 +138,7 @@ circuit exists to explain.
 | Two-Byte Machine | 3848 | 1740 |
 | Conditional Machine | 3607 | 1628 |
 | Adding Machine | 3546 | 1595 |
-| Accumulator Group | 2459 | 1187 |
+| Accumulator Group | 2854 | 1386 |
 
 ## Test suite
 

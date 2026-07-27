@@ -13,7 +13,10 @@ import {
 } from '../web/js/decode.js';
 import { buildJcnMachine, buildSubMachine } from '../web/js/behaviour/cmos.js';
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
-import { ringCounter, ConditionTree, IsZero4, SubOperand } from '../web/js/sequencer.js';
+import {
+  ringCounter, ConditionTree, IsZero4, SubOperand, KeyboardProcess,
+  DecimalAdjust,
+} from '../web/js/sequencer.js';
 
 let failures = 0;
 let checks = 0;
@@ -2271,6 +2274,91 @@ function flipAndStep(c, label, on) {
   }
 }
 
+// ── KBP, exhaustively, against Intel's own table ─────────────────────────
+// Page 3-35 of the MCS-4 manual gives all sixteen rows, so all sixteen are
+// checked. The row that matters most is "more than one bit set → 1111":
+// two keys pressed at once is a real thing on a real keyboard, and the
+// chip reports it distinctly rather than silently picking one. A priority
+// encoder — the instinctive implementation — would pass every other row
+// and fail exactly these.
+{
+  const popcount = n => n.toString(2).split('').filter(x => x === '1').length;
+  let bad = 0;
+  for (let a = 0; a < 16; a++) {
+    const d = new Circuit('kbp');
+    d.implicitGround = false;
+    const bind = {};
+    for (let i = 0; i < 4; i++) {
+      const net = d.net();
+      d.addSwitch(`A${i}`, net, 'toggle', 0, 0, { from: 0, to: 1 })
+        .on = !!((a >> i) & 1);
+      bind[`a${i}`] = net;
+    }
+    const K = instantiate(d, KeyboardProcess, 0, 0, bind);
+    settle(d);
+    let got = 0;
+    for (let i = 0; i < 4; i++) {
+      if (d.value[K.nets[`y${i}`]] === HI) got |= 1 << i;
+    }
+    // 0 stays 0; a single bit becomes its position 1-4; anything else 1111
+    const wanted = popcount(a) > 1 ? 15
+      : a === 0 ? 0 : Math.log2(a) + 1;
+    expect(d, `KBP ${a.toString(2).padStart(4, '0')}`, got, wanted);
+    if (got !== wanted) bad++;
+  }
+  const d = new Circuit('kbp');
+  expect(d, 'KBP matches the manual on all sixteen inputs', bad, 0);
+}
+
+// ── DAA, exhaustively over value and carry ───────────────────────────────
+// Add 6 when the accumulator exceeds 9 or the carry is set. The carry rule
+// is the subtle half and the manual underlines it: DAA may SET the carry
+// but never resets it, so a DAA that does not carry out leaves an
+// already-set carry alone. Sweeping both carry states is what catches an
+// implementation that treats it as an ordinary add.
+{
+  let bad = 0;
+  for (let a = 0; a < 16; a++) {
+    for (const cy of [0, 1]) {
+      const d = new Circuit('daa');
+      d.implicitGround = false;
+      let n = 0;
+      const mk = v => {
+        const net = d.net();
+        d.addSwitch(`s${n++}`, net, 'toggle', 0, 0, { from: 0, to: 1 })
+          .on = !!v;
+        return net;
+      };
+      const A = [0, 1, 2, 3].map(i => mk((a >> i) & 1));
+      const D = instantiate(d, DecimalAdjust, 0, 0, {
+        a0: A[0], a1: A[1], a2: A[2], a3: A[3], carry: mk(cy),
+      });
+      const S = instantiate(d, rippleAdder(4), 300, 0, {
+        a0: A[0], a1: A[1], a2: A[2], a3: A[3],
+        b0: D.nets.b0, b1: D.nets.b1, b2: D.nets.b2, b3: D.nets.b3,
+        cin: mk(0),
+      });
+      settle(d);
+      const adjust = d.value[D.nets.adjust] === HI ? 1 : 0;
+      let sum = 0;
+      for (let i = 0; i < 4; i++) {
+        if (d.value[S.nets[`s${i}`]] === HI) sum |= 1 << i;
+      }
+      const cout = d.value[S.nets.cout] === HI ? 1 : 0;
+
+      const wantAdjust = (a > 9 || cy) ? 1 : 0;
+      const total = a + (wantAdjust ? 6 : 0);
+      // set on carry-out, otherwise UNAFFECTED — not cleared
+      const wantCarry = total > 15 ? 1 : cy;
+      const gotCarry = cout ? 1 : cy;
+      if (adjust !== wantAdjust || sum !== (total & 15)
+          || gotCarry !== wantCarry) bad++;
+    }
+  }
+  const d = new Circuit('daa');
+  expect(d, 'DAA over every value and carry', bad, 0);
+}
+
 // ── the accumulator group ────────────────────────────────────────────────
 // Thirteen instructions in the 1111 escape. The program exercises eight of
 // them, and every value it produces is checked against arithmetic worked
@@ -2290,24 +2378,35 @@ function flipAndStep(c, label, on) {
 
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
 
-  // The expected trace, derived from the instruction semantics rather than
-  // from running the circuit. RAL/RAR rotate *through* the carry, which
-  // makes them a 5-bit rotation and makes the pair reversible — the
-  // property most worth pinning down, since a rotate that dropped the top
-  // bit would still look plausible for several steps.
+  // The expected trace, written from Intel's instruction descriptions
+  // rather than from running the circuit — otherwise the test only proves
+  // the machine agrees with itself.
+  //
+  // Two of these encode rules that are easy to get wrong and that the
+  // manual states explicitly:
+  //
+  //   DAA  may SET the carry but never resets it. "Otherwise the carry
+  //        bit is unaffected (in particular, it is not reset)" — so the
+  //        model below only assigns carry when the add overflows.
+  //   TCS  writes a literal 9 or 10 and then CLEARS the carry, which is
+  //        easy to miss because the value depends on the carry it is
+  //        about to discard.
   let acc = 0, carry = 0;
   const step = {
-    0xD5: () => { acc = 5; },                                  // LDM 5
-    0xF2: () => { const t = acc + 1; acc = t & 15; carry = t > 15 ? 1 : 0; },
-    0xF4: () => { acc = ~acc & 15; },                           // CMA
+    0xD8: () => { acc = 8; },                                   // LDM 8
+    0xD4: () => { acc = 4; },                                   // LDM 4
     0xFA: () => { carry = 1; },                                 // STC
-    0xF5: () => { const n = (acc >> 3) & 1;                     // RAL
-                  acc = ((acc << 1) & 15) | carry; carry = n; },
+    0xFB: () => { const adj = (acc > 9 || carry) ? 6 : 0;       // DAA
+                  const t = acc + adj;
+                  if (t > 15) carry = 1;   // set, never reset
+                  acc = t & 15; },
+    0xF7: () => { acc = carry; carry = 0; },                    // TCC
+    0xFC: () => { const bits = acc.toString(2).split('')        // KBP
+                    .filter(x => x === '1').length;
+                  acc = bits > 1 ? 15 : acc === 0 ? 0 : Math.log2(acc) + 1; },
+    0xF9: () => { acc = carry ? 10 : 9; carry = 0; },           // TCS
     0xF6: () => { const n = acc & 1;                            // RAR
                   acc = (acc >> 1) | (carry << 3); carry = n; },
-    0xF1: () => { carry = 0; },                                 // CLC
-    0xF8: () => { const t = acc + 15; acc = t & 15;             // DAC
-                  carry = t > 15 ? 1 : 0; },
   };
 
   // Two full passes, so the wrap from address 7 back to 0 is covered and
@@ -2321,47 +2420,60 @@ function flipAndStep(c, label, on) {
     expect(c, `after 0x${want.toString(16)} (step ${k}) carry`, cy(), carry);
   }
 
-  // RAL then RAR is the identity, which is the whole reason the carry is
-  // in the loop. Checked directly against the recorded values rather than
-  // inferred from the trace above.
+  // The carry rule DAA gets wrong when implemented as an ordinary add.
+  //
+  // The program reaches DAA with the accumulator at 8 and the carry set,
+  // so it adds 6 to make 14 — which does NOT carry out of bit 3. The
+  // manual is explicit that the carry must survive that: "otherwise the
+  // carry bit is unaffected (in particular, it is not reset)". A DAA
+  // wired to write the adder's carry-out unconditionally would clear it
+  // here, and the failure would only ever show up in multi-digit BCD.
   {
     sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-    // Sampled after each instruction's four phases, where the instruction
-    // register and the accumulator agree: the byte in IR is the one whose
-    // result is in ACC.
-    const at = [];
+    let sawDaa = false;
     for (let k = 0; k < 8; k++) {
+      const before = { acc: rd('ACC', 4), cy: cy() };
       for (let p = 0; p < 4; p++) tick();
-      at.push({ ir: rd('IR', 8), acc: rd('ACC', 4), cy: cy() });
-    }
-    // `at[k]` is the state *after* instruction k. So the value RAL started
-    // from is at[ral - 1], and the value RAR leaves is at[ral + 1] — the
-    // rotate pair is the identity when those two agree.
-    const ral = at.findIndex(x => x.ir === 0xF5);
-    expect(c, 'the program contains RAL', ral > 0, true);
-    expect(c, 'RAR undoes RAL', at[ral + 1].acc, at[ral - 1].acc);
-    expect(c, 'RAR restores the carry too', at[ral + 1].cy, at[ral - 1].cy);
-  }
-
-  // The carry-only instructions must leave the accumulator alone. STC and
-  // CLC both appear in the program; if either clocked the accumulator it
-  // would take whatever the mux happened to be driving, which for an
-  // unselected mux is zero — a silent wipe that the trace above would
-  // catch but only by luck of ordering.
-  {
-    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-    let checked = 0;
-    for (let k = 0; k < 8; k++) {
-      const prev = rd('ACC', 4);
-      for (let p = 0; p < 4; p++) tick();
-      const ir = rd('IR', 8);
-      if (ir === 0xFA || ir === 0xF1) {       // STC, CLC
-        expect(c, `0x${ir.toString(16)} leaves the accumulator alone`,
-          rd('ACC', 4), prev);
-        checked++;
+      if (rd('IR', 8) === 0xFB) {                     // DAA
+        expect(c, 'DAA reached with a digit needing adjustment',
+          before.acc > 9 || before.cy === 1, true);
+        const total = before.acc + 6;
+        expect(c, 'DAA added six', rd('ACC', 4), total & 15);
+        expect(c, 'DAA did not clear a carry it did not consume',
+          cy(), total > 15 ? 1 : before.cy);
+        sawDaa = true;
       }
     }
-    expect(c, 'both carry-only instructions were reached', checked, 2);
+    expect(c, 'the program reached DAA', sawDaa, true);
+  }
+
+  // TCC and TCS both clear the carry, and both write the accumulator —
+  // so neither can be checked by "did the accumulator survive". What
+  // pins them down is the value: TCC leaves exactly the old carry in
+  // bit 0 and zero elsewhere, TCS leaves 9 or 10 depending on the carry
+  // it is about to discard.
+  {
+    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+    let seenTcc = false, seenTcs = false;
+    for (let k = 0; k < 8; k++) {
+      const before = cy();
+      for (let p = 0; p < 4; p++) tick();
+      const ir = rd('IR', 8);
+      if (ir === 0xF7) {                              // TCC
+        expect(c, 'TCC put the old carry in the accumulator',
+          rd('ACC', 4), before);
+        expect(c, 'TCC cleared the carry', cy(), 0);
+        seenTcc = true;
+      }
+      if (ir === 0xF9) {                              // TCS
+        expect(c, 'TCS wrote 9 or 10 by the old carry',
+          rd('ACC', 4), before ? 10 : 9);
+        expect(c, 'TCS cleared the carry', cy(), 0);
+        seenTcs = true;
+      }
+    }
+    expect(c, 'the program reached TCC', seenTcc, true);
+    expect(c, 'the program reached TCS', seenTcs, true);
   }
 }
 

@@ -16,6 +16,7 @@ import { InstructionDecoder, OPR_NAMES, disassemble } from '../decode.js';
 import {
   ringCounter, ControlUnit, ControlUnit4, ConditionTree, IsZero4,
   AccOperand, CarryLogic, SubOperand, TwoPhaseClock,
+  DecimalAdjust, KeyboardProcess,
   PHASES, PHASES4,
 } from '../sequencer.js';
 import { buildRom8 } from './rom-circuit.js';
@@ -1621,14 +1622,14 @@ const P4_PROGRAM = [
 // accumulator and carry one 5-bit ring, which is how the 4004 does
 // multi-nibble shifts on a 4-bit machine.
 const PACC_PROGRAM = [
-  0xD5,   // 0  LDM 5
-  0xF2,   // 1  IAC
-  0xF4,   // 2  CMA
-  0xFA,   // 3  STC
-  0xF5,   // 4  RAL
-  0xF6,   // 5  RAR
-  0xF1,   // 6  CLC
-  0xF8,   // 7  DAC
+  0xD8,   // 0  LDM 8      a BCD digit, as if a sum had just landed here
+  0xFA,   // 1  STC        pretend the previous digit carried
+  0xFB,   // 2  DAA        carry set → add 6 → 14, carry stays set
+  0xF7,   // 3  TCC        ACC = the carry (1), then carry cleared
+  0xD4,   // 4  LDM 4      0100 — one key pressed, the third one
+  0xFC,   // 5  KBP        1-of-n → binary: 0100 → 3
+  0xF9,   // 6  TCS        carry is 0, so ACC = 9; carry cleared
+  0xF6,   // 7  RAR        rotate right through carry, and the PC wraps
 ];
 
 function buildTwoByteMachine() {
@@ -1990,6 +1991,7 @@ function buildAccGroupMachine() {
   const RAR = dec.nets.acc6, DAC = dec.nets.acc8, CLB = dec.nets.acc0;
   const CLC = dec.nets.acc1, CMC = dec.nets.acc3, TCC = dec.nets.acc7;
   const STC = dec.nets.acc10, TCS = dec.nets.acc9;
+  const DAA = dec.nets.acc11, KBP = dec.nets.acc12;
 
   const ROW3 = ROW2 + 380;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
@@ -2003,14 +2005,23 @@ function buildAccGroupMachine() {
   const accGroup = c.net();
   {
     const xg = xDec, yg = ROW2 - 120;
-    const g1 = c.net(), g2 = c.net(), g3 = c.net(), g4 = c.net(), g5 = c.net();
-    instantiate(c, Or2, xg, yg, { a: IAC, b: DAC, y: g1 }, { tag: 'ag1' });
-    instantiate(c, Or2, xg + 30, yg, { a: TCS, b: CMA, y: g2 }, { tag: 'ag2' });
-    instantiate(c, Or2, xg + 60, yg, { a: RAL, b: RAR, y: g3 }, { tag: 'ag3' });
-    instantiate(c, Or2, xg + 90, yg, { a: g1, b: g2, y: g4 }, { tag: 'ag4' });
-    instantiate(c, Or2, xg + 120, yg, { a: g3, b: CLB, y: g5 }, { tag: 'ag5' });
-    instantiate(c, Or2, xg + 150, yg, { a: g4, b: g5, y: accGroup },
-      { tag: 'ag6' });
+    const g = [];
+    const or = (a, b, i) => {
+      const y = c.net();
+      instantiate(c, Or2, xg + i * 28, yg + (i % 2) * 26, { a, b, y },
+        { tag: `ag${i}` });
+      return y;
+    };
+    g.push(or(IAC, DAC, 0));
+    g.push(or(TCS, CMA, 1));
+    g.push(or(RAL, RAR, 2));
+    g.push(or(CLB, TCC, 3));
+    g.push(or(DAA, KBP, 4));
+    const h1 = or(g[0], g[1], 5);
+    const h2 = or(g[2], g[3], 6);
+    const h3 = or(h1, h2, 7);
+    instantiate(c, Or2, xg + 8 * 28, yg, { a: h3, b: g[4], y: accGroup },
+      { tag: 'ag8' });
   }
 
   const xCtrl = xDec + dec.w + 40;
@@ -2043,36 +2054,84 @@ function buildAccGroupMachine() {
   // The adder's second operand, from AccOperand rather than a register.
   const xOp = 40;
   const accOp = instantiate(c, AccOperand, xOp, ROW3, {
-    opIAC: IAC, opDAC: DAC, opTCS: TCS,
+    opIAC: IAC, opDAC: DAC, opTCS: VSS,
   }, { tag: 'accop' });
   c.region('Adder operand — which constant this instruction adds',
     xOp - 6, ROW3 - 6, xOp + accOp.w + 20, ROW3 + accOp.h + 10);
 
+  // DAA decides for itself whether to add 6, from the accumulator and the
+  // carry — so it supplies its own constant rather than being another
+  // line into AccOperand. Its `adjust` output is also what tells the
+  // datapath to take the adder at all.
+  const xDaa = xOp;
+  const daa = instantiate(c, DecimalAdjust, xDaa, ROW3 + 130, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], carry: carryQ,
+  }, { tag: 'daa' });
+  c.region('Decimal adjust — add 6 when the digit is illegal or carried',
+    xDaa - 6, ROW3 + 124, xDaa + daa.w + 20, ROW3 + 130 + daa.h + 10);
+
+  // The adder's B input: DAA's 6 when DAA is executing, otherwise the
+  // constant AccOperand selected. One two-way mux per bit.
+  const bIn = [];
+  for (let i = 0; i < 4; i++) {
+    const fd = c.net(), fa = c.net(), b = c.net(), nd = c.net();
+    instantiate(c, Inverter, xOp + 120, ROW3 + 250 + i * 30,
+      { a: DAA, y: nd }, { tag: `bn${i}` });
+    instantiate(c, And2, xOp + 145, ROW3 + 250 + i * 30,
+      { a: daa.nets[`b${i}`], b: DAA, y: fd }, { tag: `bd${i}` });
+    instantiate(c, And2, xOp + 145, ROW3 + 262 + i * 30,
+      { a: accOp.nets[`b${i}`], b: nd, y: fa }, { tag: `ba${i}` });
+    instantiate(c, Or2, xOp + 175, ROW3 + 250 + i * 30,
+      { a: fd, b: fa, y: b }, { tag: `bo${i}` });
+    bIn.push(b);
+  }
+  c.region('Adder B mux — DAA\u2019s 6, or the accumulator group\u2019s constant',
+    xOp + 114, ROW3 + 244, xOp + 215, ROW3 + 250 + 4 * 30);
+
   const xAdd = xOp + accOp.w + 60;
   const adder = instantiate(c, rippleAdder(4), xAdd, ROW3, {
     a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
-    b0: accOp.nets.b0, b1: accOp.nets.b1,
-    b2: accOp.nets.b2, b3: accOp.nets.b3,
+    b0: bIn[0], b1: bIn[1], b2: bIn[2], b3: bIn[3],
     cin: VSS,
   }, { tag: 'add' });
   c.region('Adder', xAdd - 6, ROW3 - 6, xAdd + adder.w + 6, ROW3 + adder.h + 6);
 
   // Which instructions take the adder's result. Everything in the
   // arithmetic subset of the group; the rest steer elsewhere.
+  // Which instructions take the adder's result: IAC and DAC add a
+  // constant, and DAA adds 6 when it decides to. TCS is not here — it
+  // writes a literal 9 or 10 rather than adding, which is what the
+  // manual says and what makes it a mux term rather than an adder op.
   const useAdd = c.net();
   {
     const t = c.net();
     instantiate(c, Or2, xAdd, ROW3 + adder.h + 20,
       { a: IAC, b: DAC, y: t }, { tag: 'ua1' });
     instantiate(c, Or2, xAdd + 30, ROW3 + adder.h + 20,
-      { a: t, b: TCS, y: useAdd }, { tag: 'ua2' });
+      { a: t, b: DAA, y: useAdd }, { tag: 'ua2' });
   }
 
-  // The accumulator's source mux, now five-way. Each source contributes
+  // KBP's encoder. Its own block because it is a truth table rather than
+  // arithmetic — see the note on KeyboardProcess.
+  const kbp = instantiate(c, KeyboardProcess, xAdd + 260, ROW3 + 200, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+  }, { tag: 'kbp' });
+  c.region('Keyboard process — 1-of-n to binary, 1111 if more than one key',
+    xAdd + 254, ROW3 + 194, xAdd + 260 + kbp.w + 10, ROW3 + 200 + kbp.h + 10);
+
+  // TCS writes a literal 9 (1001) or 10 (1010) depending on the carry —
+  // no arithmetic, just two constants and the carry choosing between
+  // them. Bit 0 is set when the carry is clear, bit 1 when it is set, and
+  // bit 3 always: 1001 vs 1010.
+  const ncarry = c.net();
+  instantiate(c, Inverter, xAdd + 260, ROW3 + 380, { a: carryQ, y: ncarry },
+    { tag: 'tcsn' });
+
+  // The accumulator's source mux, now eight-way. Each source contributes
   // its bits ANDed with its own select line and the results are ORed —
   // the same shape as the two-source mux before it, just wider. CLB needs
   // no term at all: selecting nothing drives zero, which is what CLB
-  // means.
+  // means, and TCC's zeroing of bits 1-3 works the same way.
   const ROW4 = ROW3 + 260;
   const xMux = 40;
   const accD = [];
@@ -2103,15 +2162,45 @@ function buildAccGroupMachine() {
     instantiate(c, And2, xMux, y + 40,
       { a: rarSrc, b: RAR, y: fRar }, { tag: `mxr${i}` });
 
-    const o1 = c.net(), o2 = c.net(), o3 = c.net(), d = c.net();
+    // KBP: the encoder's output for this bit.
+    const fKbp = c.net();
+    instantiate(c, And2, xMux, y + 50,
+      { a: kbp.nets[`y${i}`], b: KBP, y: fKbp }, { tag: `mxk${i}` });
+
+    // TCC puts the carry in bit 0 and zero everywhere else — the manual
+    // is explicit that the accumulator is cleared first and only A0 takes
+    // the carry. Bits 1-3 contribute nothing, which is how they end zero.
+    const fTcc = c.net();
+    if (i === 0) {
+      instantiate(c, And2, xMux, y + 60,
+        { a: carryQ, b: TCC, y: fTcc }, { tag: `mxt${i}` });
+    } else {
+      instantiate(c, And2, xMux, y + 60,
+        { a: VSS, b: TCC, y: fTcc }, { tag: `mxt${i}` });
+    }
+
+    // TCS: 9 (1001) when the carry is clear, 10 (1010) when it is set.
+    const fTcs = c.net();
+    const tcsBit = i === 0 ? ncarry : i === 1 ? carryQ : i === 3 ? VDD : VSS;
+    instantiate(c, And2, xMux, y + 70,
+      { a: tcsBit, b: TCS, y: fTcs }, { tag: `mxs${i}` });
+
+    const o1 = c.net(), o2 = c.net(), o3 = c.net();
+    const o4 = c.net(), o5 = c.net(), o6 = c.net(), d = c.net();
     instantiate(c, Or2, xMux + 40, y, { a: fAdd, b: fImm, y: o1 },
       { tag: `mo1${i}` });
     instantiate(c, Or2, xMux + 40, y + 14, { a: fCma, b: fRal, y: o2 },
       { tag: `mo2${i}` });
-    instantiate(c, Or2, xMux + 70, y, { a: o1, b: o2, y: o3 },
+    instantiate(c, Or2, xMux + 40, y + 28, { a: fRar, b: fKbp, y: o3 },
       { tag: `mo3${i}` });
-    instantiate(c, Or2, xMux + 100, y, { a: o3, b: fRar, y: d },
+    instantiate(c, Or2, xMux + 40, y + 42, { a: fTcc, b: fTcs, y: o4 },
       { tag: `mo4${i}` });
+    instantiate(c, Or2, xMux + 70, y, { a: o1, b: o2, y: o5 },
+      { tag: `mo5${i}` });
+    instantiate(c, Or2, xMux + 70, y + 28, { a: o3, b: o4, y: o6 },
+      { tag: `mo6${i}` });
+    instantiate(c, Or2, xMux + 100, y, { a: o5, b: o6, y: d },
+      { tag: `mo7${i}` });
     accD.push(d);
   }
   c.region('Accumulator source mux — adder / immediate / CMA / RAL / RAR',
@@ -2134,8 +2223,14 @@ function buildAccGroupMachine() {
   // The carry: its own little instruction set, plus the rotates and the
   // adder feeding it.
   const xCar = xZ + 120;
+  // TCS clears the carry exactly as TCC does — the manual says "in either
+  // case, the carry bit is then reset" — so it joins TCC on the same
+  // input rather than needing a port of its own.
+  const tccOrTcs = c.net();
+  instantiate(c, Or2, xCar - 40, ROW4, { a: TCC, b: TCS, y: tccOrTcs },
+    { tag: 'tcx' });
   const carry = instantiate(c, CarryLogic, xCar, ROW4, {
-    carry: carryQ, opCLC: CLC, opSTC: STC, opCMC: CMC, opTCC: TCC,
+    carry: carryQ, opCLC: CLC, opSTC: STC, opCMC: CMC, opTCC: tccOrTcs,
   }, { tag: 'carry' });
   c.region('Carry logic — CLC / STC / CMC / TCC',
     xCar - 6, ROW4 - 6, xCar + carry.w + 10, ROW4 + carry.h + 10);
@@ -2163,13 +2258,33 @@ function buildAccGroupMachine() {
     instantiate(c, Or2, xCar + 70, ROW4 + 130, { a: o1, b: o2, y: carryD },
       { tag: 'cyo3' });
 
-    // The carry is written whenever any of those owns it, gated by EXEC.
-    const w1 = c.net(), w2 = c.net(), w3 = c.net(), any = c.net();
+    // The carry is written whenever any of those owns it, gated by EXEC —
+    // with one exception the manual is emphatic about.
+    //
+    // DAA may *set* the carry but must never clear it: "if the result of
+    // incrementing the accumulator produces a carry out of the high order
+    // bit position, the carry bit is set. Otherwise the carry bit is
+    // unaffected (in particular, it is not reset)." So DAA's write is
+    // gated by the adder's carry-out rather than firing every time, which
+    // is what leaves the carry alone when 8 + 6 = 14 does not carry.
+    //
+    // Writing it unconditionally is the obvious implementation and it is
+    // wrong in a way that only shows up in multi-digit BCD — the second
+    // digit loses the carry the first one produced.
+    const arith = c.net(), daaW = c.net();
+    instantiate(c, Or2, xCar + 10, ROW4 + 176, { a: IAC, b: DAC, y: arith },
+      { tag: 'cwa' });
+    instantiate(c, And2, xCar + 10, ROW4 + 190,
+      { a: DAA, b: adder.nets.cout, y: daaW }, { tag: 'cwd' });
+
+    const w1 = c.net(), w2 = c.net(), w3 = c.net(), w4 = c.net(), any = c.net();
     instantiate(c, Or2, xCar + 40, ROW4 + 190, { a: RAL, b: RAR, y: w1 },
       { tag: 'cw1' });
     instantiate(c, Or2, xCar + 40, ROW4 + 204,
-      { a: useAdd, b: carry.nets.sel, y: w2 }, { tag: 'cw2' });
-    instantiate(c, Or2, xCar + 70, ROW4 + 190, { a: w1, b: w2, y: w3 },
+      { a: arith, b: carry.nets.sel, y: w2 }, { tag: 'cw2' });
+    instantiate(c, Or2, xCar + 70, ROW4 + 204, { a: w2, b: daaW, y: w4 },
+      { tag: 'cw2b' });
+    instantiate(c, Or2, xCar + 70, ROW4 + 190, { a: w1, b: w4, y: w3 },
       { tag: 'cw3' });
     instantiate(c, And2, xCar + 100, ROW4 + 190,
       { a: w3, b: ring.nets.p3, y: any }, { tag: 'cw4' });
