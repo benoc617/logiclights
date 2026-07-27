@@ -431,6 +431,29 @@ function buildFetch() {
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.program = P0_PROGRAM;
+  // The address the instruction register was loaded from — which is the
+  // instruction actually executing, not the one being fetched. The PC has
+  // already advanced past it by the time its effect is visible, so this is
+  // what the program listing should highlight. Found by matching the
+  // register's contents against the ROM: unambiguous while a program has
+  // no repeated bytes, and honest about it when it does.
+  c.execAddr = () => {
+    let ir = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir |= 1 << i;
+      }
+    }
+    let pc = 0;
+    for (let i = 0; i < 3; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net] === 1) {
+        pc |= 1 << i;
+      }
+    }
+    // the instruction in the register came from the address before the PC
+    const back = (pc - 1 + c.program.length) % c.program.length;
+    return c.program[back] === ir ? back : c.program.indexOf(ir);
+  };
   return c;
 }
 
@@ -588,6 +611,29 @@ function buildSequenced() {
     regWrite: ctrl.nets.regWrite,
   };
   c.program = P0B_PROGRAM;
+  // The address the instruction register was loaded from — which is the
+  // instruction actually executing, not the one being fetched. The PC has
+  // already advanced past it by the time its effect is visible, so this is
+  // what the program listing should highlight. Found by matching the
+  // register's contents against the ROM: unambiguous while a program has
+  // no repeated bytes, and honest about it when it does.
+  c.execAddr = () => {
+    let ir = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir |= 1 << i;
+      }
+    }
+    let pc = 0;
+    for (let i = 0; i < 3; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net] === 1) {
+        pc |= 1 << i;
+      }
+    }
+    // the instruction in the register came from the address before the PC
+    const back = (pc - 1 + c.program.length) % c.program.length;
+    return c.program[back] === ir ? back : c.program.indexOf(ir);
+  };
   return c;
 }
 
@@ -732,6 +778,29 @@ function buildAccumulator() {
     regWrite: ctrl.nets.regWrite,
   };
   c.program = P1_PROGRAM;
+  // The address the instruction register was loaded from — which is the
+  // instruction actually executing, not the one being fetched. The PC has
+  // already advanced past it by the time its effect is visible, so this is
+  // what the program listing should highlight. Found by matching the
+  // register's contents against the ROM: unambiguous while a program has
+  // no repeated bytes, and honest about it when it does.
+  c.execAddr = () => {
+    let ir = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir |= 1 << i;
+      }
+    }
+    let pc = 0;
+    for (let i = 0; i < 3; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net] === 1) {
+        pc |= 1 << i;
+      }
+    }
+    // the instruction in the register came from the address before the PC
+    const back = (pc - 1 + c.program.length) % c.program.length;
+    return c.program[back] === ir ? back : c.program.indexOf(ir);
+  };
   return c;
 }
 
@@ -904,6 +973,29 @@ function buildJumpMachine() {
     regWrite: ctrl.nets.regWrite,
   };
   c.program = P1B_PROGRAM;
+  // The address the instruction register was loaded from — which is the
+  // instruction actually executing, not the one being fetched. The PC has
+  // already advanced past it by the time its effect is visible, so this is
+  // what the program listing should highlight. Found by matching the
+  // register's contents against the ROM: unambiguous while a program has
+  // no repeated bytes, and honest about it when it does.
+  c.execAddr = () => {
+    let ir = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir |= 1 << i;
+      }
+    }
+    let pc = 0;
+    for (let i = 0; i < 3; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net] === 1) {
+        pc |= 1 << i;
+      }
+    }
+    // the instruction in the register came from the address before the PC
+    const back = (pc - 1 + c.program.length) % c.program.length;
+    return c.program[back] === ir ? back : c.program.indexOf(ir);
+  };
   return c;
 }
 
@@ -1130,6 +1222,29 @@ function buildAddMachine() {
   };
   c.cells = rf.stored;
   c.program = P2_PROGRAM;
+  // The address the instruction register was loaded from — which is the
+  // instruction actually executing, not the one being fetched. The PC has
+  // already advanced past it by the time its effect is visible, so this is
+  // what the program listing should highlight. Found by matching the
+  // register's contents against the ROM: unambiguous while a program has
+  // no repeated bytes, and honest about it when it does.
+  c.execAddr = () => {
+    let ir = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir |= 1 << i;
+      }
+    }
+    let pc = 0;
+    for (let i = 0; i < 3; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net] === 1) {
+        pc |= 1 << i;
+      }
+    }
+    // the instruction in the register came from the address before the PC
+    const back = (pc - 1 + c.program.length) % c.program.length;
+    return c.program[back] === ir ? back : c.program.indexOf(ir);
+  };
   return c;
 }
 
@@ -1356,6 +1471,29 @@ function buildJcnMachine() {
     condTake,
   };
   c.program = P3_PROGRAM;
+  // The address the instruction register was loaded from — which is the
+  // instruction actually executing, not the one being fetched. The PC has
+  // already advanced past it by the time its effect is visible, so this is
+  // what the program listing should highlight. Found by matching the
+  // register's contents against the ROM: unambiguous while a program has
+  // no repeated bytes, and honest about it when it does.
+  c.execAddr = () => {
+    let ir = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir |= 1 << i;
+      }
+    }
+    let pc = 0;
+    for (let i = 0; i < 3; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net] === 1) {
+        pc |= 1 << i;
+      }
+    }
+    // the instruction in the register came from the address before the PC
+    const back = (pc - 1 + c.program.length) % c.program.length;
+    return c.program[back] === ir ? back : c.program.indexOf(ir);
+  };
   return c;
 }
 

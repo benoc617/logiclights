@@ -1849,6 +1849,48 @@ function flipAndStep(c, label, on) {
   }
 }
 
+// ── the program listing highlights the executing instruction ─────────────
+// Not the one being fetched. Those differ by a cycle: the PC advances
+// during FETCH, so by the time an instruction's effect is visible the
+// counter has moved past it. Highlighting the PC blames the wrong line for
+// what you just watched happen, which is exactly the bug this guards.
+{
+  const c = buildCircuit('jcnmachine');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  expect(c, 'the machine publishes an executing address',
+    typeof c.execAddr, 'function');
+
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+  // Walk until the accumulator first becomes 3. The instruction that did
+  // it is LDM 3 at address 0 — the highlight must be there, not on the
+  // XCH at address 1 that the PC has already advanced to.
+  let blamed = null;
+  for (let k = 0; k < 12 && blamed === null; k++) {
+    tick();
+    if (rd('ACC', 4) === 3) blamed = c.execAddr();
+  }
+  expect(c, 'the accumulator reaches 3', blamed !== null, true);
+  expect(c, 'LDM 3 is blamed for the accumulator becoming 3', blamed, 0);
+
+  // and the highlighted address must always hold the byte the instruction
+  // register is actually running
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  let mismatched = 0;
+  for (let k = 0; k < 20; k++) {
+    tick();
+    const a = c.execAddr();
+    if (a >= 0 && c.program[a] !== rd('IR', 8)) mismatched++;
+  }
+  expect(c, 'the highlighted line matches the instruction register',
+    mismatched, 0);
+}
+
 // ── picker grouping ──────────────────────────────────────────────────────
 // Sections are by technology, so a circuit's group has to match the devices
 // it is actually made of — otherwise a new circuit lands in the wrong

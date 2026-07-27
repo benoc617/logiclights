@@ -276,13 +276,23 @@ export function updatePanel() {
     }
   }
   if (progRows) {
-    // Highlight what the program counter is pointing at. The instruction
-    // register lags the PC by a cycle, so this marks what is being
-    // *fetched* — which is what you want when stepping, because it is the
-    // line about to happen.
-    const pc = vals.PC ?? -1;
+    // Highlight the instruction that is *executing*, not the one being
+    // fetched. Those differ by a cycle and it matters: the PC advances
+    // during FETCH, so by the time you see LDM 3 land in the accumulator
+    // the counter has already moved to the next line. Highlighting the PC
+    // marks the wrong instruction as responsible for what you just watched
+    // happen.
+    //
+    // The instruction register holds what is running, so the executing
+    // address is the one the register's contents came from. Machines that
+    // publish `execAddr` say so directly; otherwise fall back to the byte
+    // before the PC, which is where a one-byte instruction came from.
+    const exec = circuit.execAddr
+      ? circuit.execAddr()
+      : (vals.PC === undefined ? -1
+         : (vals.PC - 1 + progRows.length) % progRows.length);
     for (const r of progRows) {
-      const on = r.addr === pc;
+      const on = r.addr === exec;
       if (r.on !== on) { r.on = on; r.el.classList.toggle('at', on); }
     }
   }
