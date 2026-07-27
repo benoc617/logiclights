@@ -1,86 +1,72 @@
 # Test suite speed
 
-Where the time goes and what to do about it. Written after sharding the
-suite across cores took it from 4m37s to ~60s, and hit a floor.
+Where the time goes and what to do about it.
 
-All numbers from a 12-core machine, `node test/run.mjs`.
+**No timings in this file.** They drifted twice in a single session as the
+4004 machines grew, and a stale number is worse than none — it invites
+decisions based on a ratio that no longer holds. Measure when you need to:
 
-## Where it stands
+```bash
+node test/run.mjs                 # wall time, sharded
+node test/sim-test.mjs            # wall time, serial
+```
 
-| | |
-|---|---|
-| serial (`node test/sim-test.mjs`) | 4m37s |
-| sharded (`node test/run.mjs`, 11 processes) | ~60s |
-| checks, either way | 149,492 |
+and for per-block times, run each `// ── ` section alone (the runner
+already knows how to split them; `test/run.mjs` is ~120 readable lines).
 
-The sharding is done. What follows is the two things that would take it
-further, in the order they are worth doing.
+What follows is the *shape* of the problem, which has been stable.
 
-## The floor: one block is 60 seconds
+## The floor is one block, not the total
 
-Per-block timings, measured by running each `// ── ` section alone:
+`test/run.mjs` shards the suite across cores, so the wall time is the cost
+of the **slowest single block**, not the sum. More cores buy nothing once
+that block dominates.
 
-| seconds | block |
-|---|---|
-| **60.0** | **JCN, every mask, in the machine** |
-| 22.6 | two-byte fetch |
-| 11.8 | JCN: the condition tree |
-| 5.2 | the accumulator group |
-| 3.6 | the adding machine |
-| 2.4 | 4-bit ALU |
-| ~2 each | everything else (30 blocks) |
+The slowest block has been *JCN, every mask, in the machine* throughout.
+The memory machine's block is second and closing — it is the most
+expensive circuit in the library to clock, five phases over a sixteen-word
+ROM — but it sits under the JCN block, so it does not set the wall time
+today. It would become the floor the moment JCN is fixed.
 
-Total across blocks: ~121s. (The serial suite is slower than that sum
-because each block here pays module-load separately; run together they
-share it.)
-
-So the sharded wall time is *exactly* the cost of the slowest block. More
-cores buy nothing. Every option below is really about that one block.
+Everything below is really about those two blocks.
 
 ## Option 2 — cut redundant work
 
 **Worth doing. Low risk, no coverage change.**
 
-The 60s block is two `{ }` blocks under one marker. Measured separately:
-
-| | seconds | checks |
-|---|---|---|
-| A: walk the countdown, check TAKE at each JCN | 12.1 | 18 |
-| **B: 32 machines, one per mask × TEST** | **46.7** | **64** |
-
-B is where the time is. It builds **32 complete machines** — 16 masks × 2
-TEST positions — and runs each for up to 30 ticks. Building and clocking a
-machine is the expensive thing in this suite, and B does it 32 times to
-answer what is fundamentally one question.
+The JCN block is two `{ }` blocks under one marker, and the second is
+where nearly all its time goes. It builds **32 complete machines** — 16
+masks × 2 TEST positions — and runs each for up to 30 ticks. Building and
+clocking a machine is the expensive thing in this suite, and it does that
+32 times to answer what is fundamentally one question.
 
 Three things to do, in order:
 
 1. **Split the marker.** The two `{ }` blocks are independent; giving the
    second its own `// ── ` header lets the runner put them on different
-   cores. One line, but note it only takes the floor from 58.8s to 46.7s —
-   B is still the floor afterwards. Do it because it is free, not because
-   it solves the problem.
+   cores. One line — but the 32-machine half is still the floor
+   afterwards, so do it because it is free, not because it solves the
+   problem.
 
 2. **Stop rebuilding the machine per mask.** This is the actual win. All
    32 machines are identical except one ROM byte (`0x10 | mask`). Two
    options, and the second is better:
-   - Build once per mask and sweep TEST inside it — halves it to ~23s.
+   - Build once per mask and sweep TEST inside it — halves the builds.
    - Better: the mask is *fetched from ROM*, so a single machine whose ROM
      holds all sixteen `JCN` variants in sequence covers every mask in one
      build. That is a real rewrite, but it is also a better test — it
      exercises the masks in a running program rather than in sixteen
-     freshly-reset machines. Should land near 3-5s.
+     freshly-reset machines.
 
-3. **Look for the same pattern elsewhere.** The two-byte block (22.6s)
-   resets and re-runs its program four times to check four properties.
-   Recording one trace and asserting against it repeatedly would cut most
-   of that. My own accumulator-group block does this three times and
-   should be fixed at the same time — it is the same mistake, freshly
-   made.
+3. **Look for the same pattern elsewhere.** The two-byte block resets and
+   re-runs its program several times to check several properties.
+   Recording one trace and asserting against it repeatedly cuts most of
+   that — the memory-machine block was written that way after being
+   caught doing the same thing, and roughly halved.
 
-Expected result: the JCN floor drops from 46.7s to single digits, which
-makes **two-byte fetch (22.6s) the new floor**. Step 3 then matters, and
-the suite should land around 25s without touching the engine.
+Expected result: JCN stops being the floor, two-byte fetch and the memory
+machine become it, and step 3 addresses both. All without touching the
+engine.
 
 **Risk:** low, but not zero. Consolidating repeated runs means several
 assertions start sharing one trace, so a bug that corrupts the machine
@@ -91,20 +77,15 @@ a block resets deliberately *because* it is testing reset, leave it alone.
 
 **Do last, and separately. Highest value, highest risk.**
 
-The real cost is per-tick, and it scales badly:
-
-| machine | per tick |
-|---|---|
-| fetch | 7.1ms |
-| accumulator | 9.8ms |
-| adding machine | 22.0ms |
-| conditional | 21.9ms |
-| **two-byte** | **29.4ms** |
-| accumulator group | 17.3ms |
-
+The real cost is per-tick, and it scales worse than the device count does.
 Every `tick()` is two clock edges, and each edge drains the event queue to
-quiescence. 29ms for a few thousand devices is slow enough to suggest the
-solver is redoing work rather than that the circuits are large.
+quiescence. Clocking the largest machines costs tens of milliseconds for a
+few thousand devices — enough to suggest the solver is redoing work rather
+than that the circuits are large.
+
+The trend is the part that matters: per-tick cost has grown faster than
+the machines have. That is the wrong direction for a solver meant to be
+near-linear in devices, and it is the reason this option exists.
 
 Two candidates, both unverified:
 
@@ -118,7 +99,7 @@ Two candidates, both unverified:
 
 **Why this is last despite being the biggest win:** it is the only option
 that changes the engine, and the engine is what every test trusts. A
-subtle change to flood or settle order can leave 149,492 checks passing
+subtle change to flood or settle order can leave every check passing
 while making the simulation quietly wrong in a case nobody covers — the
 four-state logic (X and Z, drive strengths) is exactly where that hides.
 
@@ -136,5 +117,6 @@ If it is attempted:
 - **More cores.** The floor is one block; see above.
 - **A test framework.** It would buy parallel execution at the cost of the
   suite's plain-block readability, and the parallelism was ~120 lines.
-- **Cutting checks.** The 131,072-case adder sweep costs ~1.7s. The check
-  count is not the problem and never was.
+- **Cutting checks.** The 131,072-case adder sweep is among the cheapest
+  blocks in the suite. The check count is not the problem and never was —
+  clocked machines are.

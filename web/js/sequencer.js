@@ -983,6 +983,12 @@ export const MemControl = defineModule('memctrl', {
     { name: 'memToAcc', x: -1.5, y: 34, side: 'in' },
     // any that writes memory or a port
     { name: 'memWrite', x: -1.5, y: 38, side: 'in' },
+    // ADM and SBM: RAM through the adder, exactly as ADD and SUB take a
+    // register through it. Same block, different operand source.
+    { name: 'opADM', x: -1.5, y: 42, side: 'in' },
+    { name: 'opSBM', x: -1.5, y: 46, side: 'in' },
+    // DCL: the accumulator's low three bits select the RAM bank.
+    { name: 'opDCL', x: -1.5, y: 50, side: 'in' },
     // outputs
     { name: 'pcInc', x: 320, y: 0, side: 'out' },
     { name: 'irLoad', x: 320, y: 6, side: 'out' },
@@ -995,6 +1001,10 @@ export const MemControl = defineModule('memctrl', {
     { name: 'accFromReg', x: 320, y: 42, side: 'out' },
     { name: 'regWrite', x: 320, y: 48, side: 'out' },
     { name: 'ramWrite', x: 320, y: 54, side: 'out' },
+    { name: 'accFromAlu', x: 320, y: 60, side: 'out' },
+    { name: 'aluSub', x: 320, y: 66, side: 'out' },
+    { name: 'carryWrite', x: 320, y: 72, side: 'out' },
+    { name: 'bankLoad', x: 320, y: 78, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pR1 = m.port('pRead1');
@@ -1026,10 +1036,15 @@ export const MemControl = defineModule('memctrl', {
     // mux drives zero when nothing selects it. The accumulator would be
     // wiped by every XCH — which is what happened, and is why the
     // omission is stated rather than left to be noticed.
-    const wantAcc = m.net();
+    const w0 = m.net(), wantAcc = m.net();
     m.instantiate(Or2, GATE_W * 8, GATE_H * 4,
-      { a: m.port('opLDM'), b: m.port('memToAcc'), y: wantAcc });
-    m.instantiate(And2, GATE_W * 11, GATE_H * 4,
+      { a: m.port('opLDM'), b: m.port('memToAcc'), y: w0 });
+    const arith0 = m.net();
+    m.instantiate(Or2, GATE_W * 8, GATE_H * 5,
+      { a: m.port('opADM'), b: m.port('opSBM'), y: arith0 });
+    m.instantiate(Or2, GATE_W * 10, GATE_H * 4,
+      { a: w0, b: arith0, y: wantAcc });
+    m.instantiate(And2, GATE_W * 12, GATE_H * 4,
       { a: pE, b: wantAcc, y: m.port('accLoad') });
 
     // …and the three sources it picks between.
@@ -1051,5 +1066,29 @@ export const MemControl = defineModule('memctrl', {
       { a: pE, b: m.port('opXCH'), y: m.port('regWrite') });
     m.instantiate(And2, GATE_W * 5, GATE_H * 14,
       { a: pE, b: m.port('memWrite'), y: m.port('ramWrite') });
+
+    // ADM and SBM are ADD and SUB with the RAM as the operand:
+    //   ADM   ACC ← ACC + RAM + carry
+    //   SBM   ACC ← ACC + ~RAM + ~carry
+    // Both write the carry from the adder — ADM sets it on overflow, SBM
+    // sets it when there was no borrow, which is the same carry-out bit
+    // read two ways. So one control line covers both.
+    const arith = m.net();
+    m.instantiate(Or2, GATE_W * 5, GATE_H * 16,
+      { a: m.port('opADM'), b: m.port('opSBM'), y: arith });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 16,
+      { a: pE, b: arith, y: m.port('accFromAlu') });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 18,
+      { a: pE, b: arith, y: m.port('carryWrite') });
+    // SBM alone inverts the operand and the carry in.
+    const sn = m.net();
+    m.instantiate(Inverter, GATE_W * 5, GATE_H * 20,
+      { a: m.port('opSBM'), y: sn });
+    m.instantiate(Inverter, GATE_W * 7, GATE_H * 20,
+      { a: sn, y: m.port('aluSub') });
+
+    // DCL latches the accumulator's low three bits as the bank select.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 22,
+      { a: pE, b: m.port('opDCL'), y: m.port('bankLoad') });
   },
 });

@@ -99,7 +99,7 @@ generated, so this file does not repeat them.
       Two early ones — Accumulator Machine and Jump Machine — were
       retired once later machines demonstrated their ideas better; their
       test coverage moved to the Adding Machine. What remains is
-      instruction-set coverage rather than new structure — thirty-three of
+      instruction-set coverage rather than new structure — thirty-nine of
       the 45 defined instructions now act on hardware. See the checklist
       in [4004.md](4004.md), which has the full plan and program corpus
       too.
@@ -114,22 +114,21 @@ generated, so this file does not repeat them.
       deliberately left alone — they are the teaching material.
 - [ ] **Auto-routing** for inter-module wires (channel routing between rows).
       Wires are decorative, so a router only has to be legible, not correct.
-- [x] **Performance** — `solve()` now precomputes a flat CSR edge list once
-      and only flips per-edge enable flags; floods are generation-stamped so
-      nothing is cleared per pass. Real circuits came out 1.6–3.6× faster
-      (`add8` ~3.2 → ~1 µs); at 4004 scale ~65 → ~32 µs, and a realistic
-      fan-out topology solved 4,610 nets in ~36 µs. Tiny circuits pay ~1 µs
-      more for the per-device flag loop, which is the right trade.
-      (Figures are one machine's numbers, not a tracked benchmark — there
-      are no timing assertions in the suite. Treat them as orders of
-      magnitude.)
-- [x] **Test suite wall time** — `test/run.mjs` shards `sim-test.mjs` at its
-      section markers and runs the pieces across cores: 4m37s → ~60s, with
-      no change to what is checked. Two follow-ups are measured and written up in
-      [TEST-SPEED.md](TEST-SPEED.md): one block ("JCN, every mask, in the
-      machine") is 58.8s by itself and is now the floor, and `settle()`
-      costs ~29ms per tick on the larger machines, which looks like more
-      than the circuit sizes justify.
+- [x] **Performance** — `solve()` now precomputes a flat CSR edge list
+      once and only flips per-edge enable flags; floods are
+      generation-stamped so nothing is cleared per pass. Every real
+      circuit got faster, most by a small multiple; tiny circuits pay a
+      little more for the per-device flag loop, which is the right trade.
+      Per-tick cost has since grown faster than the machines have, which
+      is the open question [TEST-SPEED.md](TEST-SPEED.md) records.
+- [x] **Test suite wall time** — `test/run.mjs` shards `sim-test.mjs` at
+      its section markers and runs the pieces across cores, with no change
+      to what is checked. Because it shards, the wall time is the cost of
+      the slowest single block rather than the sum, so more cores stop
+      helping once one block dominates — which one, and the two follow-ups
+      worth doing, are in [TEST-SPEED.md](TEST-SPEED.md). That file
+      deliberately carries no timings: they drifted twice in one session
+      as the 4004 machines grew.
 - [ ] **Renderer caching** — build a `Path2D` per net once and reuse it;
       currently every wire is re-pathed each frame, now once per logic value.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module

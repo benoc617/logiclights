@@ -2508,14 +2508,22 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
 // own instruction — the manual says the address "remains in effect until
 // changed by a subsequent SRC", so one SRC can serve many accesses.
 const PMEM_PROGRAM = [
-  0xD1,   // 0  LDM 1
-  0xB0,   // 1  XCH r0     r0 = 1   → chip 0, register 1
-  0xD5,   // 2  LDM 5
-  0xB1,   // 3  XCH r1     r1 = 5   → character 5
-  0x21,   // 4  SRC 0P     address = 0x15
-  0xD7,   // 5  LDM 7
-  0xE0,   // 6  WRM        RAM[0][1][5] = 7
-  0xE9,   // 7  RDM        ACC = 7, and the PC wraps
+  0xD1,   //  0  LDM 1
+  0xB0,   //  1  XCH r0     r0 = 1   → chip 0, register 1
+  0xD5,   //  2  LDM 5
+  0xB1,   //  3  XCH r1     r1 = 5   → character 5
+  0x21,   //  4  SRC 0P     address = 0x15, and it stays there
+  0xD7,   //  5  LDM 7
+  0xE0,   //  6  WRM        RAM[0][1][5] = 7
+  0xDA,   //  7  LDM 10
+  0xEB,   //  8  ADM        10 + 7 = 1 with a carry — the manual's example
+  0xE1,   //  9  WMP        the RAM output port takes it
+  0xD3,   // 10  LDM 3
+  0xE4,   // 11  WR0        status character 0 = 3
+  0xEC,   // 12  RD0        read it back
+  0xE2,   // 13  WRR        the ROM output port takes it
+  0xEA,   // 14  RDR        and reads back
+  0xE9,   // 15  RDM        main memory again, and the PC wraps
 ];
 
 export function buildMemMachine(program = PMEM_PROGRAM) {
@@ -2538,16 +2546,22 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
 
   const pcEnable = c.net();
-  const PC = instantiate(c, programCounter(3), 40, ROW2, {
+  const PC = instantiate(c, programCounter(4), 40, ROW2, {
     clk: clkNet, nclk, en: pcEnable, rst, load: VSS,
-    a0: VSS, a1: VSS, a2: VSS,
+    a0: VSS, a1: VSS, a2: VSS, a3: VSS,
   }, { tag: 'pc' });
   c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
 
+  // Sixteen words rather than eight. The memory group needs setup before
+  // it can demonstrate anything — load a pair, send it, put a value in
+  // memory — and the manual's own examples are four instructions before
+  // the one being shown. Eight words was a demo limit, not a 4004 one;
+  // the real chip addresses 4K.
   const xRom = 40 + PC.w + 30;
-  const Rom = romArray(program, 8, 3);
+  const Rom = romArray(program, 8, 4);
   const rom = instantiate(c, Rom, xRom, ROW2,
-    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2, a3: PC.nets.q3 },
+    { tag: 'rom' });
 
   const xIr = xRom + rom.w + 30;
   const ir = [];
@@ -2582,14 +2596,19 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
 
   const ROW3 = ROW2 + 380;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
+  // The RAM's four output bits and the carry flag, declared before the
+  // blocks that read them — nets are only wiring, so order is free.
+  const ramQ = [c.net(), c.net(), c.net(), c.net()];
+  const carryQ = c.net();
 
   const xCtrl = xDec + dec.w + 40;
   const memToAcc = c.net(), memWrite = c.net();
+  const opADM = c.net(), opSBM = c.net(), opDCL = c.net();
   const ctrl = instantiate(c, MemControl, xCtrl, ROW2, {
     pFetch: ring.nets.p0, pDecode: ring.nets.p1,
     pRead1: ring.nets.p2, pRead2: ring.nets.p3, pExec: ring.nets.p4,
     opSRC, opLDM: dec.nets.op13, opXCH: dec.nets.op11,
-    memToAcc, memWrite,
+    memToAcc, memWrite, opADM, opSBM, opDCL,
   }, { tag: 'ctrl' });
   c.region('Control unit — five phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -2681,11 +2700,16 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   {
     const xr = xMem + 300, yr = ROW3 + 260;
     const r1 = or(MEMOP[9], MEMOP[10], xr, yr, 'mr1');            // RDM RDR
+    // RDR appears twice in this tree — harmless, it is an OR — but it
+    // keeps the shape symmetric now that ADM/SBM have moved out.
     const r2 = or(MEMOP[12], MEMOP[13], xr, yr + 30, 'mr2');      // RD0 RD1
     const r3 = or(MEMOP[14], MEMOP[15], xr, yr + 60, 'mr3');      // RD2 RD3
-    const r4 = or(MEMOP[8], MEMOP[11], xr, yr + 90, 'mr4');       // SBM ADM
+    // ADM and SBM are deliberately absent: they reach the accumulator
+    // through the adder, not straight off the bus, so they select
+    // accFromAlu rather than accFromMem. Putting them here would drive
+    // two mux inputs at once and the accumulator would take their OR.
     const r5 = or(r1, r2, xr + 30, yr, 'mr5');
-    const r6 = or(r3, r4, xr + 30, yr + 60, 'mr6');
+    const r6 = or(r3, MEMOP[10], xr + 30, yr + 60, 'mr6');
     instantiate(c, Or2, xr + 60, yr + 30, { a: r5, b: r6, y: memToAcc },
       { tag: 'mrA' });
 
@@ -2700,6 +2724,81 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   c.region('Memory access decode — which way the data moves',
     xMem + 294, ROW3 + 254, xMem + 400, ROW3 + 470);
 
+  // ADM, SBM and DCL, named from the memory-group decode below. Driven
+  // there; declared here because the control unit is built first.
+  {
+    const buf = (from, to, x, y, tag) => {
+      const t = c.net();
+      instantiate(c, Inverter, x, y, { a: from, y: t }, { tag: tag + 'n' });
+      instantiate(c, Inverter, x + 20, y, { a: t, y: to }, { tag });
+    };
+    buf(MEMOP[11], opADM, xMem + 460, ROW3 + 260, 'badm');
+    buf(MEMOP[8], opSBM, xMem + 460, ROW3 + 290, 'bsbm');
+    buf(dec.nets.acc13, opDCL, xMem + 460, ROW3 + 320, 'bdcl');
+  }
+
+  // SBM conditions the RAM operand and the carry, exactly as SUB does for
+  // a register — same block, different source. ADM passes both through.
+  const xSub = xMem + 520;
+  const subop = instantiate(c, SubOperand, xSub, ROW3 + 260, {
+    r0: ramQ[0], r1: ramQ[1], r2: ramQ[2], r3: ramQ[3],
+    carry: carryQ, sub: ctrl.nets.aluSub,
+  }, { tag: 'subop' });
+  c.region('SBM conditioning — invert the RAM operand and the carry',
+    xSub - 6, ROW3 + 254, xSub + subop.w + 20, ROW3 + 260 + subop.h + 10);
+
+  const xAdd = xSub + subop.w + 60;
+  const adder = instantiate(c, rippleAdder(4), xAdd, ROW3 + 260, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+    b0: subop.nets.b0, b1: subop.nets.b1,
+    b2: subop.nets.b2, b3: subop.nets.b3,
+    cin: subop.nets.cin,
+  }, { tag: 'add' });
+  c.region('Adder — ADM and SBM share it, as ADD and SUB do',
+    xAdd - 6, ROW3 + 254, xAdd + adder.w + 6, ROW3 + 260 + adder.h + 6);
+
+  // The carry flag. ADM sets it on overflow; SBM sets it when there was
+  // no borrow — the same carry-out bit, read two ways.
+  //
+  // Reset forces it to zero, and it needs to: a flag that powers up
+  // floating feeds Z into the adder's carry-in, and the first ADM comes
+  // out one too high with no other symptom. The manual gives RESET a
+  // defined effect on the bank select for the same reason, and a carry
+  // with no defined start is the same hazard one bit wide.
+  const carryD = c.net(), nrst = c.net();
+  instantiate(c, Inverter, xAdd + adder.w + 20, ROW3 + 300,
+    { a: rst, y: nrst }, { tag: 'cfrn' });
+  instantiate(c, And2, xAdd + adder.w + 40, ROW3 + 300,
+    { a: adder.nets.cout, b: nrst, y: carryD }, { tag: 'cfr' });
+  const carryLd = c.net();
+  instantiate(c, Or2, xAdd + adder.w + 40, ROW3 + 330,
+    { a: ctrl.nets.carryWrite, b: rst, y: carryLd }, { tag: 'cfl' });
+  instantiate(c, register(1), xAdd + adder.w + 40, ROW3 + 260, {
+    clk: clkNet, nclk, load: carryLd, d0: carryD, q0: carryQ,
+  }, { tag: 'cf' });
+  c.region('Carry flag', xAdd + adder.w + 34, ROW3 + 254,
+    xAdd + adder.w + 104, ROW3 + 314);
+
+  // DCL's bank register: the accumulator's low three bits, held until the
+  // next DCL. The manual notes a RESET selects bank 0, which is what the
+  // machine's RST does here.
+  // "A RESET causes DATA RAM BANK 0 to be selected" — the manual, page
+  // 3-49. So reset both loads the register and forces its input low.
+  const bankD = [c.net(), c.net(), c.net()];
+  for (let i = 0; i < 3; i++) {
+    instantiate(c, And2, xAdd + adder.w + 130, ROW3 + 300 + i * 24,
+      { a: accQ[i], b: nrst, y: bankD[i] }, { tag: `bkr${i}` });
+  }
+  const bankLd = c.net();
+  instantiate(c, Or2, xAdd + adder.w + 130, ROW3 + 380,
+    { a: ctrl.nets.bankLoad, b: rst, y: bankLd }, { tag: 'bkl' });
+  const bank = instantiate(c, register(3), xAdd + adder.w + 150, ROW3 + 260, {
+    clk: clkNet, nclk, load: bankLd,
+    d0: bankD[0], d1: bankD[1], d2: bankD[2],
+  }, { tag: 'bank' });
+  c.region('Bank select — DCL, three bits, held until the next DCL',
+    xAdd + adder.w + 144, ROW3 + 254, xAdd + adder.w + 280, ROW3 + 330);
+
   // The accumulator's source mux: an immediate, the register file, or
   // whatever the modelled RAM put on the bus.
   //
@@ -2710,7 +2809,6 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   // in the solver knows the difference between these and a switch a
   // finger flipped, which is what keeps "simulated, never faked" true on
   // the CPU side of the boundary.
-  const ramQ = [c.net(), c.net(), c.net(), c.net()];
   const ramSw = [];
   for (let i = 0; i < 4; i++) {
     const sw = c.addSwitch(`RAM${i}`, ramQ[i], 'toggle',
@@ -2725,8 +2823,8 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   const accD = [];
   for (let i = 0; i < 4; i++) {
     const y = ROW4 + i * 40;
-    const fi = c.net(), fr = c.net(), fm = c.net(), o1 = c.net();
-    const d = c.net();
+    const fi = c.net(), fr = c.net(), fm = c.net(), fa = c.net();
+    const o1 = c.net(), o2 = c.net(), d = c.net();
     instantiate(c, And2, xMux, y,
       { a: ir[i], b: ctrl.nets.accFromImm, y: fi }, { tag: `mxi${i}` });
     instantiate(c, And2, xMux, y + 12,
@@ -2734,13 +2832,19 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { tag: `mxr${i}` });
     instantiate(c, And2, xMux, y + 24,
       { a: ramQ[i], b: ctrl.nets.accFromMem, y: fm }, { tag: `mxm${i}` });
+    // ADM and SBM arrive here, through the adder rather than off the bus
+    instantiate(c, And2, xMux, y + 36,
+      { a: adder.nets[`s${i}`], b: ctrl.nets.accFromAlu, y: fa },
+      { tag: `mxa${i}` });
     instantiate(c, Or2, xMux + 40, y, { a: fi, b: fr, y: o1 },
       { tag: `mo1${i}` });
-    instantiate(c, Or2, xMux + 70, y, { a: o1, b: fm, y: d },
+    instantiate(c, Or2, xMux + 40, y + 24, { a: fm, b: fa, y: o2 },
       { tag: `mo2${i}` });
+    instantiate(c, Or2, xMux + 70, y, { a: o1, b: o2, y: d },
+      { tag: `mo3${i}` });
     accD.push(d);
   }
-  c.region('Accumulator source mux — immediate / register / memory',
+  c.region('Accumulator source mux — immediate / register / memory / adder',
     xMux - 6, ROW4 - 8, xMux + 110, ROW4 + 4 * 40);
 
   const xAcc = xMux + 140;
@@ -2774,7 +2878,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5,
       { short: `P${i}` });
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 30 + i * 4.5,
       { short: `PC${i}` });
   }
@@ -2789,6 +2893,11 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     c.addLamp(`ACC${i}`, accQ[i], xEnd - 5, 126 + i * 4.5,
       { short: `ACC${i}` });
   }
+  c.addLamp('CY', carryQ, xEnd - 5, 148, { short: 'CY' });
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`BANK${i}`, bank.nets[`q${i}`], xEnd - 5, 155 + i * 4.5,
+      { short: `BANK${i}` });
+  }
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3,
@@ -2798,8 +2907,11 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     pcInc: ctrl.nets.pcInc, irLoad: ctrl.nets.irLoad,
     srcHi: ctrl.nets.srcHi, srcLo: ctrl.nets.srcLo,
     accLoad: ctrl.nets.accLoad, accFromMem: ctrl.nets.accFromMem,
+    accFromAlu: ctrl.nets.accFromAlu, aluSub: ctrl.nets.aluSub,
     regWrite: ctrl.nets.regWrite, ramWrite: ctrl.nets.ramWrite,
+    bankLoad: ctrl.nets.bankLoad,
   };
+  c.bankNets = [bank.nets.q0, bank.nets.q1, bank.nets.q2];
   c.program = program;
   c.ramQ = ramQ;
   c.ramSw = ramSw;
@@ -2895,28 +3007,41 @@ export const cmos = {
     // bus would.
     step: (c) => {
       const on = n => VALUE_CHAR[c.value[n]] === '1';
-      const nib = nets => nets.reduce((v, n, i) => v | (on(n) ? 1 << i : 0), 0);
-      if (!c.ram) c.ram = new RamBank();
+      const bits = nets => nets.reduce((v, n, i) => v | (on(n) ? 1 << i : 0), 0);
+      if (!c.ram) { c.ram = new RamBank(); c.romPort = 0; }
 
-      // SRC latches its address in the circuit; the model is told once
-      // the full eight bits are present.
-      const addr = c.srcNets.reduce((v, n, i) => v | (on(n) ? 1 << i : 0), 0);
+      // DCL selects the bank. The model holds one bank, so the selection
+      // is recorded and shown rather than switching arrays — the machine
+      // says which bank it would be talking to, which is the part that is
+      // about the CPU.
+      c.bank = bits(c.bankNets);
+
+      const addr = bits(c.srcNets);
       if (addr !== c.lastSrc) { c.ram.src(addr); c.lastSrc = addr; }
 
-      const acc = nib(c.control ? [0, 1, 2, 3].map(i =>
-        c.lamps.find(l => (l.short ?? l.label) === `ACC${i}`).net) : []);
+      const acc = bits([0, 1, 2, 3].map(i =>
+        c.lamps.find(l => (l.short ?? l.label) === `ACC${i}`).net));
+      const op = c.memOp.findIndex(n => on(n));
 
       if (on(c.control.ramWrite)) {
-        const op = c.memOp.findIndex(n => on(n));
-        if (op === 0) c.ram.writeMain(acc);            // WRM
-        else if (op === 1) c.ram.writePort(acc);       // WMP
-        else if (op >= 4 && op <= 7) c.ram.writeStatus(op - 4, acc); // WR0-3
+        if (op === 0) c.ram.writeMain(acc);                     // WRM
+        else if (op === 1) c.ram.writePort(acc);                // WMP
+        else if (op === 2) c.romPort = acc;                     // WRR
+        else if (op >= 4 && op <= 7) c.ram.writeStatus(op - 4, acc);
       }
-      // what the RAM is putting on the bus, for the accumulator's mux
-      const op = c.memOp.findIndex(n => on(n));
+
+      // What the RAM or a port is putting on the bus. RDR reads the ROM
+      // port — on a real 4001 those four lines can be inputs or outputs,
+      // and the manual says which you get "is a function of the hardware,
+      // not under control of the programmer". Here it reads back what WRR
+      // last wrote, which is the INTELLEC 4 behaviour the manual
+      // describes as a port used for both directions.
       let out = 0;
-      if (op === 9) out = c.ram.readMain() ?? 0;                    // RDM
-      else if (op >= 12) out = c.ram.readStatus(op - 12) ?? 0;      // RD0-3
+      if (op === 9) out = c.ram.readMain() ?? 0;                // RDM
+      else if (op === 10) out = c.romPort;                      // RDR
+      else if (op === 11) out = c.ram.readMain() ?? 0;          // ADM
+      else if (op === 8) out = c.ram.readMain() ?? 0;           // SBM
+      else if (op >= 12) out = c.ram.readStatus(op - 12) ?? 0;  // RD0-3
       c.ramValue = out;
       for (let i = 0; i < 4; i++) c.ramSw[i].on = !!((out >> i) & 1);
     },
