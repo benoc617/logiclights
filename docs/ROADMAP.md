@@ -99,7 +99,7 @@ generated, so this file does not repeat them.
       Two early ones — Accumulator Machine and Jump Machine — were
       retired once later machines demonstrated their ideas better; their
       test coverage moved to the Adding Machine. What remains is
-      instruction-set coverage rather than new structure — twenty-one of
+      instruction-set coverage rather than new structure — twenty-two of
       the 45 defined instructions now act on hardware. See the checklist
       in [4004.md](4004.md), which has the full plan and program corpus
       too.

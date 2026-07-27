@@ -474,6 +474,55 @@ export const TwoPhaseClock = defineModule('phi', {
   },
 });
 
+// The incrementer — a separate block, exactly as the chip has it.
+//
+// Sheet 1 of Intel's schematic is titled "4004 ADDRESS REGISTER,
+// INCREMENTER AND INDEX", and the INCREMENTER is drawn as its own block
+// beside the address register — not as a use of the adder on sheet 3.
+// That is worth following rather than reasoning past: the instinct is to
+// route the index register through the main adder and add 1, but the real
+// chip spends gates on a dedicated incrementer instead, and it is cheaper
+// than it looks.
+//
+// Adding 1 does not need full adders. Each bit is `q XOR carry-in`, and
+// the carry propagates only while the bits below are all 1 — a half-adder
+// chain, with the carry into bit 0 tied high:
+//
+//   s_i    = q_i XOR c_i
+//   c_i+1  = q_i AND c_i        c_0 = 1
+//
+// Four XORs and three ANDs, against four full adders for the general
+// case. The 4004 needed one of these for the program counter and another
+// for the index registers, so the saving was worth a block of its own.
+//
+// `cout` is the carry off the top, which INC and ISZ both ignore — the
+// manual is explicit that neither affects the carry bit. It is exposed
+// because the program counter's incrementer wants it, not because the
+// register path does.
+export const Incrementer4 = defineModule('inc4', {
+  ports: [
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `q${i}`, x: -1.5, y: i * 4, side: 'in',
+    })),
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `s${i}`, x: GATE_W * 10, y: i * 4, side: 'out',
+    })),
+    { name: 'cout', x: GATE_W * 10, y: 20, side: 'out' },
+  ],
+  build(m) {
+    let carry = VDD;                   // +1 enters at the bottom
+    for (let i = 0; i < 4; i++) {
+      const q = m.port(`q${i}`);
+      m.instantiate(Xor2, GATE_W * 4, i * (GATE_H + 2),
+        { a: q, b: carry, y: m.port(`s${i}`) });
+      const next = i === 3 ? m.port('cout') : m.net();
+      m.instantiate(And2, GATE_W * 7, i * (GATE_H + 2),
+        { a: q, b: carry, y: next });
+      carry = next;
+    }
+  },
+});
+
 // DAA — decimal adjust, and the condition that drives it.
 //
 // The 4004 was a calculator chip, so it works in BCD: each nibble holds
@@ -693,6 +742,10 @@ export const ControlUnit4 = defineModule('ctrl4', {
     // register file back into the accumulator. Tie it low and XCH stays
     // the one-way write the earlier machines implement.
     { name: 'opXCHread', x: -1.5, y: 62, side: 'in' },
+    // ISZ: increment a register, then jump if the result is NOT zero.
+    { name: 'opISZ', x: -1.5, y: 66, side: 'in' },
+    // high when the incremented register came out non-zero
+    { name: 'iszTake', x: -1.5, y: 70, side: 'in' },
     { name: 'pcInc', x: 340, y: 0, side: 'out' },
     { name: 'pcLoad', x: 340, y: 6, side: 'out' },
     { name: 'irLoad', x: 340, y: 12, side: 'out' },
@@ -710,6 +763,9 @@ export const ControlUnit4 = defineModule('ctrl4', {
     // High for SUB, feeding SubOperand. ADD and SUB share the adder and
     // differ only in this line.
     { name: 'aluSub', x: 340, y: 48, side: 'out' },
+    // high when the register file's write data should come from the
+    // incrementer rather than from the accumulator
+    { name: 'regFromInc', x: 340, y: 60, side: 'out' },
     { name: 'regWrite', x: 340, y: 54, side: 'out' },
   ],
   build(m) {
@@ -724,12 +780,25 @@ export const ControlUnit4 = defineModule('ctrl4', {
     m.instantiate(And2, 0, GATE_H * 2,
       { a: pF2, b: m.port('twoByte'), y: m.port('oprLoad') });
 
-    // A jump: unconditional, or conditional and true.
-    const jcnTake = m.net(), wantJump = m.net(), jump = m.net();
+    // A jump: unconditional, conditional and true, or an ISZ whose
+    // incremented register came out non-zero.
+    //
+    // ISZ jumping on NOT zero is the way round that surprises people —
+    // "increment and skip if zero" describes the fall-through, not the
+    // jump. The manual states it as the jump: "if the result does not
+    // equal 0000B, the 8 bits specified by ADDR replace the lowest 8 bits
+    // of the program counter."
+    const jcnTake = m.net(), anyTake = m.net(), wantJump = m.net();
+    const jump = m.net();
     m.instantiate(And2, GATE_W * 4, GATE_H * 4,
       { a: m.port('opJCN'), b: m.port('condTake'), y: jcnTake });
+    const iszTake = m.net();
+    m.instantiate(And2, GATE_W * 4, GATE_H * 5,
+      { a: m.port('opISZ'), b: m.port('iszTake'), y: iszTake });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 5,
+      { a: jcnTake, b: iszTake, y: anyTake });
     m.instantiate(Or2, GATE_W * 7, GATE_H * 4,
-      { a: m.port('opJUN'), b: jcnTake, y: wantJump });
+      { a: m.port('opJUN'), b: anyTake, y: wantJump });
     m.instantiate(And2, GATE_W * 10, GATE_H * 4, { a: pE, b: wantJump, y: jump });
     const jn = m.net();
     m.instantiate(Inverter, GATE_W * 13, GATE_H * 4, { a: jump, y: jn });
@@ -810,10 +879,20 @@ export const ControlUnit4 = defineModule('ctrl4', {
     m.instantiate(Inverter, GATE_W * 6, GATE_H * 14,
       { a: sn, y: m.port('aluSub') });
 
-    const rw = m.net();
+    // XCH, INC and ISZ all write a register. INC and ISZ write the
+    // incremented value; XCH writes the accumulator, so regFromInc is
+    // what picks between the two sources.
+    const rw = m.net(), incOrIsz = m.net();
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 16,
+      { a: m.port('opINC'), b: m.port('opISZ'), y: incOrIsz });
     m.instantiate(Or2, GATE_W * 4, GATE_H * 15,
-      { a: m.port('opXCH'), b: m.port('opINC'), y: rw });
+      { a: m.port('opXCH'), b: incOrIsz, y: rw });
     m.instantiate(And2, GATE_W * 8, GATE_H * 15,
       { a: pE, b: rw, y: m.port('regWrite') });
+    const rfi = m.net();
+    m.instantiate(Inverter, GATE_W * 8, GATE_H * 17,
+      { a: incOrIsz, y: rfi });
+    m.instantiate(Inverter, GATE_W * 10, GATE_H * 17,
+      { a: rfi, y: m.port('regFromInc') });
   },
 });

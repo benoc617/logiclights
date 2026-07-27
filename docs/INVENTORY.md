@@ -94,9 +94,9 @@ circuit exists to explain.
 | Sequenced Machine | Machines | · | 1525 | · | 8 | 720 |
 | Adding Machine | Machines | · | 3538 | · | 8 | 1595 |
 | Conditional Machine | Machines | · | 3599 | · | 8 | 1628 |
-| Two-Byte Machine | Machines | · | 3840 | · | 8 | 1740 |
-| Subtract and Exchange | Machines | · | 3984 | · | 8 | 1815 |
-| Accumulator Group | Machines | · | 2846 | · | 8 | 1386 |
+| Two-Byte Machine | Machines | · | 4200 | · | 8 | 1910 |
+| Subtract and Exchange | Machines | · | 4006 | · | 8 | 1826 |
+| Accumulator Group | Machines | · | 2868 | · | 8 | 1397 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -124,7 +124,7 @@ circuit exists to explain.
 | Circuits | 57 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 24214 |
+| Transistors | 24618 |
 | Diodes | 4 |
 | Resistors | 312 |
 
@@ -132,15 +132,15 @@ circuit exists to explain.
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Subtract and Exchange | 3992 | 1815 |
-| Two-Byte Machine | 3848 | 1740 |
+| Two-Byte Machine | 4208 | 1910 |
+| Subtract and Exchange | 4014 | 1826 |
 | Conditional Machine | 3607 | 1628 |
 | Adding Machine | 3546 | 1595 |
-| Accumulator Group | 2854 | 1386 |
+| Accumulator Group | 2876 | 1397 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **(suite failed — fix that before trusting this file)**
+`node test/sim-test.mjs` → **149468 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

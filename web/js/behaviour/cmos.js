@@ -16,7 +16,7 @@ import { InstructionDecoder, OPR_NAMES, disassemble } from '../decode.js';
 import {
   ringCounter, ControlUnit, ControlUnit4, ConditionTree, IsZero4,
   AccOperand, CarryLogic, SubOperand, TwoPhaseClock,
-  DecimalAdjust, KeyboardProcess,
+  DecimalAdjust, KeyboardProcess, Incrementer4,
   PHASES, PHASES4,
 } from '../sequencer.js';
 import { buildRom8 } from './rom-circuit.js';
@@ -1275,13 +1275,13 @@ export function buildJcnMachine(program = P3_PROGRAM) {
 // an interrupt — and it is only demonstrable once a condition mask stops
 // doubling as a jump address.
 const P4_PROGRAM = [
-  0xDF,   // 0  LDM 15     ACC = 15 (= -1)
-  0xB0,   // 1  XCH r0     r0 = 15
-  0xD4,   // 2  LDM 4      the countdown
-  0x80,   // 3  ADD r0     ACC -= 1        ← loop body
-  0x1D,   // 4  JCN 13 ─┐  loop while not zero *and* TEST is high…
-  0x03,   // 5     to 3 ─┘  …to address 3, in its own byte
-  0x40,   // 6  JUN ────┐   done: start over
+  0xDD,   // 0  LDM 13     the loop count, as a negative
+  0xB0,   // 1  XCH r0     r0 = 13
+  0x70,   // 2  ISZ r0 ─┐  increment r0; jump while it is NOT zero…
+  0x02,   // 3     to 2 ─┘  …back to itself, so this is the whole loop
+  0x1D,   // 4  JCN 13 ─┐  and once r0 wraps, loop again while TEST is high
+  0x00,   // 5     to 0 ─┘
+  0x40,   // 6  JUN ────┐   TEST low: start over anyway
   0x00,   // 7     to 0 ─┘
 ];
 
@@ -1355,6 +1355,9 @@ function buildTwoByteMachine() {
   const pcLoadLine = c.net();
   const pcEnable = c.net();
   const jumpTarget = [c.net(), c.net(), c.net()];
+  // Driven by the incrementer's zero-detect far below; declared here
+  // because the control unit is built first and nets are only wiring.
+  const iszTake = c.net();
   const PC = instantiate(c, programCounter(3), 40, ROW2, {
     clk: clkNet, nclk, en: pcEnable, rst, load: pcLoadLine,
     a0: jumpTarget[0], a1: jumpTarget[1], a2: jumpTarget[2],
@@ -1412,6 +1415,7 @@ function buildTwoByteMachine() {
     // file back to the accumulator — so XCH stays a one-way write. Tied
     // low deliberately rather than left floating.
     accGroup: VSS, opSUB: VSS, opLD: VSS, opXCHread: VSS,
+    opISZ: dec.nets.op7, iszTake,
   }, { tag: 'ctrl' });
   c.region('Control unit — four phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -1452,14 +1456,89 @@ function buildTwoByteMachine() {
       { a: t, y: jumpTarget[i] }, { tag: `jt${i}` });
   }
 
+  // The register file's write data is a two-way choice: the accumulator
+  // for XCH, or the incremented register for INC and ISZ. Declared here
+  // and driven below, because the incrementer reads the file's own output.
+  const regD = [c.net(), c.net(), c.net(), c.net()];
+
   const xRf = 260;
+  const regWriteGated = c.net();
+  instantiate(c, And2, xRf, ROW3 - 40,
+    { a: ctrl.nets.regWrite, b: nclk, y: regWriteGated }, { tag: 'wegate' });
+
   const rf = instantiate(c, RegFile16x4, xRf, ROW3, {
     wa0: ir[0], wa1: ir[1], wa2: ir[2], wa3: ir[3],
     ra0: ir[0], ra1: ir[1], ra2: ir[2], ra3: ir[3],
-    d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
-    we: ctrl.nets.regWrite,
+    d0: regD[0], d1: regD[1], d2: regD[2], d3: regD[3],
+    // Gated by the clock's low half, so the read the incrementer depends
+    // on happens before the write lands — the same φ2 discipline XCH
+    // needs, and for the same reason: this file reads and writes one row
+    // in a single instruction.
+    we: regWriteGated,
   }, { tag: 'rf' });
   c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+
+  // The incrementer: its own block, as on the chip. Sheet 1 of Intel's
+  // schematic is titled "ADDRESS REGISTER, INCREMENTER AND INDEX" and
+  // draws it separately from the adder — adding 1 is a half-adder chain,
+  // much cheaper than routing through the full adder.
+  //
+  // It reads a *latched* copy of the register, not the file's live read
+  // bus, and that is not a detail. The register file's cells are
+  // transparent while written, so wiring the incrementer straight to the
+  // read bus closes a combinational loop: read → increment → write →
+  // read. It does not increment once, it free-runs until the latch shuts,
+  // landing on whatever value it happened to reach. The symptom is a
+  // register that advances by an irregular amount each instruction —
+  // 13, 2, 11, 3, 9 — which reads like a decode bug and is a topology one.
+  //
+  // The same φ1/φ2 discipline that makes XCH a real exchange fixes it:
+  // capture the register on the clock's high half, increment the capture,
+  // write the result back on the low half. The chip's address register
+  // plays exactly this role for the program counter's incrementer.
+  const xInc = xRf + 40;
+  const incHold = instantiate(c, register(4), xInc, ROW3 - 300, {
+    clk: nclk, nclk: clkNet, load: VDD,
+    d0: rf.nets.q0, d1: rf.nets.q1, d2: rf.nets.q2, d3: rf.nets.q3,
+  }, { tag: 'ihold' });
+  c.region('Increment hold — breaks the read/write loop',
+    xInc - 6, ROW3 - 306, xInc + 140, ROW3 - 220);
+
+  const inc = instantiate(c, Incrementer4, xInc, ROW3 - 210, {
+    q0: incHold.nets.q0, q1: incHold.nets.q1,
+    q2: incHold.nets.q2, q3: incHold.nets.q3,
+  }, { tag: 'inc' });
+  c.region('Incrementer — INC and ISZ, a half-adder chain',
+    xInc - 6, ROW3 - 216, xInc + inc.w + 10, ROW3 - 210 + inc.h + 10);
+
+  // Write-data mux: incremented register, or the accumulator.
+  for (let i = 0; i < 4; i++) {
+    const fi = c.net(), fa = c.net(), nsel = c.net();
+    instantiate(c, Inverter, xInc + 120, ROW3 - 200 + i * 30,
+      { a: ctrl.nets.regFromInc, y: nsel }, { tag: `rdn${i}` });
+    instantiate(c, And2, xInc + 145, ROW3 - 200 + i * 30,
+      { a: inc.nets[`s${i}`], b: ctrl.nets.regFromInc, y: fi },
+      { tag: `rdi${i}` });
+    instantiate(c, And2, xInc + 145, ROW3 - 188 + i * 30,
+      { a: accQ[i], b: nsel, y: fa }, { tag: `rda${i}` });
+    instantiate(c, Or2, xInc + 175, ROW3 - 200 + i * 30,
+      { a: fi, b: fa, y: regD[i] }, { tag: `rdo${i}` });
+  }
+  c.region('Register write mux — incremented value, or the accumulator',
+    xInc + 114, ROW3 - 206, xInc + 215, ROW3 - 200 + 4 * 30);
+
+  // ISZ jumps when the incremented value is NOT zero — the name describes
+  // the fall-through, not the branch. Zero-detect on the incrementer's
+  // output, inverted.
+  const incZero = c.net();
+  instantiate(c, IsZero4, xInc + 240, ROW3 - 200, {
+    a0: inc.nets.s0, a1: inc.nets.s1, a2: inc.nets.s2, a3: inc.nets.s3,
+    z: incZero,
+  }, { tag: 'incz' });
+  instantiate(c, Inverter, xInc + 330, ROW3 - 200,
+    { a: incZero, y: iszTake }, { tag: 'iszt' });
+  c.region('ISZ condition — jump while the register is not yet zero',
+    xInc + 234, ROW3 - 206, xInc + 350, ROW3 - 150);
 
   const xAdd = xRf + rf.w + 50;
   const adder = instantiate(c, rippleAdder(4), xAdd, ROW3, {
@@ -1541,6 +1620,7 @@ function buildTwoByteMachine() {
   c.addLamp('ZERO', accZero, xEnd - 5, 126, { short: 'Z' });
   c.addLamp('TAKE', condTake, xEnd - 5, 131, { short: 'TK' });
 
+  c.cells = rf.stored;
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3];
   c.control = {
@@ -1731,7 +1811,7 @@ function buildAccGroupMachine() {
     // line — the failure that bit twice before, so every port is bound
     // deliberately even when the answer is "never".
     opJUN: VSS, opJCN: VSS, opADD: VSS, opXCH: VSS, opINC: VSS,
-    opSUB: VSS, opLD: VSS, opXCHread: VSS,
+    opSUB: VSS, opLD: VSS, opXCHread: VSS, opISZ: VSS, iszTake: VSS,
     opLDM: dec.nets.op13,
     condTake: VSS, accGroup,
   }, { tag: 'ctrl' });
@@ -2118,7 +2198,11 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     pFetch: ring.nets.p0, pDecode: ring.nets.p1,
     pFetch2: ring.nets.p2, pExec: ring.nets.p3,
     twoByte: dec.nets.twoByte,
+    // No jumps, no INC and no ISZ in this machine's program — tied low
+    // deliberately rather than left floating, since an unbound control
+    // port reads Z and can fire a control line.
     opJUN: VSS, opJCN: VSS, opINC: VSS, condTake: VSS,
+    opISZ: VSS, iszTake: VSS,
     opLDM: dec.nets.op13, opADD: dec.nets.op8,
     opSUB: dec.nets.op9, opLD: dec.nets.op10, opXCH: dec.nets.op11,
     // This machine reads the register file on the clock's high half and

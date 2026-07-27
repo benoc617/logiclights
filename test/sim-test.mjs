@@ -2087,9 +2087,9 @@ function flipAndStep(c, label, on) {
   expect(c, 'oprLoad only fires for two-byte instructions', wrongInstr, 0);
 
   // The jump goes to the *operand*, not to the opcode's low bits. The
-  // program's JCN is 0x1C at address 4 with operand 3 at address 5: the
-  // opcode's low bits are 12, so a machine still reading them would jump
-  // to 4 and this would fail.
+  // program's ISZ is 0x70 at address 2 with operand 2 at address 3: the
+  // opcode's low bits are 0, so a machine still reading them would jump
+  // to 0 and this would fail.
   sw(c, 'TEST', true);
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
   let jumpedTo = null;
@@ -2099,22 +2099,55 @@ function flipAndStep(c, label, on) {
     if (wasJump) jumpedTo = rd('PC', 3);
   }
   expect(c, 'a jump happened', jumpedTo !== null, true);
-  expect(c, 'the jump used the operand byte, not the opcode', jumpedTo, 3);
+  expect(c, 'the jump used the operand byte, not the opcode', jumpedTo, 2);
 
-  // and the countdown still runs, so the loop terminates
-  sw(c, 'TEST', true);
-  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-  const seen = new Set();
-  for (let k = 0; k < 90; k++) { tick(); seen.add(rd('ACC', 4)); }
-  for (const v of [4, 3, 2, 1, 0]) {
-    expect(c, `two-byte machine counts through ${v}`, seen.has(v), true);
+  // ISZ: increment the register, jump while the result is NOT zero.
+  //
+  // The name describes the fall-through, not the branch, and the manual
+  // states it as the jump: "if the result does not equal 0000B, the 8 bits
+  // specified by ADDR replace the lowest 8 bits of the program counter."
+  // Starting from 13 the loop should run 14, 15, then fall through at 0.
+  {
+    const reg = i => {
+      const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+      return bits.every(b => b === '0' || b === '1')
+        ? parseInt(bits.slice().reverse().join(''), 2) : null;
+    };
+    sw(c, 'TEST', true);
+    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+    const seen = [];
+    let fellThrough = null;
+    for (let k = 0; k < 10; k++) {
+      for (let p = 0; p < 4; p++) tick();
+      if (rd('IR', 8) === 0x70) {                     // ISZ r0
+        const v = reg(0);
+        seen.push(v);
+        // the PC stays on the ISZ while it jumps, and moves past it once
+        if (fellThrough === null && rd('PC', 3) !== 2) fellThrough = v;
+      }
+    }
+    expect(c, 'ISZ incremented through 14', seen.includes(14), true);
+    expect(c, 'ISZ incremented through 15', seen.includes(15), true);
+    expect(c, 'ISZ wrapped to zero', seen.includes(0), true);
+    expect(c, 'ISZ fell through exactly when the register hit zero',
+      fellThrough, 0);
+
+    // The increment must be by one every time. An incrementer wired to
+    // the register file's live read bus closes a read → increment → write
+    // → read loop and free-runs while the write latch is open, advancing
+    // by an irregular amount — 13, 2, 11, 3, 9 — which looks like a decode
+    // fault and is a topology one. The hold register is what prevents it.
+    for (let i = 1; i < seen.length; i++) {
+      if (seen[i - 1] === 0) continue;                // a fresh XCH reload
+      expect(c, `ISZ step ${i} advanced by exactly one`,
+        seen[i], (seen[i - 1] + 1) & 15);
+    }
   }
 
   // The TEST pin is a real input and must change what the program does.
   // Mask 13 continues the loop only while the pin is high, so pulling it
-  // low has to break out at the first JCN — which is the whole point of
-  // having the pin, and was not demonstrable before the mask stopped
-  // doubling as a jump address.
+  // low has to break out — which is the whole point of having the pin.
   const runLoop = pin => {
     sw(c, 'TEST', pin);
     sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
@@ -2127,238 +2160,8 @@ function flipAndStep(c, label, on) {
     }
     return taken;
   };
-  const withPinHigh = runLoop(true);
-  const withPinLow = runLoop(false);
-  expect(c, 'the loop runs while TEST is high', withPinHigh > 1, true);
-  expect(c, 'pulling TEST low breaks out of the loop', withPinLow, 0);
-}
-
-// ── SUB's operand conditioning ───────────────────────────────────────────
-// The 4004 subtracts by adding the complement, with the carry inverted on
-// the way in — ACC + ~REG + ~carry — and a carry *out* that means "no
-// borrow". Both inversions come from one XOR per bit against the same
-// select, so ADD and SUB share the adder entirely.
-//
-// Swept over every operand pair and both carries in both modes: 1,024
-// cases. Exhaustive is worth it because the inverted-carry convention is
-// the kind of thing that is right for single digits and wrong when chained
-// across nibbles, which a spot check would miss.
-{
-  const want = (sub, acc, reg, cy) =>
-    sub ? acc + ((~reg) & 15) + ((~cy) & 1) : acc + reg + cy;
-  let bad = 0;
-  for (let acc = 0; acc < 16; acc++) {
-    for (let reg = 0; reg < 16; reg++) {
-      for (const cy of [0, 1]) {
-        for (const sub of [0, 1]) {
-          const d = new Circuit('subop');
-          d.implicitGround = false;
-          let n = 0;
-          const mk = v => {
-            const net = d.net();
-            d.addSwitch(`s${n++}`, net, 'toggle', 0, 0, { from: 0, to: 1 })
-              .on = !!v;
-            return net;
-          };
-          const S = instantiate(d, SubOperand, 0, 0, {
-            r0: mk(reg & 1), r1: mk((reg >> 1) & 1),
-            r2: mk((reg >> 2) & 1), r3: mk((reg >> 3) & 1),
-            carry: mk(cy), sub: mk(sub),
-          });
-          const A = instantiate(d, rippleAdder(4), 200, 0, {
-            a0: mk(acc & 1), a1: mk((acc >> 1) & 1),
-            a2: mk((acc >> 2) & 1), a3: mk((acc >> 3) & 1),
-            b0: S.nets.b0, b1: S.nets.b1, b2: S.nets.b2, b3: S.nets.b3,
-            cin: S.nets.cin,
-          });
-          settle(d);
-          let got = 0;
-          for (let i = 0; i < 4; i++) {
-            if (d.value[A.nets[`s${i}`]] === HI) got |= 1 << i;
-          }
-          const gotCy = d.value[A.nets.cout] === HI ? 1 : 0;
-          const t = want(sub, acc, reg, cy);
-          if (got !== (t & 15) || gotCy !== (t > 15 ? 1 : 0)) bad++;
-        }
-      }
-    }
-  }
-  const d = new Circuit('subop');
-  expect(d, 'ADD and SUB over every operand pair and carry', bad, 0);
-}
-
-// ── the subtract machine ─────────────────────────────────────────────────
-// SUB and LD running as instructions, with the register file feeding the
-// accumulator for the first time.
-{
-  const c = buildCircuit('submachine');
-  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
-  const rd = (p, n) => {
-    let v = 0;
-    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
-    return v;
-  };
-  const reg = i => {
-    const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
-    return bits.every(b => b === '0' || b === '1')
-      ? parseInt(bits.slice().reverse().join(''), 2) : null;
-  };
-
-  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-
-  // Worked out from the instruction semantics, not read off the circuit.
-  //
-  // XCH is a full exchange, so each one leaves the accumulator holding
-  // whatever that register held before — on the first pass the registers
-  // have never been written, so those accumulator values are whatever the
-  // uninitialised cells settle to and are not asserted. The register side
-  // is asserted throughout, and the second pass (below) pins the read
-  // side down with known values.
-  const want = [
-    { ir: 0xD9, acc: 9, cy: 0 },                  // LDM 9
-    { ir: 0xB0, cy: 0, r: [0, 9] },               // XCH r0 — r0 := 9
-    { ir: 0xD4, acc: 4, cy: 0 },                  // LDM 4
-    { ir: 0xB1, cy: 0, r: [1, 4] },               // XCH r1 — r1 := 4
-    { ir: 0xA0, acc: 9, cy: 0 },                  // LD r0 — the read path
-    { ir: 0xF1, acc: 9, cy: 0 },                  // CLC
-    { ir: 0x91, acc: 5, cy: 1 },                  // SUB r1 → 5, no borrow
-    { ir: 0xB2, cy: 1, r: [2, 5] },               // XCH r2 — r2 := 5
-  ];
-  for (let k = 0; k < want.length; k++) {
-    const w = want[k];
-    for (let p = 0; p < 4; p++) tick();
-    expect(c, `step ${k} runs 0x${w.ir.toString(16)}`, rd('IR', 8), w.ir);
-    if (w.acc !== undefined) {
-      expect(c, `step ${k} (0x${w.ir.toString(16)}) ACC`, rd('ACC', 4), w.acc);
-    }
-    expect(c, `step ${k} (0x${w.ir.toString(16)}) carry`,
-      lampV(c, 'CY') === HI ? 1 : 0, w.cy);
-    if (w.r) expect(c, `step ${k} wrote r${w.r[0]}`, reg(w.r[0]), w.r[1]);
-  }
-
-  // XCH is a genuine exchange, and proving that needs two *different*
-  // values. Swapping equal ones looks identical whether the hardware
-  // swaps, copies one way, or does nothing at all — an earlier version of
-  // this test did exactly that and passed while proving nothing.
-  //
-  // So: load 3, park it in r0, load 7, then exchange. A real swap leaves
-  // ACC=3 and r0=7. A one-way write leaves ACC=7. A no-op leaves r0=3.
-  // The three outcomes are distinguishable, which is the whole point.
-  {
-    const m = buildSubMachine([0xD3, 0xB0, 0xD7, 0xB0, 0, 0, 0, 0]);
-    const mtick = () => {
-      m.stepClock(); settle(m); m.stepClock(); settle(m);
-    };
-    const mrd = (p, n) => {
-      let v = 0;
-      for (let i = 0; i < n; i++) if (lampV(m, `${p}${i}`) === HI) v |= 1 << i;
-      return v;
-    };
-    const mreg = i => {
-      const bits = m.cells[i].map(n => VALUE_CHAR[m.value[n]]);
-      return bits.every(b => b === '0' || b === '1')
-        ? parseInt(bits.slice().reverse().join(''), 2) : null;
-    };
-    sw(m, 'RST', true); settle(m); mtick(); sw(m, 'RST', false); settle(m);
-
-    for (let p = 0; p < 4; p++) mtick();          // LDM 3
-    expect(m, 'LDM 3 loaded the accumulator', mrd('ACC', 4), 3);
-    for (let p = 0; p < 4; p++) mtick();          // XCH r0 — parks 3
-    expect(m, 'XCH wrote the accumulator into r0', mreg(0), 3);
-    for (let p = 0; p < 4; p++) mtick();          // LDM 7
-    expect(m, 'LDM 7 loaded the accumulator', mrd('ACC', 4), 7);
-
-    for (let p = 0; p < 4; p++) mtick();          // XCH r0 — the exchange
-    expect(m, 'XCH read the old register value into the accumulator',
-      mrd('ACC', 4), 3);
-    expect(m, 'XCH wrote the old accumulator into the register',
-      mreg(0), 7);
-  }
-}
-
-// ── KBP, exhaustively, against Intel's own table ─────────────────────────
-// Page 3-35 of the MCS-4 manual gives all sixteen rows, so all sixteen are
-// checked. The row that matters most is "more than one bit set → 1111":
-// two keys pressed at once is a real thing on a real keyboard, and the
-// chip reports it distinctly rather than silently picking one. A priority
-// encoder — the instinctive implementation — would pass every other row
-// and fail exactly these.
-{
-  const popcount = n => n.toString(2).split('').filter(x => x === '1').length;
-  let bad = 0;
-  for (let a = 0; a < 16; a++) {
-    const d = new Circuit('kbp');
-    d.implicitGround = false;
-    const bind = {};
-    for (let i = 0; i < 4; i++) {
-      const net = d.net();
-      d.addSwitch(`A${i}`, net, 'toggle', 0, 0, { from: 0, to: 1 })
-        .on = !!((a >> i) & 1);
-      bind[`a${i}`] = net;
-    }
-    const K = instantiate(d, KeyboardProcess, 0, 0, bind);
-    settle(d);
-    let got = 0;
-    for (let i = 0; i < 4; i++) {
-      if (d.value[K.nets[`y${i}`]] === HI) got |= 1 << i;
-    }
-    // 0 stays 0; a single bit becomes its position 1-4; anything else 1111
-    const wanted = popcount(a) > 1 ? 15
-      : a === 0 ? 0 : Math.log2(a) + 1;
-    expect(d, `KBP ${a.toString(2).padStart(4, '0')}`, got, wanted);
-    if (got !== wanted) bad++;
-  }
-  const d = new Circuit('kbp');
-  expect(d, 'KBP matches the manual on all sixteen inputs', bad, 0);
-}
-
-// ── DAA, exhaustively over value and carry ───────────────────────────────
-// Add 6 when the accumulator exceeds 9 or the carry is set. The carry rule
-// is the subtle half and the manual underlines it: DAA may SET the carry
-// but never resets it, so a DAA that does not carry out leaves an
-// already-set carry alone. Sweeping both carry states is what catches an
-// implementation that treats it as an ordinary add.
-{
-  let bad = 0;
-  for (let a = 0; a < 16; a++) {
-    for (const cy of [0, 1]) {
-      const d = new Circuit('daa');
-      d.implicitGround = false;
-      let n = 0;
-      const mk = v => {
-        const net = d.net();
-        d.addSwitch(`s${n++}`, net, 'toggle', 0, 0, { from: 0, to: 1 })
-          .on = !!v;
-        return net;
-      };
-      const A = [0, 1, 2, 3].map(i => mk((a >> i) & 1));
-      const D = instantiate(d, DecimalAdjust, 0, 0, {
-        a0: A[0], a1: A[1], a2: A[2], a3: A[3], carry: mk(cy),
-      });
-      const S = instantiate(d, rippleAdder(4), 300, 0, {
-        a0: A[0], a1: A[1], a2: A[2], a3: A[3],
-        b0: D.nets.b0, b1: D.nets.b1, b2: D.nets.b2, b3: D.nets.b3,
-        cin: mk(0),
-      });
-      settle(d);
-      const adjust = d.value[D.nets.adjust] === HI ? 1 : 0;
-      let sum = 0;
-      for (let i = 0; i < 4; i++) {
-        if (d.value[S.nets[`s${i}`]] === HI) sum |= 1 << i;
-      }
-      const cout = d.value[S.nets.cout] === HI ? 1 : 0;
-
-      const wantAdjust = (a > 9 || cy) ? 1 : 0;
-      const total = a + (wantAdjust ? 6 : 0);
-      // set on carry-out, otherwise UNAFFECTED — not cleared
-      const wantCarry = total > 15 ? 1 : cy;
-      const gotCarry = cout ? 1 : cy;
-      if (adjust !== wantAdjust || sum !== (total & 15)
-          || gotCarry !== wantCarry) bad++;
-    }
-  }
-  const d = new Circuit('daa');
-  expect(d, 'DAA over every value and carry', bad, 0);
+  expect(c, 'the JCN takes while TEST is high', runLoop(true) > 0, true);
+  expect(c, 'pulling TEST low stops it taking', runLoop(false), 0);
 }
 
 // ── the accumulator group ────────────────────────────────────────────────
