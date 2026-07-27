@@ -92,11 +92,13 @@ generated, so this file does not repeat them.
       the JCN condition tree. Three-phase and four-phase variants; the
       four-phase one honours two-byte instructions.
 - [ ] **Intel 4004** — in progress, and the bring-up ladder is complete.
-      Six machines exist, each isolating one idea: fetch, phase
+      Eight machines exist, each isolating one idea: fetch, phase
       sequencing, an accumulator, a loadable PC, the real ADD datapath,
-      conditional jumps, and two-byte fetch. What remains is instruction-set
-      coverage rather than new structure — see the checklist in
-      [4004.md](4004.md). Full plan and program corpus there too.
+      conditional jumps, two-byte fetch, and the accumulator group. What
+      remains is instruction-set coverage rather than new structure —
+      fifteen of the 45 defined instructions now act on hardware. See the
+      checklist in [4004.md](4004.md), which has the full plan and program
+      corpus too.
 
 ## Engineering to unblock the big machines
 

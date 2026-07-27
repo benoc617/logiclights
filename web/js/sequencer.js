@@ -298,6 +298,121 @@ export const IsZero4 = defineModule('zero4', {
   },
 });
 
+// The accumulator group's operand generator.
+//
+// Thirteen instructions share opcode 1111 and all of them do the same
+// shape of thing: take the accumulator and the carry, produce a new
+// accumulator and a new carry. The trick the 4004 uses — and the reason
+// this costs so few gates — is that most of them are *the adder it
+// already has*, fed a different second operand:
+//
+//   IAC   ACC + 1        second operand 0001, carry in 0
+//   DAC   ACC + 15       second operand 1111 — subtracting one, because
+//                        at four bits 15 is −1 and there is no borrow
+//                        network to build
+//   TCS   ACC + 9/10     the decimal-adjust helper; still just an add
+//   CLB   ACC + 0 with the accumulator forced to zero
+//
+// So this block does not compute anything. It *selects a second operand*
+// and lets the existing ripple adder do the arithmetic, which is exactly
+// the economy that let Intel fit a CPU in 2,300 transistors. The three
+// instructions that are not adds — CMA, RAL, RAR — are pure wiring:
+// complement is four inverters, and a rotate is a renaming of wires with
+// the carry spliced into one end.
+//
+//   b3 b2 b1 b0   is the operand this emits
+//   cin           is the carry to feed the adder
+//
+// KBP and DAA are deliberately absent, and the omission is worth naming:
+// KBP is a 4-to-1 keyboard-process lookup and DAA is a conditional
+// decimal correction. Both are small tables rather than adder steering,
+// so they belong in their own block rather than bent into this one.
+export const AccOperand = defineModule('accop', {
+  ports: [
+    { name: 'opIAC', x: -1.5, y: 0, side: 'in' },
+    { name: 'opDAC', x: -1.5, y: 4, side: 'in' },
+    { name: 'opTCS', x: -1.5, y: 8, side: 'in' },
+    { name: 'b0', x: GATE_W * 14, y: 0, side: 'out' },
+    { name: 'b1', x: GATE_W * 14, y: 4, side: 'out' },
+    { name: 'b2', x: GATE_W * 14, y: 8, side: 'out' },
+    { name: 'b3', x: GATE_W * 14, y: 12, side: 'out' },
+  ],
+  build(m) {
+    const iac = m.port('opIAC'), dac = m.port('opDAC'), tcs = m.port('opTCS');
+
+    // bit 0 is set for IAC (0001) and DAC (1111). TCS emits 1001 or 1010
+    // depending on the carry; this build takes the carry-clear case, 1001,
+    // and the machine that needs the other half will gate it — noted
+    // rather than silently wrong.
+    const o0 = m.net();
+    m.instantiate(Or2, 0, 0, { a: iac, b: dac, y: o0 });
+    m.instantiate(Or2, GATE_W * 3, 0, { a: o0, b: tcs, y: m.port('b0') });
+
+    // bits 1 and 2 are set only for DAC's 1111
+    const t1 = m.net(), t2 = m.net();
+    m.instantiate(Inverter, GATE_W * 6, GATE_H, { a: dac, y: t1 });
+    m.instantiate(Inverter, GATE_W * 8, GATE_H, { a: t1, y: m.port('b1') });
+    m.instantiate(Inverter, GATE_W * 6, GATE_H * 2, { a: dac, y: t2 });
+    m.instantiate(Inverter, GATE_W * 8, GATE_H * 2, { a: t2, y: m.port('b2') });
+
+    // bit 3 for DAC (1111) and TCS (1001)
+    m.instantiate(Or2, GATE_W * 6, GATE_H * 3,
+      { a: dac, b: tcs, y: m.port('b3') });
+  },
+});
+
+// The carry flag's next value.
+//
+// Four instructions write the carry directly and one writes it as a side
+// effect, and they are worth separating from the accumulator because the
+// carry is a *one-bit register with its own instruction set* — which is
+// how the 4004 treats it and why it has four opcodes of its own.
+//
+//   CLC   carry = 0
+//   STC   carry = 1
+//   CMC   carry = NOT carry
+//   TCC   carry = 0, and the old carry goes *into* the accumulator
+//   ADD and the arithmetic group   carry = the adder's carry out
+//
+// `sel` is high when any of these owns the carry; otherwise the adder
+// does. Keeping that as one line means the machine has a single place
+// where the carry's source is decided, rather than a priority muddle
+// spread across the datapath.
+export const CarryLogic = defineModule('carry', {
+  ports: [
+    { name: 'carry', x: -1.5, y: 0, side: 'in' },
+    { name: 'opCLC', x: -1.5, y: 4, side: 'in' },
+    { name: 'opSTC', x: -1.5, y: 8, side: 'in' },
+    { name: 'opCMC', x: -1.5, y: 12, side: 'in' },
+    { name: 'opTCC', x: -1.5, y: 16, side: 'in' },
+    { name: 'd', x: GATE_W * 16, y: 0, side: 'out' },
+    // high when this block owns the carry rather than the adder
+    { name: 'sel', x: GATE_W * 16, y: 8, side: 'out' },
+  ],
+  build(m) {
+    const carry = m.port('carry');
+
+    // CMC contributes the complement of the current carry; STC
+    // contributes a plain 1. CLC and TCC contribute nothing, which *is*
+    // their effect — they select this block and drive zero.
+    const ncarry = m.net(), fromCmc = m.net();
+    m.instantiate(Inverter, 0, 0, { a: carry, y: ncarry });
+    m.instantiate(And2, GATE_W * 3, 0,
+      { a: m.port('opCMC'), b: ncarry, y: fromCmc });
+    m.instantiate(Or2, GATE_W * 6, 0,
+      { a: fromCmc, b: m.port('opSTC'), y: m.port('d') });
+
+    // sel = CLC | STC | CMC | TCC
+    const s1 = m.net(), s2 = m.net();
+    m.instantiate(Or2, GATE_W * 3, GATE_H * 2,
+      { a: m.port('opCLC'), b: m.port('opSTC'), y: s1 });
+    m.instantiate(Or2, GATE_W * 3, GATE_H * 3,
+      { a: m.port('opCMC'), b: m.port('opTCC'), y: s2 });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 2,
+      { a: s1, b: s2, y: m.port('sel') });
+  },
+});
+
 // A control unit for the four-phase cycle, with two-byte fetch.
 //
 // The difference from the three-phase one is `oprLoad`: during FETCH2 a
@@ -321,13 +436,24 @@ export const ControlUnit4 = defineModule('ctrl4', {
     { name: 'opXCH', x: -1.5, y: 38, side: 'in' },
     { name: 'opINC', x: -1.5, y: 42, side: 'in' },
     { name: 'condTake', x: -1.5, y: 46, side: 'in' },
+    // High when this instruction is one of the accumulator group that
+    // writes the accumulator — the 1111 escape decoded a second time. The
+    // control unit does not care *which* of them it is; that is the
+    // datapath's business. It only needs to know the accumulator is being
+    // written, which is one line rather than thirteen.
+    { name: 'accGroup', x: -1.5, y: 50, side: 'in' },
     { name: 'pcInc', x: 340, y: 0, side: 'out' },
     { name: 'pcLoad', x: 340, y: 6, side: 'out' },
     { name: 'irLoad', x: 340, y: 12, side: 'out' },
     { name: 'oprLoad', x: 340, y: 18, side: 'out' },
     { name: 'accLoad', x: 340, y: 24, side: 'out' },
     { name: 'accFromAlu', x: 340, y: 30, side: 'out' },
-    { name: 'regWrite', x: 340, y: 36, side: 'out' },
+    // High when the accumulator should take the instruction's immediate.
+    // Previously this was "not accFromAlu" and could stay implicit, because
+    // there were only two sources. With five, the immediate needs to say
+    // so itself rather than being the default nobody selected.
+    { name: 'accFromImm', x: 340, y: 36, side: 'out' },
+    { name: 'regWrite', x: 340, y: 42, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pF2 = m.port('pFetch2'), pE = m.port('pExec');
@@ -364,14 +490,19 @@ export const ControlUnit4 = defineModule('ctrl4', {
     m.instantiate(And2, GATE_W * 13, GATE_H * 6,
       { a: anyInc, b: njump, y: m.port('pcInc') });
 
-    // LDM and ADD both write the accumulator; accFromAlu picks the source
-    const wantAcc = m.net();
+    // LDM, ADD and the accumulator group all write the accumulator;
+    // accFromAlu and accFromImm pick the source between them.
+    const wantAcc = m.net(), wantAcc2 = m.net();
     m.instantiate(Or2, GATE_W * 4, GATE_H * 8,
       { a: m.port('opLDM'), b: m.port('opADD'), y: wantAcc });
+    m.instantiate(Or2, GATE_W * 6, GATE_H * 8,
+      { a: wantAcc, b: m.port('accGroup'), y: wantAcc2 });
     m.instantiate(And2, GATE_W * 8, GATE_H * 8,
-      { a: pE, b: wantAcc, y: m.port('accLoad') });
+      { a: pE, b: wantAcc2, y: m.port('accLoad') });
     m.instantiate(And2, GATE_W * 4, GATE_H * 9,
       { a: pE, b: m.port('opADD'), y: m.port('accFromAlu') });
+    m.instantiate(And2, GATE_W * 4, GATE_H * 10,
+      { a: pE, b: m.port('opLDM'), y: m.port('accFromImm') });
 
     const rw = m.net();
     m.instantiate(Or2, GATE_W * 4, GATE_H * 10,

@@ -1366,6 +1366,23 @@ function flipAndStep(c, label, on) {
     expect(d, `0x${byte.toString(16)} decodes to OPR ${op}`, which, op);
     expect(d, `0x${byte.toString(16)} twoByte`,
       d.value[D.nets.twoByte] === HI, twoByteWant(op, opa));
+
+    // The accumulator-group second decode: exactly one acc line for an
+    // instruction in the 1111 escape, and none at all otherwise. The
+    // "none at all" half is the one that matters — an acc line leaking
+    // high on an ordinary opcode would fire the accumulator during an
+    // unrelated instruction, which is precisely the bug that floating
+    // control ports caused twice before.
+    let accHot = 0, accWhich = -1;
+    for (let i = 0; i < 16; i++) {
+      if (d.value[D.nets[`acc${i}`]] === HI) { accHot++; accWhich = i; }
+    }
+    if (op === 15) {
+      expect(d, `0x${byte.toString(16)} lights one acc line`, accHot, 1);
+      expect(d, `0x${byte.toString(16)} acc line is OPA`, accWhich, opa);
+    } else {
+      expect(d, `0x${byte.toString(16)} lights no acc line`, accHot, 0);
+    }
   }
 }
 
@@ -2109,6 +2126,100 @@ function flipAndStep(c, label, on) {
   const withPinLow = runLoop(false);
   expect(c, 'the loop runs while TEST is high', withPinHigh > 1, true);
   expect(c, 'pulling TEST low breaks out of the loop', withPinLow, 0);
+}
+
+// ── the accumulator group ────────────────────────────────────────────────
+// Thirteen instructions in the 1111 escape. The program exercises eight of
+// them, and every value it produces is checked against arithmetic worked
+// out independently here rather than read off the circuit — otherwise the
+// test only proves the machine is consistent with itself.
+{
+  const c = buildCircuit('accgroup');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  const cy = () => (lampV(c, 'CY') === HI ? 1 : 0);
+
+  expect(c, 'the accumulator machine has four phases', c.phases.length, 4);
+
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+  // The expected trace, derived from the instruction semantics rather than
+  // from running the circuit. RAL/RAR rotate *through* the carry, which
+  // makes them a 5-bit rotation and makes the pair reversible — the
+  // property most worth pinning down, since a rotate that dropped the top
+  // bit would still look plausible for several steps.
+  let acc = 0, carry = 0;
+  const step = {
+    0xD5: () => { acc = 5; },                                  // LDM 5
+    0xF2: () => { const t = acc + 1; acc = t & 15; carry = t > 15 ? 1 : 0; },
+    0xF4: () => { acc = ~acc & 15; },                           // CMA
+    0xFA: () => { carry = 1; },                                 // STC
+    0xF5: () => { const n = (acc >> 3) & 1;                     // RAL
+                  acc = ((acc << 1) & 15) | carry; carry = n; },
+    0xF6: () => { const n = acc & 1;                            // RAR
+                  acc = (acc >> 1) | (carry << 3); carry = n; },
+    0xF1: () => { carry = 0; },                                 // CLC
+    0xF8: () => { const t = acc + 15; acc = t & 15;             // DAC
+                  carry = t > 15 ? 1 : 0; },
+  };
+
+  // Two full passes, so the wrap from address 7 back to 0 is covered and
+  // the second pass starts with a carry left over from the first.
+  for (let k = 0; k < 16; k++) {
+    const want = c.program[k % 8];
+    for (let p = 0; p < 4; p++) tick();
+    expect(c, `instruction ${k} is 0x${want.toString(16)}`, rd('IR', 8), want);
+    step[want]();
+    expect(c, `after 0x${want.toString(16)} (step ${k}) ACC`, rd('ACC', 4), acc);
+    expect(c, `after 0x${want.toString(16)} (step ${k}) carry`, cy(), carry);
+  }
+
+  // RAL then RAR is the identity, which is the whole reason the carry is
+  // in the loop. Checked directly against the recorded values rather than
+  // inferred from the trace above.
+  {
+    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+    // Sampled after each instruction's four phases, where the instruction
+    // register and the accumulator agree: the byte in IR is the one whose
+    // result is in ACC.
+    const at = [];
+    for (let k = 0; k < 8; k++) {
+      for (let p = 0; p < 4; p++) tick();
+      at.push({ ir: rd('IR', 8), acc: rd('ACC', 4), cy: cy() });
+    }
+    // `at[k]` is the state *after* instruction k. So the value RAL started
+    // from is at[ral - 1], and the value RAR leaves is at[ral + 1] — the
+    // rotate pair is the identity when those two agree.
+    const ral = at.findIndex(x => x.ir === 0xF5);
+    expect(c, 'the program contains RAL', ral > 0, true);
+    expect(c, 'RAR undoes RAL', at[ral + 1].acc, at[ral - 1].acc);
+    expect(c, 'RAR restores the carry too', at[ral + 1].cy, at[ral - 1].cy);
+  }
+
+  // The carry-only instructions must leave the accumulator alone. STC and
+  // CLC both appear in the program; if either clocked the accumulator it
+  // would take whatever the mux happened to be driving, which for an
+  // unselected mux is zero — a silent wipe that the trace above would
+  // catch but only by luck of ordering.
+  {
+    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+    let checked = 0;
+    for (let k = 0; k < 8; k++) {
+      const prev = rd('ACC', 4);
+      for (let p = 0; p < 4; p++) tick();
+      const ir = rd('IR', 8);
+      if (ir === 0xFA || ir === 0xF1) {       // STC, CLC
+        expect(c, `0x${ir.toString(16)} leaves the accumulator alone`,
+          rd('ACC', 4), prev);
+        checked++;
+      }
+    }
+    expect(c, 'both carry-only instructions were reached', checked, 2);
+  }
 }
 
 // ── the 4002 RAM model ───────────────────────────────────────────────────

@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**57 circuits** across 4 sections.
+**58 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (24)
+### CMOS (25)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -90,13 +90,14 @@ circuit exists to explain.
 | CMOS Program ROM | Memory | · | 189 | · | · | 89 |
 | 4-bit Counter | Sequential | · | 180 | · | · | 87 |
 | 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
-| Fetch Machine | Machines | · | 834 | · | 8 | 386 |
-| Sequenced Machine | Machines | · | 1133 | · | 8 | 524 |
-| Accumulator Machine | Machines | · | 1267 | · | 8 | 585 |
-| Jump Machine | Machines | · | 1338 | · | 8 | 621 |
-| Adding Machine | Machines | · | 3146 | · | 8 | 1399 |
-| Conditional Machine | Machines | · | 3207 | · | 8 | 1432 |
-| Two-Byte Machine | Machines | · | 3390 | · | 8 | 1515 |
+| Fetch Machine | Machines | · | 1226 | · | 8 | 582 |
+| Sequenced Machine | Machines | · | 1525 | · | 8 | 720 |
+| Accumulator Machine | Machines | · | 1659 | · | 8 | 781 |
+| Jump Machine | Machines | · | 1730 | · | 8 | 817 |
+| Adding Machine | Machines | · | 3538 | · | 8 | 1595 |
+| Conditional Machine | Machines | · | 3599 | · | 8 | 1628 |
+| Two-Byte Machine | Machines | · | 3794 | · | 8 | 1717 |
+| Accumulator Group | Machines | · | 2405 | · | 8 | 1164 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -121,26 +122,26 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 57 |
+| Circuits | 58 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 17971 |
+| Transistors | 23132 |
 | Diodes | 4 |
-| Resistors | 312 |
+| Resistors | 320 |
 
 ### Largest circuits
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Two-Byte Machine | 3398 | 1515 |
-| Conditional Machine | 3215 | 1432 |
-| Adding Machine | 3154 | 1399 |
-| 16×4 Register File | 1488 | 635 |
-| Jump Machine | 1346 | 621 |
+| Two-Byte Machine | 3802 | 1717 |
+| Conditional Machine | 3607 | 1628 |
+| Adding Machine | 3546 | 1595 |
+| Accumulator Group | 2413 | 1164 |
+| Jump Machine | 1738 | 817 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **149128 checks, 0 failures**
+`node test/sim-test.mjs` → **149492 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

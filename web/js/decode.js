@@ -93,6 +93,14 @@ export const InstructionDecoder = defineModule('idec', {
     ...Array.from({ length: 16 }, (_, i) => ({
       name: `op${i}`, x: 400, y: i * 6, side: 'out',
     })),
+    // One line per accumulator-group instruction: OPR 1111 decoded again
+    // through OPA. `acc0` is CLB, `acc2` is IAC, and so on down the table
+    // in ESC_ACC order. These are the thirteen instructions that share a
+    // single opcode, and this second decode is how the chip tells them
+    // apart — the same 4-to-16 tree, one level down.
+    ...Array.from({ length: 16 }, (_, i) => ({
+      name: `acc${i}`, x: 400, y: 110 + i * 6, side: 'out',
+    })),
     // `twoByte` is high for the instructions that take an address byte
     // after them, which is what tells the sequencer to fetch again before
     // executing. JCN, JUN, JMS, ISZ and FIM all do.
@@ -113,6 +121,22 @@ export const InstructionDecoder = defineModule('idec', {
         { a: dec.nets[`y${i}`], y: t });
       m.instantiate(Inverter, GATE_W * 13, i * (GATE_H + 2),
         { a: t, y: m.port(`op${i}`) });
+    }
+
+    // The accumulator group: a second 4-to-16 decode of OPA, gated by the
+    // 1111 escape line. Every output is low unless the instruction really
+    // is an accumulator instruction, so control can OR these lines with
+    // ordinary opcode lines without a qualifier on each one.
+    //
+    // Note this is the *third* place the same decoder module appears —
+    // ROM row select, register file, instruction decode — and now a
+    // fourth. Address decoding is one operation wearing four hats.
+    const adec = m.instantiate(Decode16, 0, GATE_H * 40, {
+      a0: m.port('i0'), a1: m.port('i1'), a2: m.port('i2'), a3: m.port('i3'),
+    });
+    for (let i = 0; i < 16; i++) {
+      m.instantiate(And2, GATE_W * 11, GATE_H * 40 + i * (GATE_H + 2),
+        { a: adec.nets[`y${i}`], b: dec.nets.y15, y: m.port(`acc${i}`) });
     }
 
     // twoByte = JCN | JUN | JMS | ISZ | FIM-not-SRC.

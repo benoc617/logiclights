@@ -12,10 +12,10 @@ import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter, regis
 import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
 import { romArray } from '../rom.js';
-import { InstructionDecoder, OPR_NAMES } from '../decode.js';
+import { InstructionDecoder, OPR_NAMES, disassemble } from '../decode.js';
 import {
   ringCounter, ControlUnit, ControlUnit4, ConditionTree, IsZero4,
-  PHASES, PHASES4,
+  AccOperand, CarryLogic, PHASES, PHASES4,
 } from '../sequencer.js';
 import { buildRom8 } from './rom-circuit.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from '../regfile.js';
@@ -1581,6 +1581,49 @@ const P4_PROGRAM = [
   0x00,   // 7     to 0 ─┘
 ];
 
+// The accumulator group: thirteen instructions sharing one opcode.
+//
+// Every machine so far has moved values around — load an immediate, add a
+// register, jump. This one is about the accumulator *itself*: incrementing
+// it, complementing it, rotating it through the carry, and setting or
+// clearing the carry directly.
+//
+// The program walks through them in an order where each result is visible
+// in the next, so the panel reads as a story rather than a list:
+//
+//   LDM 5   ACC = 5              start somewhere recognisable
+//   IAC     ACC = 6              increment
+//   CMA     ACC = 9              complement: 0110 → 1001
+//   STC     carry = 1            set the carry by itself
+//   RAL     ACC = 3, carry = 1   rotate left through carry:
+//                                1001 with carry 1 in at the bottom
+//                                becomes 0011, and the old bit 3 (1)
+//                                becomes the new carry
+//   RAR     ACC = 9, carry = 1   rotate back, which is the point — the
+//                                carry makes it a 5-bit rotation, so the
+//                                pair is reversible
+//   CLC     carry = 0            clear it, leaving ACC at 9
+//   DAC     ACC = 8              decrement: add 15, which is −1 at four
+//                                bits and is why there is no subtract here
+//
+// Then the PC wraps to 0 and LDM 5 starts it again, so the loop is the
+// whole eight-byte ROM with no jump instruction in it.
+//
+// RAL and RAR are the two worth watching. A rotate that dropped the top
+// bit would lose information; routing it through the carry makes the
+// accumulator and carry one 5-bit ring, which is how the 4004 does
+// multi-nibble shifts on a 4-bit machine.
+const PACC_PROGRAM = [
+  0xD5,   // 0  LDM 5
+  0xF2,   // 1  IAC
+  0xF4,   // 2  CMA
+  0xFA,   // 3  STC
+  0xF5,   // 4  RAL
+  0xF6,   // 5  RAR
+  0xF1,   // 6  CLC
+  0xF8,   // 7  DAC
+];
+
 function buildTwoByteMachine() {
   const c = new Circuit('Two-Byte Machine');
   c.implicitGround = false;
@@ -1661,6 +1704,8 @@ function buildTwoByteMachine() {
     opJUN: dec.nets.op4, opJCN: dec.nets.op1, opLDM: dec.nets.op13,
     opADD: dec.nets.op8, opXCH: dec.nets.op11, opINC: dec.nets.op6,
     condTake,
+    // this machine's program has no accumulator-group instructions
+    accGroup: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — four phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -1806,6 +1851,329 @@ function buildTwoByteMachine() {
   return c;
 }
 
+// The accumulator group in hardware.
+//
+// Structurally this is the two-byte machine with its datapath opened up.
+// Everything before it could write the accumulator from exactly two
+// places — an immediate or the adder. The accumulator group needs four
+// more sources, and the interesting part is how few gates that costs:
+//
+//   the adder     IAC, DAC, TCS — all of them are ACC + something, and
+//                 AccOperand picks the something
+//   complement    CMA — four inverters
+//   rotate left   RAL — a wire shift with the carry spliced in at bit 0
+//   rotate right  RAR — the same wires read the other way
+//   zero          CLB — drive nothing and let the mux default low
+//
+// Only the first needs arithmetic. The rest are wiring, which is the
+// lesson: an instruction set grows much faster than the silicon under it
+// when the instructions are chosen to reuse what is already there.
+function buildAccGroupMachine() {
+  const c = new Circuit('Accumulator Group');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addClock(clkSw, { period: 1200 });
+  instantiate(c, Inverter, 20, 44, { a: clkNet, y: nclk });
+
+  const ROW2 = 150;
+  const ring = instantiate(c, ringCounter(4), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring — FETCH / DECODE / FETCH2 / EXEC',
+    36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  const nFetch = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
+
+  const pcLoadLine = c.net(), pcEnable = c.net();
+  const PC = instantiate(c, programCounter(3), 40, ROW2, {
+    clk: clkNet, nclk, en: pcEnable, rst, load: pcLoadLine,
+    a0: VSS, a1: VSS, a2: VSS,
+  }, { tag: 'pc' });
+  c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(PACC_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, xRom, ROW2,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register — the opcode',
+    xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
+
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
+  c.region('Instruction decoder — OPR, then OPA for the 1111 group',
+    xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
+
+  // The thirteen accumulator lines, named. Reading `dec.nets.acc2` at every
+  // use site would make this datapath unreadable; naming them once keeps
+  // the wiring below saying what it means.
+  const IAC = dec.nets.acc2, CMA = dec.nets.acc4, RAL = dec.nets.acc5;
+  const RAR = dec.nets.acc6, DAC = dec.nets.acc8, CLB = dec.nets.acc0;
+  const CLC = dec.nets.acc1, CMC = dec.nets.acc3, TCC = dec.nets.acc7;
+  const STC = dec.nets.acc10, TCS = dec.nets.acc9;
+
+  const ROW3 = ROW2 + 380;
+  const accQ = [c.net(), c.net(), c.net(), c.net()];
+  const accZero = c.net(), carryQ = c.net();
+
+  // Which of the group write the accumulator: the arithmetic three, the
+  // complement, the two rotates, and CLB. The carry-only instructions
+  // (CLC, STC, CMC, TCC) are deliberately absent — they leave the
+  // accumulator alone, and telling the control unit otherwise would clock
+  // a fresh value into it every time a program touched the carry.
+  const accGroup = c.net();
+  {
+    const xg = xDec, yg = ROW2 - 120;
+    const g1 = c.net(), g2 = c.net(), g3 = c.net(), g4 = c.net(), g5 = c.net();
+    instantiate(c, Or2, xg, yg, { a: IAC, b: DAC, y: g1 }, { tag: 'ag1' });
+    instantiate(c, Or2, xg + 30, yg, { a: TCS, b: CMA, y: g2 }, { tag: 'ag2' });
+    instantiate(c, Or2, xg + 60, yg, { a: RAL, b: RAR, y: g3 }, { tag: 'ag3' });
+    instantiate(c, Or2, xg + 90, yg, { a: g1, b: g2, y: g4 }, { tag: 'ag4' });
+    instantiate(c, Or2, xg + 120, yg, { a: g3, b: CLB, y: g5 }, { tag: 'ag5' });
+    instantiate(c, Or2, xg + 150, yg, { a: g4, b: g5, y: accGroup },
+      { tag: 'ag6' });
+  }
+
+  const xCtrl = xDec + dec.w + 40;
+  const ctrl = instantiate(c, ControlUnit4, xCtrl, ROW2, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1,
+    pFetch2: ring.nets.p2, pExec: ring.nets.p3,
+    twoByte: dec.nets.twoByte,
+    // This machine's program contains no jumps and no register
+    // instructions, so those decoded lines are tied low rather than left
+    // floating. An unbound control port reads Z and can fire a control
+    // line — the failure that bit twice before, so every port is bound
+    // deliberately even when the answer is "never".
+    opJUN: VSS, opJCN: VSS, opADD: VSS, opXCH: VSS, opINC: VSS,
+    opLDM: dec.nets.op13,
+    condTake: VSS, accGroup,
+  }, { tag: 'ctrl' });
+  c.region('Control unit — four phases',
+    xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
+
+  const pcEnN = c.net();
+  instantiate(c, Inverter, xCtrl, ROW2 + ctrl.h + 8,
+    { a: ctrl.nets.pcInc, y: pcEnN }, { tag: 'pen' });
+  instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 8,
+    { a: pcEnN, y: pcEnable }, { tag: 'pen2' });
+  // no jumps in this program: the PC only ever counts
+  instantiate(c, Inverter, xCtrl + 40, ROW2 + ctrl.h + 8,
+    { a: VDD, y: pcLoadLine }, { tag: 'nold' });
+
+  // The adder's second operand, from AccOperand rather than a register.
+  const xOp = 40;
+  const accOp = instantiate(c, AccOperand, xOp, ROW3, {
+    opIAC: IAC, opDAC: DAC, opTCS: TCS,
+  }, { tag: 'accop' });
+  c.region('Adder operand — which constant this instruction adds',
+    xOp - 6, ROW3 - 6, xOp + accOp.w + 20, ROW3 + accOp.h + 10);
+
+  const xAdd = xOp + accOp.w + 60;
+  const adder = instantiate(c, rippleAdder(4), xAdd, ROW3, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+    b0: accOp.nets.b0, b1: accOp.nets.b1,
+    b2: accOp.nets.b2, b3: accOp.nets.b3,
+    cin: VSS,
+  }, { tag: 'add' });
+  c.region('Adder', xAdd - 6, ROW3 - 6, xAdd + adder.w + 6, ROW3 + adder.h + 6);
+
+  // Which instructions take the adder's result. Everything in the
+  // arithmetic subset of the group; the rest steer elsewhere.
+  const useAdd = c.net();
+  {
+    const t = c.net();
+    instantiate(c, Or2, xAdd, ROW3 + adder.h + 20,
+      { a: IAC, b: DAC, y: t }, { tag: 'ua1' });
+    instantiate(c, Or2, xAdd + 30, ROW3 + adder.h + 20,
+      { a: t, b: TCS, y: useAdd }, { tag: 'ua2' });
+  }
+
+  // The accumulator's source mux, now five-way. Each source contributes
+  // its bits ANDed with its own select line and the results are ORed —
+  // the same shape as the two-source mux before it, just wider. CLB needs
+  // no term at all: selecting nothing drives zero, which is what CLB
+  // means.
+  const ROW4 = ROW3 + 260;
+  const xMux = 40;
+  const accD = [];
+  for (let i = 0; i < 4; i++) {
+    const y = ROW4 + i * 46;
+    const fAdd = c.net(), fImm = c.net(), fCma = c.net();
+    const fRal = c.net(), fRar = c.net();
+
+    instantiate(c, And2, xMux, y,
+      { a: adder.nets[`s${i}`], b: useAdd, y: fAdd }, { tag: `mxa${i}` });
+    instantiate(c, And2, xMux, y + 10,
+      { a: ir[i], b: ctrl.nets.accFromImm, y: fImm }, { tag: `mxi${i}` });
+
+    // CMA: the complement of this bit
+    const nAcc = c.net();
+    instantiate(c, Inverter, xMux - 24, y + 20, { a: accQ[i], y: nAcc },
+      { tag: `cman${i}` });
+    instantiate(c, And2, xMux, y + 20,
+      { a: nAcc, b: CMA, y: fCma }, { tag: `mxc${i}` });
+
+    // RAL: this bit takes the one below it, and bit 0 takes the carry.
+    // RAR: this bit takes the one above it, and bit 3 takes the carry.
+    // The carry is what closes the ring, so the pair is lossless.
+    const ralSrc = i === 0 ? carryQ : accQ[i - 1];
+    const rarSrc = i === 3 ? carryQ : accQ[i + 1];
+    instantiate(c, And2, xMux, y + 30,
+      { a: ralSrc, b: RAL, y: fRal }, { tag: `mxl${i}` });
+    instantiate(c, And2, xMux, y + 40,
+      { a: rarSrc, b: RAR, y: fRar }, { tag: `mxr${i}` });
+
+    const o1 = c.net(), o2 = c.net(), o3 = c.net(), d = c.net();
+    instantiate(c, Or2, xMux + 40, y, { a: fAdd, b: fImm, y: o1 },
+      { tag: `mo1${i}` });
+    instantiate(c, Or2, xMux + 40, y + 14, { a: fCma, b: fRal, y: o2 },
+      { tag: `mo2${i}` });
+    instantiate(c, Or2, xMux + 70, y, { a: o1, b: o2, y: o3 },
+      { tag: `mo3${i}` });
+    instantiate(c, Or2, xMux + 100, y, { a: o3, b: fRar, y: d },
+      { tag: `mo4${i}` });
+    accD.push(d);
+  }
+  c.region('Accumulator source mux — adder / immediate / CMA / RAL / RAR',
+    xMux - 30, ROW4 - 8, xMux + 140, ROW4 + 4 * 46);
+
+  const xAcc = xMux + 170;
+  instantiate(c, register(4), xAcc, ROW4, {
+    clk: clkNet, nclk, load: ctrl.nets.accLoad,
+    d0: accD[0], d1: accD[1], d2: accD[2], d3: accD[3],
+    q0: accQ[0], q1: accQ[1], q2: accQ[2], q3: accQ[3],
+  }, { tag: 'acc' });
+  c.region('Accumulator', xAcc - 6, ROW4 - 6, xAcc + 140, ROW4 + 90);
+
+  const xZ = xAcc + 160;
+  instantiate(c, IsZero4, xZ, ROW4, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], z: accZero,
+  }, { tag: 'zero' });
+  c.region('Zero detect', xZ - 6, ROW4 - 6, xZ + 90, ROW4 + 50);
+
+  // The carry: its own little instruction set, plus the rotates and the
+  // adder feeding it.
+  const xCar = xZ + 120;
+  const carry = instantiate(c, CarryLogic, xCar, ROW4, {
+    carry: carryQ, opCLC: CLC, opSTC: STC, opCMC: CMC, opTCC: TCC,
+  }, { tag: 'carry' });
+  c.region('Carry logic — CLC / STC / CMC / TCC',
+    xCar - 6, ROW4 - 6, xCar + carry.w + 10, ROW4 + carry.h + 10);
+
+  // What the carry loads, and when. A rotate writes the bit that fell off
+  // the end; the arithmetic instructions write the adder's carry out; the
+  // carry group writes its own answer.
+  const carryD = c.net(), carryLoad = c.net();
+  {
+    const fRal = c.net(), fRar = c.net(), fAdd = c.net(), fOwn = c.net();
+    // RAL pushes out bit 3, RAR pushes out bit 0
+    instantiate(c, And2, xCar, ROW4 + 120,
+      { a: accQ[3], b: RAL, y: fRal }, { tag: 'cyl' });
+    instantiate(c, And2, xCar, ROW4 + 134,
+      { a: accQ[0], b: RAR, y: fRar }, { tag: 'cyr' });
+    instantiate(c, And2, xCar, ROW4 + 148,
+      { a: adder.nets.cout, b: useAdd, y: fAdd }, { tag: 'cya' });
+    instantiate(c, And2, xCar, ROW4 + 162,
+      { a: carry.nets.d, b: carry.nets.sel, y: fOwn }, { tag: 'cyo' });
+    const o1 = c.net(), o2 = c.net();
+    instantiate(c, Or2, xCar + 40, ROW4 + 120, { a: fRal, b: fRar, y: o1 },
+      { tag: 'cyo1' });
+    instantiate(c, Or2, xCar + 40, ROW4 + 148, { a: fAdd, b: fOwn, y: o2 },
+      { tag: 'cyo2' });
+    instantiate(c, Or2, xCar + 70, ROW4 + 130, { a: o1, b: o2, y: carryD },
+      { tag: 'cyo3' });
+
+    // The carry is written whenever any of those owns it, gated by EXEC.
+    const w1 = c.net(), w2 = c.net(), w3 = c.net(), any = c.net();
+    instantiate(c, Or2, xCar + 40, ROW4 + 190, { a: RAL, b: RAR, y: w1 },
+      { tag: 'cw1' });
+    instantiate(c, Or2, xCar + 40, ROW4 + 204,
+      { a: useAdd, b: carry.nets.sel, y: w2 }, { tag: 'cw2' });
+    instantiate(c, Or2, xCar + 70, ROW4 + 190, { a: w1, b: w2, y: w3 },
+      { tag: 'cw3' });
+    instantiate(c, And2, xCar + 100, ROW4 + 190,
+      { a: w3, b: ring.nets.p3, y: any }, { tag: 'cw4' });
+    // buffered through a pair, so the register's load input is driven by a
+    // gate rather than loading the control logic
+    const anyN = c.net();
+    instantiate(c, Inverter, xCar + 130, ROW4 + 190, { a: any, y: anyN },
+      { tag: 'cwn' });
+    instantiate(c, Inverter, xCar + 150, ROW4 + 190,
+      { a: anyN, y: carryLoad }, { tag: 'cwb' });
+  }
+
+  instantiate(c, register(1), xCar + 200, ROW4, {
+    clk: clkNet, nclk, load: carryLoad, d0: carryD, q0: carryQ,
+  }, { tag: 'cf' });
+  c.region('Carry flag', xCar + 194, ROW4 - 6, xCar + 264, ROW4 + 60);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5, { short: `P${i}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 26 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 42 + i * 4.5, { short: `IR${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`ACC${i}`, accQ[i], xEnd - 5, 82 + i * 4.5, { short: `ACC${i}` });
+  }
+  c.addLamp('CY', carryQ, xEnd - 5, 104, { short: 'CY' });
+  c.addLamp('ZERO', accZero, xEnd - 5, 109, { short: 'Z' });
+
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.accLines = Array.from({ length: 16 }, (_, i) => dec.nets[`acc${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3];
+  c.control = {
+    pcInc: ctrl.nets.pcInc, irLoad: ctrl.nets.irLoad,
+    accLoad: ctrl.nets.accLoad, carryLoad,
+  };
+  c.program = PACC_PROGRAM;
+  c.execAddr = () => {
+    let ir8 = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir8 |= 1 << i;
+      }
+    }
+    return c.program.indexOf(ir8);
+  };
+  return c;
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -1875,6 +2243,30 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  accgroup: {
+    build: buildAccGroupMachine,
+    readout: v => {
+      const ph = PHASES4[[0, 1, 2, 3].find(i => (v.P >> i) & 1)] ?? '—';
+      // Every instruction here is either LDM or in the 1111 escape group,
+      // so the disassembler's own table names it — the same table the
+      // hardware decoder implements in gates.
+      const { text } = disassemble(v.IR);
+      return `${ph}  ·  PC ${v.PC}  ·  ${text}`
+        + `  ·  ACC ${v.ACC}${v.CY ? '  carry' : ''}${v.Z ? '  zero' : ''}`;
+    },
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES4.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   twobyte: {
     build: buildTwoByteMachine,

@@ -432,6 +432,27 @@
       }
     },
     {
+      "id": "accgroup",
+      "group": "CMOS · Machines",
+      "name": "Accumulator Group",
+      "desc": "Thirteen instructions sharing a single opcode, and a lesson in how an instruction set grows faster than the silicon under it.\n\nThe 4004 has sixteen opcodes, which is not many. Two of them are escapes: opcode 1111 puts a second opcode in its low nibble, and that is where thirteen accumulator instructions live — increment, complement, rotate, and four that do nothing but manipulate the carry. This machine decodes that second nibble with the same 4-to-16 decoder used for ROM row select, register file addressing and the first-level instruction decode. The same block, wearing a fourth hat.\n\nWatch the source mux. Every machine before this one could write the accumulator from two places, an immediate or the adder. This one has five, and only one of them needs arithmetic.\n\nIAC and DAC are the adder, fed a constant. Increment adds 1. Decrement adds 15 — because at four bits 15 is −1, so there is no borrow network anywhere in this machine and never needs to be.\n\nCMA is four inverters. RAL and RAR are wires: a rotate left reads each bit from the one below it, a rotate right from the one above. CLB is nothing at all — select no source and the mux drives zero, which is exactly what \"clear\" means.\n\nThe rotates are the pair worth stepping through. A shift that dropped the top bit would lose it; routing it through the carry makes the accumulator and carry a single five-bit ring, so RAL followed by RAR returns exactly what you started with. That is how a four-bit machine shifts values wider than four bits, and it is why the carry has four instructions of its own rather than being a side effect of addition.\n\nThe program walks the group in an order where each result feeds the next, then falls off the end of the eight-byte ROM and wraps to the start. There is no jump instruction in it — the program counter wrapping is the loop.",
+      "hints": {
+        "CLK": "the clock — four edges per instruction",
+        "RST": "back to FETCH at address 0",
+        "P": "the phase ring: FETCH, DECODE, FETCH2, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register — the opcode byte",
+        "ACC": "the accumulator",
+        "CY": "the carry — its own one-bit register with four instructions",
+        "Z": "the accumulator is zero"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",
