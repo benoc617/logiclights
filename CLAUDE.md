@@ -38,6 +38,18 @@ for everything else live in [docs/DESIGN.md](docs/DESIGN.md).
    coils; if it lights up, current actually reached it. A reference model
    used as a test oracle is fine — in `test/` only, never in the app.
 
+   One deliberate exception, and it needs its boundary stated: a *separate
+   chip* the CPU talks to over a bus may be modelled behaviourally. The
+   4002 RAM is the case — 320 bits of storage at this cell density is
+   ~7,400 transistors, three times the whole 4004, and simulating them
+   teaches nothing the register file has not already shown. What matters
+   about the 4002 is its *interface*: the addressing SRC performs, the
+   bank DCL selects, what the ports carry. Those stay real.
+
+   The line is the package boundary. Anything inside the CPU is built from
+   devices, always. A peripheral may be a model, and when it is, the app
+   must say so where a reader will see it — not only in a comment.
+
 ## Layout
 
 ```

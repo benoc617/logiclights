@@ -12,6 +12,7 @@ import {
   InstructionDecoder, disassemble, disassembleProgram, isTwoByte,
 } from '../web/js/decode.js';
 import { buildJcnMachine } from '../web/js/behaviour/cmos.js';
+import { RamBank, Ram4002 } from '../web/js/ram4002.js';
 import { ringCounter, ConditionTree, IsZero4 } from '../web/js/sequencer.js';
 
 let failures = 0;
@@ -2108,6 +2109,65 @@ function flipAndStep(c, label, on) {
   const withPinLow = runLoop(false);
   expect(c, 'the loop runs while TEST is high', withPinHigh > 1, true);
   expect(c, 'pulling TEST low breaks out of the loop', withPinLow, 0);
+}
+
+// ── the 4002 RAM model ───────────────────────────────────────────────────
+// The one modelled part of the machine, so its *interface* carries the
+// whole weight: the addressing SRC performs, the separation between chips
+// and registers, and the asymmetry between main and status characters.
+// A behavioural model that gets its interface wrong is worse than no model,
+// because nothing downstream can catch it.
+{
+  const ctx = { name: '4002' };
+  const bank = new RamBank();
+
+  bank.src(0x00);                     // chip 0, register 0, character 0
+  bank.writeMain(9);
+  expect(ctx, 'a written character reads back', bank.readMain(), 9);
+
+  bank.src(0x01);
+  expect(ctx, 'the next character is separate', bank.readMain(), 0);
+
+  bank.src(0x10);                     // register 1
+  bank.writeMain(5);
+  bank.src(0x00);
+  expect(ctx, 'registers are separate', bank.readMain(), 9);
+
+  bank.src(0x40);                     // chip 1
+  bank.writeMain(12);
+  expect(ctx, 'a second chip holds its own value', bank.readMain(), 12);
+  bank.src(0x00);
+  expect(ctx, 'chips are separate', bank.readMain(), 9);
+
+  // Status characters are addressed by *which opcode* was used, not by the
+  // character SRC selected: RD2 reads status 2 of the selected register
+  // wherever SRC pointed within main memory. Easy to get wrong, and the
+  // reason the status opcodes exist separately at all.
+  bank.src(0x0F);                     // register 0, character 15
+  bank.writeStatus(2, 7);
+  bank.src(0x00);                     // same register, character 0
+  expect(ctx, 'status follows the register, not the character',
+    bank.readStatus(2), 7);
+  expect(ctx, 'status indices are separate', bank.readStatus(1), 0);
+
+  bank.src(0x00);
+  bank.writePort(6);
+  expect(ctx, 'the output port holds what was written',
+    bank.chips[0].outPort, 6);
+  expect(ctx, 'an unselected chip ignores a port write',
+    bank.chips[1].outPort, 0);
+
+  // Reading before any SRC returns null rather than a plausible zero. A
+  // program that reads without addressing is broken, and the model should
+  // not hide that by inventing a value.
+  expect(ctx, 'nothing answers before an SRC', new RamBank().readMain(), null);
+
+  // One chip is a real 4002: 4 registers of 16 main plus 4 status
+  // characters — 80 nibbles, 320 bits.
+  const chip = new Ram4002(0);
+  expect(ctx, 'a chip holds 320 bits',
+    (chip.main.length * chip.main[0].length
+      + chip.status.length * chip.status[0].length) * 4, 320);
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────
