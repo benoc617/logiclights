@@ -13,6 +13,7 @@
 
 import { deriveBuses, busValue } from './buses.js';
 import { VALUE_CHAR } from './engine.js';
+import { disassembleProgram } from './decode.js';
 
 const panel = document.getElementById('panel');
 const panelBody = document.getElementById('panel-body');
@@ -25,6 +26,7 @@ let tableRows = null;     // selector-legend rows, if the circuit has a table
 let legendSelect = null;  // picks the live row index from the bus values
 let stateCells = null;    // live internal-state cells, if the circuit has any
 let stateRead = null;     // reads that state off the circuit each frame
+let progRows = null;      // program listing rows, for machines that run one
 
 // Called by main when the panel is shown or hidden, so the canvas can refit
 // around it. Set once at startup.
@@ -158,6 +160,33 @@ export function buildPanel(c) {
     panelBody.appendChild(readoutEl);
   }
 
+  // The program listing, for machines that run one. Watching a CPU without
+  // being able to read its program is like watching a debugger with the
+  // source hidden — you can see the machine work but not what it is
+  // working on. The disassembly comes from the same opcode table the
+  // hardware decoder uses, so a listing and the lit decoder line can never
+  // disagree.
+  progRows = null;
+  if (circuit.program) {
+    panelBody.appendChild(el('div', 'sec-title', 'Program'));
+    const box = el('div', 'prog');
+    progRows = disassembleProgram(circuit.program).map(r => {
+      const row = el('div', 'prog-row');
+      row.appendChild(el('span', 'prog-addr', String(r.addr)));
+      row.appendChild(el('span', 'prog-byte',
+        r.byte.toString(16).toUpperCase().padStart(2, '0')));
+      const text = el('span', 'prog-text', r.text);
+      // An address that is the operand of the instruction above it is not
+      // an instruction, however it disassembles — but the machine can jump
+      // into one, so it is shown greyed rather than hidden.
+      if (r.isOperand) text.classList.add('operand');
+      row.appendChild(text);
+      box.appendChild(row);
+      return { el: row, addr: r.addr, on: null };
+    });
+    panelBody.appendChild(box);
+  }
+
   // A selector legend, for circuits where an input is a code rather than a
   // number: the ALU's F is the case that makes the circuit unusable without
   // one. Rows highlight live as the selected code changes, so the table
@@ -244,6 +273,17 @@ export function updatePanel() {
     for (const r of tableRows) {
       const on = r.index === live;
       if (r.on !== on) { r.on = on; r.el.classList.toggle('live', on); }
+    }
+  }
+  if (progRows) {
+    // Highlight what the program counter is pointing at. The instruction
+    // register lags the PC by a cycle, so this marks what is being
+    // *fetched* — which is what you want when stepping, because it is the
+    // line about to happen.
+    const pc = vals.PC ?? -1;
+    for (const r of progRows) {
+      const on = r.addr === pc;
+      if (r.on !== on) { r.on = on; r.el.classList.toggle('at', on); }
     }
   }
   if (stateCells) {

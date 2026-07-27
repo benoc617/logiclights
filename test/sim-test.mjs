@@ -8,7 +8,9 @@ import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/
 import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch, register, rippleAdder } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
-import { InstructionDecoder } from '../web/js/decode.js';
+import {
+  InstructionDecoder, disassemble, disassembleProgram, isTwoByte,
+} from '../web/js/decode.js';
 import { ringCounter, ConditionTree, IsZero4 } from '../web/js/sequencer.js';
 
 let failures = 0;
@@ -1796,6 +1798,55 @@ function flipAndStep(c, label, on) {
     tick();
   }
   expect(c, 'an untaken JCN never loads the PC', loadedWithoutTaking, 0);
+}
+
+// ── the disassembler must agree with the hardware ────────────────────────
+// The program listing is display code, but a listing that disagrees with
+// the machine is worse than none — it would show one instruction while the
+// circuit executed another. Both read the same opcode table, and this is
+// what holds them together.
+{
+  const c = new Circuit('idec-vs-disasm');
+  for (let byte = 0; byte < 256; byte++) {
+    const d = new Circuit('d');
+    d.implicitGround = false;
+    const bind = {};
+    for (let i = 0; i < 8; i++) {
+      const n = d.net();
+      d.addSwitch(`I${i}`, n, 'toggle', 0, 0, { from: 0, to: 1 }).on =
+        !!((byte >> i) & 1);
+      bind[`i${i}`] = n;
+    }
+    const D = instantiate(d, InstructionDecoder, 0, 0, bind);
+    settle(d);
+    // the hardware's twoByte line and the disassembler's must match on
+    // every byte, including the FIM/SRC pair that shares an opcode
+    expect(d, `twoByte agrees at 0x${byte.toString(16)}`,
+      d.value[D.nets.twoByte] === HI, isTwoByte(byte));
+    // and every byte must disassemble to something rather than throwing
+    const { text } = disassemble(byte, 0);
+    expect(d, `0x${byte.toString(16)} disassembles`, text.length > 0, true);
+  }
+  // spot-check the encodings the machines actually run
+  const cases = [
+    [0x00, 'NOP'], [0xD5, 'LDM 5'], [0xB0, 'XCH r0'], [0x80, 'ADD r0'],
+    [0x60, 'INC r0'], [0x21, 'SRC 0P'], [0x20, 'FIM 0P'], [0xF1, 'CLC'],
+    [0xE9, 'RDM'],
+  ];
+  for (const [byte, want] of cases) {
+    expect(c, `0x${byte.toString(16).toUpperCase()} is ${want}`,
+      disassemble(byte).text.split(',')[0], want);
+  }
+  // Every machine's program listing has a line per ROM address — including
+  // the operand bytes, because a jump can land on one and the machine will
+  // execute it as an opcode.
+  for (const e of CIRCUITS) {
+    const m = buildCircuit(e.id);
+    if (!m.program) continue;
+    const rows = disassembleProgram(m.program);
+    expect(m, `${e.id}: a listing line per ROM address`,
+      rows.length, m.program.length);
+  }
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────

@@ -134,3 +134,97 @@ export const InstructionDecoder = defineModule('idec', {
       { a: o3, b: fim, y: m.port('twoByte') });
   },
 });
+
+// Turn a byte into the instruction it encodes.
+//
+// This is the disassembler half of what the hardware decoder does in gates:
+// same opcode table, same OPA rules, so a program listing and the lit
+// decoder line always agree. If they ever disagree one of them is wrong,
+// which is a useful property to have.
+//
+// It is display code, not simulation — the machine decodes in transistors
+// and this only names what it decoded, the way the assembler in 4004.md
+// will only set switch objects. Nothing here computes anything the circuit
+// does not.
+//
+// The escape groups have their own tables: opcode 1110 puts a memory/IO
+// opcode in OPA and 1111 puts an accumulator opcode there, which is how
+// thirteen instructions fit in the space of two.
+const ESC_MEM = {
+  0: 'WRM', 1: 'WMP', 2: 'WRR', 4: 'WR0', 5: 'WR1', 6: 'WR2', 7: 'WR3',
+  8: 'SBM', 9: 'RDM', 10: 'RDR', 11: 'ADM',
+  12: 'RD0', 13: 'RD1', 14: 'RD2', 15: 'RD3',
+};
+const ESC_ACC = {
+  0: 'CLB', 1: 'CLC', 2: 'IAC', 3: 'CMC', 4: 'CMA', 5: 'RAL', 6: 'RAR',
+  7: 'TCC', 8: 'DAC', 9: 'TCS', 10: 'STC', 11: 'DAA', 12: 'KBP', 13: 'DCL',
+};
+
+// How the operand nibble reads for each opcode.
+//   'reg'  a register number      INC 3
+//   'pair' a register pair        FIM 0P
+//   'imm'  an immediate           LDM 5
+//   'mask' a JCN condition mask   JCN 12
+//   'addr' the high bits of an address, with a second byte following
+//   null   no operand             NOP
+const OPA_KIND = [
+  null, 'mask', 'pair', 'pair', 'addr', 'addr', 'reg', 'reg',
+  'reg', 'reg', 'reg', 'reg', 'imm', 'imm', 'esc', 'esc',
+];
+
+// Which instructions consume a following byte. Matches the hardware's
+// twoByte line exactly, including FIM/SRC sharing opcode 0010 and being
+// told apart by OPA bit 0.
+export function isTwoByte(byte) {
+  const opr = (byte >> 4) & 15, opa = byte & 15;
+  if (opr === 1 || opr === 4 || opr === 5 || opr === 7) return true;
+  if (opr === 2 && (opa & 1) === 0) return true;   // FIM, not SRC
+  return false;
+}
+
+// Disassemble one byte, optionally with the byte that follows it.
+// Returns { text, twoByte } — `text` is the mnemonic with its operand.
+export function disassemble(byte, next) {
+  const opr = (byte >> 4) & 15, opa = byte & 15;
+  const two = isTwoByte(byte);
+
+  if (opr === 14) return { text: ESC_MEM[opa] ?? `?${opa}`, twoByte: false };
+  if (opr === 15) return { text: ESC_ACC[opa] ?? `?${opa}`, twoByte: false };
+
+  const name = OPR_NAMES[opr];
+  const kind = OPA_KIND[opr];
+
+  // FIM and SRC, FIN and JIN share an opcode; OPA bit 0 picks which
+  let mnemonic = name;
+  if (opr === 2) mnemonic = (opa & 1) ? 'SRC' : 'FIM';
+  if (opr === 3) mnemonic = (opa & 1) ? 'JIN' : 'FIN';
+
+  let arg = '';
+  if (kind === 'reg') arg = ` r${opa}`;
+  else if (kind === 'pair') arg = ` ${opa >> 1}P`;
+  else if (kind === 'imm') arg = ` ${opa}`;
+  else if (kind === 'mask') arg = ` ${opa}`;
+  else if (kind === 'addr') {
+    // the full target is this nibble plus the whole next byte
+    arg = next === undefined ? ` ${opa}xx` : ` ${((opa << 8) | next)}`;
+  }
+  if (two && kind !== 'addr' && next !== undefined) arg += `, ${next}`;
+
+  return { text: mnemonic + arg, twoByte: two };
+}
+
+// Disassemble a whole ROM into one entry per address.
+//
+// Every address gets a line, including the operand bytes of two-byte
+// instructions — because the machine can land on one. A program that jumps
+// into the middle of an instruction executes the operand as an opcode, and
+// hiding those addresses would hide exactly that.
+export function disassembleProgram(bytes) {
+  return bytes.map((byte, addr) => {
+    const next = bytes[addr + 1];
+    const { text, twoByte } = disassemble(byte, next);
+    // is this address the operand of the instruction before it?
+    const isOperand = addr > 0 && isTwoByte(bytes[addr - 1]);
+    return { addr, byte, text, twoByte, isOperand };
+  });
+}

@@ -282,8 +282,16 @@ footer {
 }
 
 #panel-body {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* A flex child defaults to min-height:auto, which refuses to shrink
+     below its content — so without this the body grows past the panel's
+     max-height and the overflow rule never engages. With a program
+     listing and a state grid the content easily exceeds the viewport. */
+  min-height: 0;
+  flex: 1;
   padding: 4px 12px 10px;
+  overscroll-behavior: contain;   /* don't scroll the page at the ends */
 }
 
 .sec-title {
@@ -437,6 +445,33 @@ input.bin:focus {
   min-width: 3ch;
 }
 .legend-row.live .legend-code { color: #ffb340; }
+ /* The program listing: what the ROM holds, disassembled. */
+.prog {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+.prog-row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
+  color: #8f98ad;
+}
+.prog-row.at {
+  background: #241f16;
+  border-left-color: #ffb340;
+  color: #e8edf7;
+}
+.prog-addr { color: #59627a; min-width: 1.6em; text-align: right; }
+.prog-row.at .prog-addr { color: #ffb340; }
+.prog-byte { color: #6d7690; }
+.prog-text { font-weight: 600; }
+.prog-text.operand { font-weight: 400; color: #59627a; font-style: italic; }
+
 /* Live internal state — a grid of stored values the circuit's own outputs
    do not expose. The registers the read and write ports point at are
    marked, so the ports and the storage read as one picture. */
@@ -536,6 +571,8 @@ input.bin:focus {
   .legend-note { display: none; }
   .legend-row { padding: 1px 4px; font-size: 11px; }
   .state-key { display: none; }
+  .prog { font-size: 11px; }
+  .prog-row { padding: 1px 4px; }
   .state-cell { padding: 1px 4px; }
   .state-val { font-size: 11.5px; }
 }
