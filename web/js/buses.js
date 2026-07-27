@@ -29,7 +29,14 @@ function group(items) {
 
 export function deriveBuses(circuit) {
   return {
-    inputs: group(circuit.switches.map(sw => ({ key: sw.label, sw }))),
+    // Switches marked `driven` are not user inputs. They exist so a
+    // modelled peripheral can put a value on a net through the same
+    // mechanism as any other external source — the memory machine's 4002
+    // does this — and showing them as flippable inputs would invite the
+    // user to fight the model for control of the bus.
+    inputs: group(circuit.switches
+      .filter(sw => !sw.driven)
+      .map(sw => ({ key: sw.label, sw }))),
     outputs: group(circuit.lamps.map(l => ({ key: l.short ?? l.label, net: l.net }))),
     internals: circuit.buses.map(b => ({
       name: b.name,

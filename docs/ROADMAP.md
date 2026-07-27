@@ -92,14 +92,14 @@ generated, so this file does not repeat them.
       the JCN condition tree. Three-phase and four-phase variants; the
       four-phase one honours two-byte instructions.
 - [ ] **Intel 4004** — in progress, and the bring-up ladder is complete.
-      Seven machines exist, each isolating one idea: fetch, phase
+      Eight machines exist, each isolating one idea: fetch, phase
       sequencing, the real ADD datapath, conditional jumps, two-byte
       fetch, SUB and LD with the first register-to-accumulator path
       (which also makes XCH a real exchange), and the accumulator group.
       Two early ones — Accumulator Machine and Jump Machine — were
       retired once later machines demonstrated their ideas better; their
       test coverage moved to the Adding Machine. What remains is
-      instruction-set coverage rather than new structure — twenty-two of
+      instruction-set coverage rather than new structure — thirty-three of
       the 45 defined instructions now act on hardware. See the checklist
       in [4004.md](4004.md), which has the full plan and program corpus
       too.

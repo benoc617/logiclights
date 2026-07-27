@@ -35,7 +35,7 @@ way through the machine. Every wire is a light: amber means driven high.
   concept-by-technology matrix live in
   [docs/INVENTORY.md](docs/INVENTORY.md), which is generated rather than
   written, so it cannot drift.
-- **A CPU being built, one idea at a time** — seven machines under
+- **A CPU being built, one idea at a time** — eight machines under
   CMOS · Machines, each isolating exactly one thing: fetch, then phase
   sequencing, the 4004's real `ADD r` datapath, conditional jumps with the
   full condition mask, two-byte fetch, `SUB` sharing the adder with `ADD`

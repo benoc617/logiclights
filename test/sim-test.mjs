@@ -11,7 +11,9 @@ import { romArray } from '../web/js/rom.js';
 import {
   InstructionDecoder, disassemble, disassembleProgram, isTwoByte,
 } from '../web/js/decode.js';
-import { buildJcnMachine, buildSubMachine } from '../web/js/behaviour/cmos.js';
+import {
+  buildJcnMachine, buildSubMachine, buildMemMachine, cmos,
+} from '../web/js/behaviour/cmos.js';
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
 import {
   ringCounter, ConditionTree, IsZero4, SubOperand, KeyboardProcess,
@@ -2279,6 +2281,82 @@ function flipAndStep(c, label, on) {
     }
     expect(c, 'the program reached TCC', seenTcc, true);
     expect(c, 'the program reached TCS', seenTcs, true);
+  }
+}
+
+// ── the memory machine: the CPU driving a real 4002 interface ────────────
+// SRC sends a register pair to the bus, and the access instructions use
+// the address it left behind. The CPU side is simulated; the 4002 is the
+// model. What this checks is the seam between them.
+{
+  const run = (program, steps) => {
+    const c = buildMemMachine(program);
+    const stepModel = cmos.memmachine.step;
+    const settleAll = () => { settle(c); stepModel(c); c.solve(); };
+    const tick = () => {
+      c.stepClock(); settleAll(); c.stepClock(); settleAll();
+    };
+    const rd = (p, n) => {
+      let v = 0;
+      for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+      return v;
+    };
+    sw(c, 'RST', true); settleAll(); tick();
+    sw(c, 'RST', false); settleAll();
+    for (let k = 0; k < steps; k++) for (let p = 0; p < 5; p++) tick();
+    return { c, rd };
+  };
+
+  // The demo program: address 0x15, write 7, read it back.
+  {
+    const { c, rd } = run(undefined, 8);
+    expect(c, 'the phase ring has five phases', c.phases.length, 5);
+
+    // SRC's address splits as chip(2) | register(2) | character(4) — the
+    // diagram on page 3-51 of the MCS-4 manual. r0 holds 1 and r1 holds
+    // 5, so the address is 0x15 and not 0x51: the pair's EVEN register is
+    // the high nibble.
+    const addr = rd('SRC', 8);
+    expect(c, 'SRC latched the pair as an 8-bit address', addr, 0x15);
+    expect(c, 'SRC address: chip', (addr >> 6) & 3, 0);
+    expect(c, 'SRC address: register', (addr >> 4) & 3, 1);
+    expect(c, 'SRC address: character', addr & 15, 5);
+
+    // WRM put the accumulator into the addressed character, RDM brought
+    // it back. Both go through the model, so this is the bus round-trip.
+    expect(c, 'WRM wrote the accumulator to the addressed character',
+      c.ram.inspect()[0].main[1][5], 7);
+    expect(c, 'RDM read it back into the accumulator', rd('ACC', 4), 7);
+  }
+
+  // Status characters are addressed by *which* status opcode ran, not by
+  // the character SRC selected — an asymmetry that is easy to get wrong
+  // and that the manual draws explicitly ("these bits are not relevant
+  // for this reference"). WR0 with SRC pointing at character 3 still
+  // writes status character 0.
+  {
+    const { c, rd } = run([0xD2, 0xB0, 0xD3, 0xB1, 0x21, 0xD9, 0xE4, 0xEC], 8);
+    expect(c, 'SRC latched 0x23', rd('SRC', 8), 0x23);
+    expect(c, 'WR0 wrote status character 0, not character 3',
+      c.ram.inspect()[0].status[2][0], 9);
+    expect(c, 'the SRC character did not become a status index',
+      c.ram.inspect()[0].status[2][3], 0);
+    expect(c, 'RD0 read the status character back', rd('ACC', 4), 9);
+  }
+
+  // A different chip in the bank. Address 0xC7 is chip 3, register 0,
+  // character 7 — the top two bits select which of the four 4002s in the
+  // bank answers, and the other three must stay untouched.
+  {
+    const { c, rd } = run([0xDC, 0xB0, 0xD7, 0xB1, 0x21, 0xD6, 0xE0, 0xE9], 8);
+    expect(c, 'SRC latched 0xC7', rd('SRC', 8), 0xC7);
+    expect(c, 'the addressed chip took the write',
+      c.ram.inspect()[3].main[0][7], 6);
+    for (const chip of [0, 1, 2]) {
+      expect(c, `chip ${chip} was not written`,
+        c.ram.inspect()[chip].main[0][7], 0);
+    }
+    expect(c, 'RDM read from the addressed chip', rd('ACC', 4), 6);
   }
 }
 

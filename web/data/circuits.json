@@ -436,6 +436,26 @@
       }
     },
     {
+      "id": "memmachine",
+      "group": "CMOS · Machines",
+      "name": "Memory Machine",
+      "desc": "The CPU talking to a 4002 RAM — and the one machine here with a modelled part in it, which is worth saying plainly.\n\nEverything on the CPU side is real: registers, decoder, control unit, the address path, all built from transistors like every other circuit. The 4002 behind the bus is not. It is a JavaScript object, because 320 bits of storage costs about 7,400 transistors to simulate — three times the whole CPU — to demonstrate nothing the register file has not already shown. The line is the package boundary: a 4002 is a separate chip the CPU reaches over a bus. What stays real is the interface; what is modelled is the array behind it.\n\nSRC is why this machine has five phases rather than four. It sends the eight bits of a register pair to the memory bus, and the index register file has one 4-bit read port — as the real chip's does — so a pair takes two reads, one per phase. FETCH, DECODE, READ1, READ2, EXEC. The 4004 has the same problem for the same reason and solves it the same way, across its X1/X2/X3 execute phases. This is a case where dropping the multiplexed bus does not remove the extra phases, because the narrowness is the register file's rather than the pin count's.\n\nWatch the address latch fill. In READ1 it takes the pair's even register — the chip and register select — and in READ2 the odd one, the character within that register. That split is exactly the diagram on page 3-51 of Intel's manual. Then it holds, and that persistence is the whole reason SRC exists as its own instruction: the manual says the address \"remains in effect until changed by a subsequent SRC\", so one SRC can serve many accesses.\n\nThe program loads 1 and 5 into a register pair, sends them as address 0x15, writes 7 to that character and reads it straight back.",
+      "hints": {
+        "CLK": "the clock — five phases per instruction",
+        "RST": "back to FETCH at address 0",
+        "P": "the phase ring: FETCH, DECODE, READ1, READ2, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register",
+        "SRC": "the address latch — chip, register, character",
+        "ACC": "the accumulator"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 5,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

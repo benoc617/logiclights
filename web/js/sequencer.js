@@ -26,7 +26,7 @@
 import { VDD, VSS } from './engine.js';
 import { defineModule } from './module.js';
 import {
-  Inverter, And2, Or2, Nor2, Xor2, DFlipFlop, GATE_W, GATE_H,
+  Inverter, And2, Or2, Nor2, Xor2, DFlipFlop, register, GATE_W, GATE_H,
 } from './gates.js';
 
 export const PHASES = ['FETCH', 'DECODE', 'EXEC'];
@@ -69,6 +69,25 @@ export const PHASES = ['FETCH', 'DECODE', 'EXEC'];
 // an idle phase costs one clock on one-byte instructions and keeps the
 // ring a ring.
 export const PHASES4 = ['FETCH', 'DECODE', 'FETCH2', 'EXEC'];
+
+// The memory machine grows a fifth phase, and for a reason that comes
+// straight from the instruction set rather than from packaging.
+//
+// SRC sends the *eight* bits of a register pair to the memory bus. The
+// index register file has one 4-bit read port — as the real chip's does,
+// on sheet 1 — so a pair cannot be read in one go. It takes two reads.
+//
+//   FETCH   capture the opcode
+//   DECODE  the decoder settles
+//   READ1   read the pair's even register  → the address latch's high half
+//   READ2   read the pair's odd register   → the address latch's low half
+//   EXEC    act on the addressed memory
+//
+// The real 4004 does the same thing across its X1/X2/X3 execute phases —
+// it also cannot read eight bits at once. This is a case where dropping
+// the multiplexed bus does *not* remove the extra phases, because the
+// narrowness here is the register file's, not the pin count's.
+export const PHASES5 = ['FETCH', 'DECODE', 'READ1', 'READ2', 'EXEC'];
 
 // A ring counter: one flip-flop per phase, with the high bit walking around
 // the loop on every clock edge. This is `buildOscillator()` grown up — the
@@ -707,6 +726,47 @@ export const SubOperand = defineModule('subop', {
   },
 });
 
+// The SRC address latch: eight bits, filled a nibble at a time.
+//
+// SRC's address has to survive until the *next* SRC, because the access
+// instructions that use it (RDM, WRM, ADM, the status and port
+// instructions) are separate opcodes executed later. The manual is
+// explicit: "the address sent by the SRC remains in effect until changed
+// by a subsequent SRC." That persistence is the whole reason SRC exists
+// as its own instruction rather than being folded into each access.
+//
+// Two load enables rather than one, because the two halves arrive in
+// different phases. The high nibble is the chip-and-register select, the
+// low nibble the character within that register — the split the manual
+// draws on page 3-51.
+export const SrcLatch = defineModule('srclatch', {
+  ports: [
+    { name: 'clk', x: 0, y: -3, side: 'top' },
+    { name: 'nclk', x: 0, y: -1, side: 'top' },
+    { name: 'loadHi', x: -1.5, y: 2, side: 'in' },
+    { name: 'loadLo', x: -1.5, y: 6, side: 'in' },
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `d${i}`, x: -1.5, y: 12 + i * 4, side: 'in',
+    })),
+    ...Array.from({ length: 8 }, (_, i) => ({
+      name: `q${i}`, x: GATE_W * 20, y: i * 4, side: 'out',
+    })),
+  ],
+  build(m) {
+    const clk = m.port('clk'), nclk = m.port('nclk');
+    const bindLo = { clk, nclk, load: m.port('loadLo') };
+    const bindHi = { clk, nclk, load: m.port('loadHi') };
+    for (let i = 0; i < 4; i++) {
+      bindLo[`d${i}`] = m.port(`d${i}`);
+      bindLo[`q${i}`] = m.port(`q${i}`);
+      bindHi[`d${i}`] = m.port(`d${i}`);
+      bindHi[`q${i}`] = m.port(`q${i + 4}`);
+    }
+    m.instantiate(register(4), 0, 0, bindLo, { tag: 'lo' });
+    m.instantiate(register(4), 0, GATE_H * 6, bindHi, { tag: 'hi' });
+  },
+});
+
 // A control unit for the four-phase cycle, with two-byte fetch.
 //
 // The difference from the three-phase one is `oprLoad`: during FETCH2 a
@@ -894,5 +954,102 @@ export const ControlUnit4 = defineModule('ctrl4', {
       { a: incOrIsz, y: rfi });
     m.instantiate(Inverter, GATE_W * 10, GATE_H * 17,
       { a: rfi, y: m.port('regFromInc') });
+  },
+});
+
+// The memory machine's control unit: five phases, and the memory group.
+//
+// Structurally simpler than ControlUnit4 despite covering more
+// instructions, because the memory group is uniform. Every access is
+// "read or write the thing SRC addressed", so the control lines are a
+// direction, a destination and a source rather than sixteen special cases.
+//
+// The RAM itself is modelled rather than simulated (see ram4002.js and
+// CLAUDE.md's fourth rule), so what this unit drives is the *interface* —
+// the same signals the real CPU puts on the bus. What happens behind them
+// is a JavaScript array, and the machine says so on screen.
+export const MemControl = defineModule('memctrl', {
+  ports: [
+    { name: 'pFetch', x: -1.5, y: 0, side: 'in' },
+    { name: 'pDecode', x: -1.5, y: 4, side: 'in' },
+    { name: 'pRead1', x: -1.5, y: 8, side: 'in' },
+    { name: 'pRead2', x: -1.5, y: 12, side: 'in' },
+    { name: 'pExec', x: -1.5, y: 16, side: 'in' },
+    // decoded instruction lines
+    { name: 'opSRC', x: -1.5, y: 22, side: 'in' },
+    { name: 'opLDM', x: -1.5, y: 26, side: 'in' },
+    { name: 'opXCH', x: -1.5, y: 30, side: 'in' },
+    // any memory-group instruction that writes the accumulator
+    { name: 'memToAcc', x: -1.5, y: 34, side: 'in' },
+    // any that writes memory or a port
+    { name: 'memWrite', x: -1.5, y: 38, side: 'in' },
+    // outputs
+    { name: 'pcInc', x: 320, y: 0, side: 'out' },
+    { name: 'irLoad', x: 320, y: 6, side: 'out' },
+    // the two halves of the SRC address, one phase each
+    { name: 'srcHi', x: 320, y: 12, side: 'out' },
+    { name: 'srcLo', x: 320, y: 18, side: 'out' },
+    { name: 'accLoad', x: 320, y: 24, side: 'out' },
+    { name: 'accFromImm', x: 320, y: 30, side: 'out' },
+    { name: 'accFromMem', x: 320, y: 36, side: 'out' },
+    { name: 'accFromReg', x: 320, y: 42, side: 'out' },
+    { name: 'regWrite', x: 320, y: 48, side: 'out' },
+    { name: 'ramWrite', x: 320, y: 54, side: 'out' },
+  ],
+  build(m) {
+    const pF = m.port('pFetch'), pR1 = m.port('pRead1');
+    const pR2 = m.port('pRead2'), pE = m.port('pExec');
+
+    // the opcode is captured during FETCH, and the PC steps then too
+    const nF = m.net();
+    m.instantiate(Inverter, 0, 0, { a: pF, y: nF });
+    m.instantiate(Inverter, GATE_W * 2, 0, { a: nF, y: m.port('irLoad') });
+    const nF2 = m.net();
+    m.instantiate(Inverter, 0, GATE_H * 2, { a: pF, y: nF2 });
+    m.instantiate(Inverter, GATE_W * 2, GATE_H * 2,
+      { a: nF2, y: m.port('pcInc') });
+
+    // SRC fills its latch a nibble at a time: the pair's even register in
+    // READ1, the odd one in READ2. Only SRC does this, so both are gated
+    // by the instruction as well as the phase.
+    m.instantiate(And2, GATE_W * 5, 0,
+      { a: pR1, b: m.port('opSRC'), y: m.port('srcHi') });
+    m.instantiate(And2, GATE_W * 5, GATE_H * 2,
+      { a: pR2, b: m.port('opSRC'), y: m.port('srcLo') });
+
+    // The accumulator is written by LDM and by any memory instruction
+    // that reads — RDM, RDn, RDR, and the arithmetic pair ADM/SBM.
+    //
+    // XCH is deliberately NOT here. This machine uses XCH only to load
+    // the address pair, so it wants the write half and not the read half;
+    // including it would fire accLoad with no source selected, and the
+    // mux drives zero when nothing selects it. The accumulator would be
+    // wiped by every XCH — which is what happened, and is why the
+    // omission is stated rather than left to be noticed.
+    const wantAcc = m.net();
+    m.instantiate(Or2, GATE_W * 8, GATE_H * 4,
+      { a: m.port('opLDM'), b: m.port('memToAcc'), y: wantAcc });
+    m.instantiate(And2, GATE_W * 11, GATE_H * 4,
+      { a: pE, b: wantAcc, y: m.port('accLoad') });
+
+    // …and the three sources it picks between.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 6,
+      { a: pE, b: m.port('opLDM'), y: m.port('accFromImm') });
+    m.instantiate(And2, GATE_W * 5, GATE_H * 8,
+      { a: pE, b: m.port('memToAcc'), y: m.port('accFromMem') });
+    // accFromReg is deliberately tied low: this machine uses XCH only to
+    // load the address pair, so it needs the write half. Turning the read
+    // half on without the two-phase split the Subtract and Exchange
+    // machine has would make the accumulator take the register in the
+    // same phase the register takes the accumulator, and both land on the
+    // register's old value — XCH r1 stores 1 instead of 5.
+    m.instantiate(Inverter, GATE_W * 5, GATE_H * 10,
+      { a: VDD, y: m.port('accFromReg') });
+
+    // XCH writes a register; the memory-write group writes the 4002.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 12,
+      { a: pE, b: m.port('opXCH'), y: m.port('regWrite') });
+    m.instantiate(And2, GATE_W * 5, GATE_H * 14,
+      { a: pE, b: m.port('memWrite'), y: m.port('ramWrite') });
   },
 });
