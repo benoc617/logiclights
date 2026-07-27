@@ -2015,6 +2015,72 @@ function flipAndStep(c, label, on) {
     mismatched, 0);
 }
 
+// ── two-byte fetch ───────────────────────────────────────────────────────
+// The jump target stops being welded to the opcode. Every earlier machine
+// read a jump's destination from the low bits of the jump instruction
+// itself; this one fetches a second byte, which is what the real chip
+// does and what lets a condition mask and an address coexist.
+{
+  const c = buildCircuit('twobyte');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  const phase = () => [0, 1, 2, 3].findIndex(i => c.value[c.phases[i]] === HI);
+
+  expect(c, 'the ring has four phases', c.phases.length, 4);
+
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  for (let k = 0; k < 20; k++) {
+    expect(c, `exactly one phase active at step ${k}`,
+      [0, 1, 2, 3].filter(i => c.value[c.phases[i]] === HI).length, 1);
+    tick();
+  }
+
+  // oprLoad must fire only during FETCH2, and only for an instruction that
+  // has an operand. Firing on a one-byte instruction would capture the
+  // *next opcode* as an operand and the jump would go somewhere arbitrary.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  let loads = 0, wrongPhase = 0, wrongInstr = 0;
+  for (let k = 0; k < 60; k++) {
+    if (c.value[c.control.oprLoad] === HI) {
+      loads++;
+      if (phase() !== 2) wrongPhase++;
+      const opr = (rd('IR', 8) >> 4) & 15;
+      // only JCN(1), JUN(4), JMS(5), ISZ(7) and FIM take a second byte
+      if (![1, 2, 4, 5, 7].includes(opr)) wrongInstr++;
+    }
+    tick();
+  }
+  expect(c, 'oprLoad fires at all', loads > 0, true);
+  expect(c, 'oprLoad only fires during FETCH2', wrongPhase, 0);
+  expect(c, 'oprLoad only fires for two-byte instructions', wrongInstr, 0);
+
+  // The jump goes to the *operand*, not to the opcode's low bits. The
+  // program's JCN is 0x1C at address 4 with operand 3 at address 5: the
+  // opcode's low bits are 12, so a machine still reading them would jump
+  // to 4 and this would fail.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  let jumpedTo = null;
+  for (let k = 0; k < 60 && jumpedTo === null; k++) {
+    const wasJump = c.value[c.control.pcLoad] === HI && phase() === 3;
+    tick();
+    if (wasJump) jumpedTo = rd('PC', 3);
+  }
+  expect(c, 'a jump happened', jumpedTo !== null, true);
+  expect(c, 'the jump used the operand byte, not the opcode', jumpedTo, 3);
+
+  // and the countdown still runs, so the loop terminates
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  const seen = new Set();
+  for (let k = 0; k < 90; k++) { tick(); seen.add(rd('ACC', 4)); }
+  for (const v of [4, 3, 2, 1, 0]) {
+    expect(c, `two-byte machine counts through ${v}`, seen.has(v), true);
+  }
+}
+
 // ── picker grouping ──────────────────────────────────────────────────────
 // Sections are by technology, so a circuit's group has to match the devices
 // it is actually made of — otherwise a new circuit lands in the wrong

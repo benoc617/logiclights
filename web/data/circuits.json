@@ -389,7 +389,7 @@
       "id": "jcnmachine",
       "group": "CMOS · Machines",
       "name": "Conditional Machine",
-      "desc": "The last bring-up milestone, and the one that makes the machine loop on its own condition rather than run in a straight line. The program counts down: r0 holds 15, which is −1 in four bits, so each ADD takes one off the accumulator. The JCN sends control back to the ADD while the result is not yet zero, so the loop runs three times and then falls through — you can watch both branches of the same instruction in one pass. JCN's operand is a condition mask, not a code, and that is the character of the instruction: bit 2 tests the accumulator for zero, bit 1 tests the carry, bit 0 tests the TEST pin, and bit 3 inverts the whole result. So JCN 4 jumps when the accumulator is zero and JCN 12 jumps when it is not — one OR over the same three inputs, with one bit deciding whether to take the answer or its complement. One instruction covers what a conventional machine spends four opcodes on. The loop body sits at address 4 because it has to. This machine has no two-byte fetch yet, so a jump's target is the low bits of its own byte — and for JCN that nibble is also the condition mask, which welds the two together: mask 12 is 1100, whose low three bits are 100, so “jump if not zero” and “jump to 4” are the same instruction. On the real chip they live in different bytes and no such coupling exists. It is the most visible consequence of the missing two-byte fetch, left in the open rather than hidden behind a program arranged to avoid it. TEST was a real pin on the chip, an external input a program could branch on, which is how a 4004 polled a keyboard without interrupts; it is a switch here because that is what it was.",
+      "desc": "The last bring-up milestone, and the one that makes the machine loop on its own condition rather than run in a straight line. The program counts down, and the way it does so is worth a second look: r0 holds 15, and adding 15 is how you subtract 1. The accumulator is four bits, so arithmetic is mod 16 — 4 + 15 = 19, which is 16 + 3, and the 16 does not fit so it falls out as the carry, leaving 3. Every pass takes one off. That is two's complement: in four bits the top bit carries weight −8, so 1111 is −8+4+2+1 = −1. It is also why the 4004 has no subtract-immediate instruction, since adding the complement uses hardware that already exists. The JCN sends control back to the ADD while the result is not yet zero, so the loop runs three times and then falls through — you can watch both branches of the same instruction in one pass. JCN's operand is a condition mask, not a code, and that is the character of the instruction: bit 2 tests the accumulator for zero, bit 1 tests the carry, bit 0 tests the TEST pin, and bit 3 inverts the whole result. So JCN 4 jumps when the accumulator is zero and JCN 12 jumps when it is not — one OR over the same three inputs, with one bit deciding whether to take the answer or its complement. One instruction covers what a conventional machine spends four opcodes on. The loop body sits at address 4 because it has to. This machine has no two-byte fetch yet, so a jump's target is the low bits of its own byte — and for JCN that nibble is also the condition mask, which welds the two together: mask 12 is 1100, whose low three bits are 100, so “jump if not zero” and “jump to 4” are the same instruction. On the real chip they live in different bytes and no such coupling exists. It is the most visible consequence of the missing two-byte fetch, left in the open rather than hidden behind a program arranged to avoid it. TEST was a real pin on the chip, an external input a program could branch on, which is how a 4004 polled a keyboard without interrupts; it is a switch here because that is what it was.",
       "hints": {
         "CLK": "the clock — three edges per instruction",
         "RST": "back to FETCH at address 0",
@@ -401,6 +401,29 @@
         "Z": "the accumulator is zero (computed, not stored)",
         "CY": "the carry flag",
         "TK": "the condition tree says this jump takes"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
+      "id": "twobyte",
+      "group": "CMOS · Machines",
+      "name": "Two-Byte Machine",
+      "desc": "Two-byte fetch, and with it the jump target stops being welded to the opcode. Every machine before this read a jump's destination out of the low bits of the jump instruction itself, because it had nowhere else to get one — which is why the Conditional Machine's JCN 12 means “jump if not zero” and “jump to 4” inseparably, the condition mask and the target being the same four bits. A real 4004 instruction that needs an address carries a second byte, so the cycle grows a phase: FETCH the opcode, DECODE it, FETCH2 the operand, then EXEC. Now JCN 12, 3 reads properly — mask in the first byte, target in the second, independent of each other. The structural part is that the program counter advances twice: once for the opcode and once to step over the operand. Without that the operand byte is the next thing fetched, and the machine executes an address as though it were an instruction, which is exactly what the earlier machines do and why their listings show a NOP that is really an operand. A one-byte instruction passes through FETCH2 idle rather than skipping it, because a ring counter that could skip a phase would need a mux in the ring, and a ring with a mux can lose or duplicate its bit — the two failures a ring counter exists to prevent.",
+      "hints": {
+        "CLK": "the clock — four edges per instruction now",
+        "RST": "back to FETCH at address 0",
+        "TEST": "the TEST pin — an external input JCN can branch on",
+        "P": "the phase ring: FETCH, DECODE, FETCH2, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register — the opcode byte",
+        "OPR": "operand register — the second byte, and the jump target",
+        "ACC": "the accumulator",
+        "Z": "the accumulator is zero",
+        "TK": "this jump takes"
       },
       "state": {
         "title": "Phases and control lines",

@@ -31,6 +31,30 @@ import {
 
 export const PHASES = ['FETCH', 'DECODE', 'EXEC'];
 
+// With two-byte fetch the cycle grows a phase: an instruction that carries
+// an address fetches its operand before executing.
+//
+//   FETCH   put the PC on the ROM, capture the opcode byte
+//   DECODE  the register is stable, the decoder has settled
+//   FETCH2  a two-byte instruction fetches its operand here; a one-byte
+//           instruction passes through doing nothing
+//   EXEC    act
+//
+// The real 4004 does the same thing for the same reason, spread over more
+// phases because its bus is four bits wide: an instruction that needs a
+// 12-bit address cannot get one in a single memory cycle. Dropping the
+// multiplexed bus removes the nibble-shuffling phases but not this one —
+// the operand still has to be fetched from somewhere before it can be
+// used, and that is architecture rather than packaging.
+//
+// FETCH2 is unconditional in the ring and conditional in its *effect*.
+// A ring counter that could skip a phase would need a mux in the ring
+// itself, and a ring with a mux in it can lose or duplicate its bit — the
+// two failures a ring counter exists to make impossible. Passing through
+// an idle phase costs one clock on one-byte instructions and keeps the
+// ring a ring.
+export const PHASES4 = ['FETCH', 'DECODE', 'FETCH2', 'EXEC'];
+
 // A ring counter: one flip-flop per phase, with the high bit walking around
 // the loop on every clock edge. This is `buildOscillator()` grown up — the
 // relay ring chases a pulse around three inverters and never settles; this
@@ -256,5 +280,88 @@ export const IsZero4 = defineModule('zero4', {
     m.instantiate(Or2, 0, GATE_H + 2, { a: m.port('a2'), b: m.port('a3'), y: o2 });
     m.instantiate(Or2, GATE_W * 4, 0, { a: o1, b: o2, y: any });
     m.instantiate(Inverter, GATE_W * 8, 0, { a: any, y: m.port('z') });
+  },
+});
+
+// A control unit for the four-phase cycle, with two-byte fetch.
+//
+// The difference from the three-phase one is `oprLoad`: during FETCH2 a
+// two-byte instruction captures the byte at the PC into an operand
+// register, and the PC advances again so it does not re-execute that byte
+// as an opcode. That last part is the whole reason two-byte fetch is
+// structural rather than cosmetic — without it, a machine reads the
+// operand as an instruction, which is exactly what the three-phase
+// machines do and why their jump targets are welded to their opcodes.
+export const ControlUnit4 = defineModule('ctrl4', {
+  ports: [
+    { name: 'pFetch', x: -1.5, y: 0, side: 'in' },
+    { name: 'pDecode', x: -1.5, y: 4, side: 'in' },
+    { name: 'pFetch2', x: -1.5, y: 8, side: 'in' },
+    { name: 'pExec', x: -1.5, y: 12, side: 'in' },
+    { name: 'twoByte', x: -1.5, y: 18, side: 'in' },
+    { name: 'opJUN', x: -1.5, y: 22, side: 'in' },
+    { name: 'opJCN', x: -1.5, y: 26, side: 'in' },
+    { name: 'opLDM', x: -1.5, y: 30, side: 'in' },
+    { name: 'opADD', x: -1.5, y: 34, side: 'in' },
+    { name: 'opXCH', x: -1.5, y: 38, side: 'in' },
+    { name: 'opINC', x: -1.5, y: 42, side: 'in' },
+    { name: 'condTake', x: -1.5, y: 46, side: 'in' },
+    { name: 'pcInc', x: 340, y: 0, side: 'out' },
+    { name: 'pcLoad', x: 340, y: 6, side: 'out' },
+    { name: 'irLoad', x: 340, y: 12, side: 'out' },
+    { name: 'oprLoad', x: 340, y: 18, side: 'out' },
+    { name: 'accLoad', x: 340, y: 24, side: 'out' },
+    { name: 'accFromAlu', x: 340, y: 30, side: 'out' },
+    { name: 'regWrite', x: 340, y: 36, side: 'out' },
+  ],
+  build(m) {
+    const pF = m.port('pFetch'), pF2 = m.port('pFetch2'), pE = m.port('pExec');
+
+    // the opcode is captured during FETCH
+    const nF = m.net();
+    m.instantiate(Inverter, 0, 0, { a: pF, y: nF });
+    m.instantiate(Inverter, GATE_W * 2, 0, { a: nF, y: m.port('irLoad') });
+
+    // the operand during FETCH2, and only for an instruction that has one
+    m.instantiate(And2, 0, GATE_H * 2,
+      { a: pF2, b: m.port('twoByte'), y: m.port('oprLoad') });
+
+    // A jump: unconditional, or conditional and true.
+    const jcnTake = m.net(), wantJump = m.net(), jump = m.net();
+    m.instantiate(And2, GATE_W * 4, GATE_H * 4,
+      { a: m.port('opJCN'), b: m.port('condTake'), y: jcnTake });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 4,
+      { a: m.port('opJUN'), b: jcnTake, y: wantJump });
+    m.instantiate(And2, GATE_W * 10, GATE_H * 4, { a: pE, b: wantJump, y: jump });
+    const jn = m.net();
+    m.instantiate(Inverter, GATE_W * 13, GATE_H * 4, { a: jump, y: jn });
+    m.instantiate(Inverter, GATE_W * 15, GATE_H * 4,
+      { a: jn, y: m.port('pcLoad') });
+
+    // The PC advances on FETCH, and again on FETCH2 when there is an
+    // operand to step over — otherwise the operand byte would be the next
+    // thing fetched as an opcode.
+    const njump = m.net(), incF2 = m.net(), anyInc = m.net();
+    m.instantiate(Inverter, GATE_W * 4, GATE_H * 6, { a: jump, y: njump });
+    m.instantiate(And2, GATE_W * 7, GATE_H * 6,
+      { a: pF2, b: m.port('twoByte'), y: incF2 });
+    m.instantiate(Or2, GATE_W * 10, GATE_H * 6, { a: pF, b: incF2, y: anyInc });
+    m.instantiate(And2, GATE_W * 13, GATE_H * 6,
+      { a: anyInc, b: njump, y: m.port('pcInc') });
+
+    // LDM and ADD both write the accumulator; accFromAlu picks the source
+    const wantAcc = m.net();
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 8,
+      { a: m.port('opLDM'), b: m.port('opADD'), y: wantAcc });
+    m.instantiate(And2, GATE_W * 8, GATE_H * 8,
+      { a: pE, b: wantAcc, y: m.port('accLoad') });
+    m.instantiate(And2, GATE_W * 4, GATE_H * 9,
+      { a: pE, b: m.port('opADD'), y: m.port('accFromAlu') });
+
+    const rw = m.net();
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 10,
+      { a: m.port('opXCH'), b: m.port('opINC'), y: rw });
+    m.instantiate(And2, GATE_W * 8, GATE_H * 10,
+      { a: pE, b: rw, y: m.port('regWrite') });
   },
 });
