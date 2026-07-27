@@ -119,6 +119,13 @@ generated, so this file does not repeat them.
       (Figures are one machine's numbers, not a tracked benchmark — there
       are no timing assertions in the suite. Treat them as orders of
       magnitude.)
+- [x] **Test suite wall time** — `test/run.mjs` shards `sim-test.mjs` at its
+      section markers and runs the pieces across cores: 4m37s → ~60s, same
+      149,492 checks. Two follow-ups are measured and written up in
+      [TEST-SPEED.md](TEST-SPEED.md): one block ("JCN, every mask, in the
+      machine") is 58.8s by itself and is now the floor, and `settle()`
+      costs ~29ms per tick on the larger machines, which looks like more
+      than the circuit sizes justify.
 - [ ] **Renderer caching** — build a `Path2D` per net once and reuse it;
       currently every wire is re-pathed each frame, now once per logic value.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module

@@ -58,8 +58,9 @@ gotchas for working in this repo · [docs/DATA.md](docs/DATA.md) — how a circu
 catalogue data and behaviour code · [docs/DEVICES.md](docs/DEVICES.md) — the device model and the
 switch-level solver · [docs/DESIGN.md](docs/DESIGN.md) — how the circuit
 topologies and renderer work · [docs/4004.md](docs/4004.md) — the plan for
-building a 4004 · [docs/ROADMAP.md](docs/ROADMAP.md) — the queue and open
-TODOs.
+building a 4004 · [docs/TEST-SPEED.md](docs/TEST-SPEED.md) — where the test
+suite spends its time and what would make it faster ·
+[docs/ROADMAP.md](docs/ROADMAP.md) — the queue and open TODOs.
 
 ## Run it
 
