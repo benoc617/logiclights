@@ -2284,10 +2284,13 @@ function flipAndStep(c, label, on) {
 
   // The demo program, walked once and asserted at each point of interest.
   //
-  // Running it four times to check four things costs four times the
+  // Running it repeatedly to check each property costs several times the
   // clocking, and this is the most expensive machine in the suite — five
-  // phases over sixteen instructions, ~60ms a tick. One trace, several
-  // assertions.
+  // phases over a sixteen-word ROM. One trace, many assertions.
+  //
+  // `at[k]` is the state after instruction k, and its `ir` is that
+  // instruction: they agree at this sampling point, which is what lets
+  // the assertions index by program position.
   {
     const c = buildMemMachine();
     const stepModel = cmos.memmachine.step;
@@ -2301,6 +2304,11 @@ function flipAndStep(c, label, on) {
       return v;
     };
     const cy = () => (lampV(c, 'CY') === HI ? 1 : 0);
+    const reg = i => {
+      const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+      return bits.every(b => b === '0' || b === '1')
+        ? parseInt(bits.slice().reverse().join(''), 2) : null;
+    };
 
     sw(c, 'RST', true); settleAll(); tick();
     sw(c, 'RST', false); settleAll();
@@ -2314,38 +2322,61 @@ function flipAndStep(c, label, on) {
     const at = {};
     for (let k = 0; k < 16; k++) {
       for (let p = 0; p < 5; p++) tick();
-      at[k] = { acc: rd('ACC', 4), cy: cy(), src: rd('SRC', 8) };
+      at[k] = { ir: rd('IR', 8), pc: rd('PC', 4), acc: rd('ACC', 4),
+                cy: cy(), src: rd('SRC', 8) };
     }
+
+    // FIM loads a register pair from its operand byte. The manual's
+    // example is FIM 2 254 leaving r2 = 15 and r3 = 14 — the high nibble
+    // goes to the EVEN register, the same convention SRC reads with.
+    expect(c, 'FIM ran first', at[0].ir, 0x20);
+    expect(c, 'FIM loaded the even register with the high nibble', reg(0), 1);
+    expect(c, 'FIM loaded the odd register with the low nibble', reg(1), 5);
+
+    // …and the program counter stepped over the operand. This machine has
+    // no FETCH2 phase — every instruction before FIM was one byte — so
+    // without the extra increment the operand is fetched as the next
+    // opcode and everything after runs one address early.
+    expect(c, 'the PC stepped over FIM\u2019s operand byte', at[0].pc, 2);
 
     // SRC's address splits as chip(2) | register(2) | character(4) — the
     // diagram on page 3-51. r0 holds 1 and r1 holds 5, so the address is
-    // 0x15 and not 0x51: the pair's EVEN register is the high nibble.
-    expect(c, 'SRC latched the pair as an 8-bit address', at[4].src, 0x15);
-    expect(c, 'SRC address: chip', (at[4].src >> 6) & 3, 0);
-    expect(c, 'SRC address: register', (at[4].src >> 4) & 3, 1);
-    expect(c, 'SRC address: character', at[4].src & 15, 5);
+    // 0x15 and not 0x51.
+    expect(c, 'SRC ran second', at[1].ir, 0x21);
+    expect(c, 'SRC latched the pair as an 8-bit address', at[1].src, 0x15);
+    expect(c, 'SRC address: chip', (at[1].src >> 6) & 3, 0);
+    expect(c, 'SRC address: register', (at[1].src >> 4) & 3, 1);
+    expect(c, 'SRC address: character', at[1].src & 15, 5);
 
     expect(c, 'WRM wrote the accumulator to the addressed character',
       c.ram.inspect()[0].main[1][5], 7);
 
-    // ADM and SBM are ADD and SUB with the RAM as the operand, so they
-    // share the adder. Page 3-60: accumulator 10, data character 7,
-    // carry 0 → 0001B with the carry set.
-    expect(c, 'ADM added the RAM character and the carry', at[8].acc, 1);
-    expect(c, 'ADM set the carry on overflow', at[8].cy, 1);
+    // ADM shares the adder with ADD. Page 3-60: accumulator 10, data
+    // character 7, carry 0 → 0001B with the carry set.
+    expect(c, 'ADM ran', at[5].ir, 0xEB);
+    expect(c, 'ADM added the RAM character and the carry', at[5].acc, 1);
+    expect(c, 'ADM set the carry on overflow', at[5].cy, 1);
 
     // The ports hold their value — "this value will stay at the output
     // port until overwritten".
     expect(c, 'WMP drove the RAM output port',
       c.ram.inspect()[0].outPort, 1);
     expect(c, 'WRR drove the ROM output port', c.romPort, 3);
-    expect(c, 'RDR read the ROM port back', at[14].acc, 3);
+    expect(c, 'RDR read the ROM port back', at[11].acc, 3);
 
-    // …and the last instruction is RDM, which must still find the 7 that
-    // WRM left nine instructions earlier. The SRC address has not changed
-    // since, which is the persistence the manual describes.
+    // RDM still finds the 7 that WRM left eleven instructions earlier.
+    // The SRC address has not changed since, which is the persistence the
+    // manual describes.
     expect(c, 'RDM read back what WRM wrote, long after the SRC',
-      at[15].acc, 7);
+      at[12].acc, 7);
+
+    // JIN jumps to the address held in a register pair — its target is
+    // not in the instruction at all, which is what makes it indirect.
+    // r0:r1 hold 1 and 5, so the target is 0x15, truncated to address 5
+    // in this sixteen-word ROM.
+    expect(c, 'JIN ran', at[13].ir, 0x31);
+    expect(c, 'JIN jumped to the address in the register pair',
+      at[13].pc, 5);
   }
 
   // Status characters are addressed by *which* status opcode ran, not by
@@ -2378,42 +2409,12 @@ function flipAndStep(c, label, on) {
     expect(c, 'RDM read from the addressed chip', rd('ACC', 4), 6);
   }
 
-  // The carry flag has to start defined. A flag that powers up floating
-  // feeds Z into the adder's carry-in, and the first ADM comes out one
-  // too high with no other symptom — which is what happened.
-  {
-    const { c, cy } = run(pad([0]), 0);
-    expect(c, 'reset clears the carry flag', cy(), 0);
-  }
-
-  // The ports. WMP drives the RAM chip's output port, WRR the ROM's, and
-  // both hold their value — "this value will stay at the output port
-  // until overwritten". RDR reads the ROM port back.
-  {
-    const { c, rd } = run(undefined, 15);
-    expect(c, 'WMP drove the RAM output port',
-      c.ram.inspect()[0].outPort, 1);
-    expect(c, 'WRR drove the ROM output port', c.romPort, 3);
-    expect(c, 'RDR read the ROM port back', rd('ACC', 4), 3);
-  }
-  {
-    // …and the last instruction is RDM, which must still find the 7 that
-    // WRM left nine instructions earlier. The SRC address has not changed
-    // since, which is the persistence the manual describes.
-    const { c, rd } = run(undefined, 16);
-    expect(c, 'RDM read back what WRM wrote, long after the SRC',
-      rd('ACC', 4), 7);
-  }
-
-  // DCL selects the RAM bank from the accumulator's low three bits, and
-  // reset returns to bank 0 — page 3-49, which gives this exact example.
+  // DCL selects the RAM bank from the accumulator's low three bits —
+  // page 3-49 gives this exact example. Reset returning to bank 0 is
+  // asserted in the main trace above.
   {
     const { c } = run(pad([0xD3, 0xFD]), 2);
     expect(c, 'DCL selected the bank named by the accumulator', c.bank, 3);
-  }
-  {
-    const { c } = run(pad([0]), 1);
-    expect(c, 'reset selects bank 0', c.bank, 0);
   }
 }
 

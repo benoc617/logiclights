@@ -97,7 +97,7 @@ circuit exists to explain.
 | Two-Byte Machine | Machines | · | 4945 | · | 8 | 2259 |
 | Subtract and Exchange | Machines | · | 4042 | · | 8 | 1844 |
 | Accumulator Group | Machines | · | 2904 | · | 8 | 1415 |
-| Memory Machine | Machines | · | 5012 | · | 8 | 2303 |
+| Memory Machine | Machines | · | 6209 | · | 8 | 2863 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -125,7 +125,7 @@ circuit exists to explain.
 | Circuits | 58 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 30447 |
+| Transistors | 31644 |
 | Diodes | 4 |
 | Resistors | 320 |
 
@@ -133,7 +133,7 @@ circuit exists to explain.
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Memory Machine | 5020 | 2303 |
+| Memory Machine | 6217 | 2863 |
 | Two-Byte Machine | 4953 | 2259 |
 | Subtract and Exchange | 4050 | 1844 |
 | Conditional Machine | 3607 | 1628 |
@@ -141,7 +141,7 @@ circuit exists to explain.
 
 ## Test suite
 
-`node test/sim-test.mjs` → **(suite failed — fix that before trusting this file)**
+`node test/sim-test.mjs` → **149535 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

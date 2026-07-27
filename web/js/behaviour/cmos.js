@@ -2556,22 +2556,23 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
 // own instruction — the manual says the address "remains in effect until
 // changed by a subsequent SRC", so one SRC can serve many accesses.
 const PMEM_PROGRAM = [
-  0xD1,   //  0  LDM 1
-  0xB0,   //  1  XCH r0     r0 = 1   → chip 0, register 1
-  0xD5,   //  2  LDM 5
-  0xB1,   //  3  XCH r1     r1 = 5   → character 5
-  0x21,   //  4  SRC 0P     address = 0x15, and it stays there
-  0xD7,   //  5  LDM 7
-  0xE0,   //  6  WRM        RAM[0][1][5] = 7
-  0xDA,   //  7  LDM 10
-  0xEB,   //  8  ADM        10 + 7 = 1 with a carry — the manual's example
-  0xE1,   //  9  WMP        the RAM output port takes it
-  0xD3,   // 10  LDM 3
-  0xE4,   // 11  WR0        status character 0 = 3
-  0xEC,   // 12  RD0        read it back
-  0xE2,   // 13  WRR        the ROM output port takes it
-  0xEA,   // 14  RDR        and reads back
-  0xE9,   // 15  RDM        main memory again, and the PC wraps
+  0x20,   //  0  FIM 0P ─┐  load a register pair with an immediate…
+  0x15,   //  1     0x15 ┘  …r0 = 1, r1 = 5: the even register takes the
+          //               high nibble, which is the manual's convention
+  0x21,   //  2  SRC 0P     send r0:r1 as address 0x15, and it stays there
+  0xD7,   //  3  LDM 7
+  0xE0,   //  4  WRM        RAM[0][1][5] = 7
+  0xDA,   //  5  LDM 10
+  0xEB,   //  6  ADM        10 + 7 = 1 with a carry — the manual's example
+  0xE1,   //  7  WMP        the RAM output port takes it
+  0xD3,   //  8  LDM 3
+  0xE4,   //  9  WR0        status character 0 = 3
+  0xEC,   // 10  RD0        read it back
+  0xE2,   // 11  WRR        the ROM output port takes it
+  0xEA,   // 12  RDR        and reads back
+  0xE9,   // 13  RDM        main memory again
+  0x31,   // 14  JIN 0P     jump to r0:r1 = 0x15 → address 5 in this ROM
+  0x00,   // 15  NOP
 ];
 
 export function buildMemMachine(program = PMEM_PROGRAM) {
@@ -2593,10 +2594,15 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   const nFetch = c.net();
   instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
 
+  // JIN loads the program counter from a register pair. On the real chip
+  // only the low eight bits are replaced and the page stays put; this
+  // ROM is one page, so the whole counter is the low bits.
   const pcEnable = c.net();
+  const jinTarget = [c.net(), c.net(), c.net(), c.net()];
+  const pcLoadLine = c.net();
   const PC = instantiate(c, programCounter(4), 40, ROW2, {
-    clk: clkNet, nclk, en: pcEnable, rst, load: VSS,
-    a0: VSS, a1: VSS, a2: VSS, a3: VSS,
+    clk: clkNet, nclk, en: pcEnable, rst, load: pcLoadLine,
+    a0: jinTarget[0], a1: jinTarget[1], a2: jinTarget[2], a3: jinTarget[3],
   }, { tag: 'pc' });
   c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
 
@@ -2607,8 +2613,17 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   // the real chip addresses 4K.
   const xRom = 40 + PC.w + 30;
   const Rom = romArray(program, 8, 4);
+  // The ROM's address: the program counter normally, r0:r1 for FIN.
+  //
+  // FIN is the only instruction in the set that reads program memory at
+  // an address the program counter did not produce — "the contents of
+  // registers 0 and 1 are concatenated to form the lower 8 bits of a ROM
+  // address". That makes the ROM address a mux for exactly one
+  // instruction, which is why it is worth pointing at.
+  const romAddr = [c.net(), c.net(), c.net(), c.net()];
+  const finAddr = [c.net(), c.net(), c.net(), c.net()];
   const rom = instantiate(c, Rom, xRom, ROW2,
-    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2, a3: PC.nets.q3 },
+    { a0: romAddr[0], a1: romAddr[1], a2: romAddr[2], a3: romAddr[3] },
     { tag: 'rom' });
 
   const xIr = xRom + rom.w + 30;
@@ -2628,6 +2643,19 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   c.region('Instruction register', xIr - 6, ROW2 - 6, xIr + 160,
     ROW2 + 7 * 26 + 24);
 
+  // FIM carries a second byte. The operand register captures it during
+  // DECODE — this machine has no FETCH2, so the byte after the opcode is
+  // read while the decoder settles, which works because the program
+  // counter has already stepped past the opcode by then.
+  const xOpr = xIr + 160;
+  const opr = instantiate(c, register(8), xOpr, ROW2 + 240, {
+    clk: clkNet, nclk, load: ring.nets.p1,
+    d0: rom.nets.d0, d1: rom.nets.d1, d2: rom.nets.d2, d3: rom.nets.d3,
+    d4: rom.nets.d4, d5: rom.nets.d5, d6: rom.nets.d6, d7: rom.nets.d7,
+  }, { tag: 'opr' });
+  c.region('Operand register — FIM\u2019s second byte',
+    xOpr - 6, ROW2 + 234, xOpr + 150, ROW2 + 330);
+
   const xDec = xIr + 190;
   const dbind = {};
   for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
@@ -2638,9 +2666,50 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
 
   // SRC and FIM share opcode 0010, told apart by OPA bit 0: odd is SRC.
   // The same shared-encoding rule the decoder's twoByte line uses.
-  const opSRC = c.net();
-  instantiate(c, And2, xDec + dec.w + 10, ROW2 - 60,
+  // Four instructions share two opcodes, told apart by OPA bit 0 — the
+  // same shared-encoding rule the decoder's twoByte line uses.
+  //
+  //   0010 rrr 0  FIM    0010 rrr 1  SRC
+  //   0011 rrr 0  FIN    0011 rrr 1  JIN
+  const nir0 = c.net();
+  instantiate(c, Inverter, xDec + dec.w + 10, ROW2 - 80,
+    { a: ir[0], y: nir0 }, { tag: 'nir0' });
+  const opSRC = c.net(), opFIM = c.net(), opFIN = c.net(), opJIN = c.net();
+  // FIN's cycle flag: low on its first pass through the ring, high on the
+  // second. A single flip-flop that toggles while FIN is in the
+  // instruction register — which is all "two instruction cycles" means.
+  const finCycle2 = c.net();
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 80,
     { a: dec.nets.op2, b: ir[0], y: opSRC }, { tag: 'srcd' });
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 60,
+    { a: dec.nets.op2, b: nir0, y: opFIM }, { tag: 'fimd' });
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 40,
+    { a: dec.nets.op3, b: nir0, y: opFIN }, { tag: 'find' });
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 20,
+    { a: dec.nets.op3, b: ir[0], y: opJIN }, { tag: 'jind' });
+
+  // The FIN cycle flag. It flips at the end of every ring pass while FIN
+  // is decoded, so the first pass reads the address and the second writes
+  // the result. Held clear otherwise, so a FIN always starts on cycle 1.
+  {
+    const nf = c.net(), d = c.net(), q = c.net();
+    instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 100,
+      { a: finCycle2, y: nf }, { tag: 'fc2n' });
+    instantiate(c, And2, xDec + dec.w + 86, ROW2 - 100,
+      { a: nf, b: opFIN, y: d }, { tag: 'fc2d' });
+    // Clocked by the phase-0 line: one edge per pass of the ring, which
+    // is exactly "once per instruction cycle".
+    const np0 = c.net();
+    instantiate(c, Inverter, xDec + dec.w + 100, ROW2 - 130,
+      { a: ring.nets.p0, y: np0 }, { tag: 'fc2p' });
+    instantiate(c, DFlipFlop, xDec + dec.w + 112, ROW2 - 100,
+      { d, q, clk: ring.nets.p0, nclk: np0 }, { tag: 'fc2' });
+    const t = c.net();
+    instantiate(c, Inverter, xDec + dec.w + 160, ROW2 - 100,
+      { a: q, y: t }, { tag: 'fc2b' });
+    instantiate(c, Inverter, xDec + dec.w + 180, ROW2 - 100,
+      { a: t, y: finCycle2 }, { tag: 'fc2c' });
+  }
 
   const ROW3 = ROW2 + 380;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
@@ -2648,6 +2717,9 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   // blocks that read them — nets are only wiring, so order is free.
   const ramQ = [c.net(), c.net(), c.net(), c.net()];
   const carryQ = c.net();
+  // Pair write data, driven far below where the operand and ROM nibbles
+  // are muxed; declared here because the register file is built first.
+  const pairD = [c.net(), c.net(), c.net(), c.net()];
 
   const xCtrl = xDec + dec.w + 40;
   const memToAcc = c.net(), memWrite = c.net();
@@ -2657,6 +2729,18 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     pRead1: ring.nets.p2, pRead2: ring.nets.p3, pExec: ring.nets.p4,
     opSRC, opLDM: dec.nets.op13, opXCH: dec.nets.op11,
     memToAcc, memWrite, opADM, opSBM, opDCL,
+    opFIM, opJIN, twoByte: dec.nets.twoByte, finCycle2,
+    // FIN is decoded (see opFIN above) but held off here. It is the only
+    // instruction in the 4004 set that takes TWO instruction cycles —
+    // one byte, sixteen clock periods — because it must read a register
+    // pair, address the ROM with it, and write a register pair back, and
+    // that does not fit in one pass of a five-phase ring.
+    //
+    // The two-cycle sequencing is built (finCycle2 above) but not yet
+    // sequencing correctly, and a FIN that writes on the wrong cycle
+    // clobbers the very registers it is reading from. Off is honest;
+    // half-working is not.
+    opFIN: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — five phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -2679,14 +2763,34 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { tag: `ra0n` });
     instantiate(c, Inverter, xDec + 20, ROW3 - 90, { a: t, y: ra[0] },
       { tag: `ra0b` });
-    // bits 1-3: the pair number RRR, from OPA bits 1-3, when SRC is
-    // executing; otherwise the plain register number from OPA.
+    // bits 1-3: the pair number RRR, from OPA bits 1-3, for any of the
+    // pair instructions; otherwise the plain register number from OPA.
+    //
+    // FIN is the exception, and the manual is specific: its *address*
+    // always comes from registers 0 and 1 regardless of RP, while its
+    // *result* goes to the named pair. So during its read phases the
+    // address lines are forced to pair 0.
+    const anyPair = c.net(), pairNotFin = c.net();
+    {
+      const t1 = c.net(), t2 = c.net();
+      instantiate(c, Or2, xDec - 60, ROW3 - 120,
+        { a: opSRC, b: opFIM, y: t1 }, { tag: 'apr1' });
+      instantiate(c, Or2, xDec - 60, ROW3 - 100,
+        { a: opFIN, b: opJIN, y: t2 }, { tag: 'apr2' });
+      instantiate(c, Or2, xDec - 30, ROW3 - 120,
+        { a: t1, b: t2, y: anyPair }, { tag: 'apr3' });
+      const nf = c.net();
+      instantiate(c, Inverter, xDec - 60, ROW3 - 80,
+        { a: opFIN, y: nf }, { tag: 'apr4' });
+      instantiate(c, And2, xDec - 30, ROW3 - 80,
+        { a: anyPair, b: nf, y: pairNotFin }, { tag: 'apr5' });
+    }
     for (let i = 1; i < 4; i++) {
       const fs = c.net(), fx = c.net(), ns = c.net();
       instantiate(c, Inverter, xDec, ROW3 - 70 + i * 22,
-        { a: opSRC, y: ns }, { tag: `ran${i}` });
+        { a: pairNotFin, y: ns }, { tag: `ran${i}` });
       instantiate(c, And2, xDec + 24, ROW3 - 70 + i * 22,
-        { a: ir[i], b: opSRC, y: fs }, { tag: `ras${i}` });
+        { a: ir[i], b: pairNotFin, y: fs }, { tag: `ras${i}` });
       instantiate(c, And2, xDec + 24, ROW3 - 58 + i * 22,
         { a: ir[i], b: ns, y: fx }, { tag: `rax${i}` });
       instantiate(c, Or2, xDec + 54, ROW3 - 70 + i * 22,
@@ -2694,18 +2798,142 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     }
   }
 
+  // FIN's address comes from r0 and r1, which the machine reads the same
+  // way SRC reads its pair — during READ1 and READ2. The nibbles are
+  // captured into a latch so both are available at once when the ROM
+  // needs them.
+  for (let i = 0; i < 4; i++) {
+    const fp = c.net(), fc = c.net(), nf = c.net();
+    instantiate(c, Inverter, xRom - 90, ROW2 + 260 + i * 26,
+      { a: ctrl.nets.romFromPair, y: nf }, { tag: `ran${i}` });
+    instantiate(c, And2, xRom - 64, ROW2 + 260 + i * 26,
+      { a: finAddr[i], b: ctrl.nets.romFromPair, y: fp }, { tag: `rap${i}` });
+    instantiate(c, And2, xRom - 64, ROW2 + 272 + i * 26,
+      { a: PC.nets[`q${i}`], b: nf, y: fc }, { tag: `rac${i}` });
+    instantiate(c, Or2, xRom - 34, ROW2 + 260 + i * 26,
+      { a: fp, b: fc, y: romAddr[i] }, { tag: `rao${i}` });
+  }
+  c.region('ROM address mux — the program counter, or r0:r1 for FIN',
+    xRom - 96, ROW2 + 254, xRom - 20, ROW2 + 260 + 4 * 26);
+
   const xRf = 40;
-  const regWriteGated = c.net();
+  // The register file's write enable and its data source. XCH writes the
+  // accumulator at EXEC; FIM and FIN write a pair across READ1/READ2.
+  const regWriteGated = c.net(), pairWr = c.net(), anyWr = c.net();
+  instantiate(c, Or2, xRf, ROW3 - 70,
+    { a: ctrl.nets.pairHi, b: ctrl.nets.pairLo, y: pairWr },
+    { tag: 'pwe' });
+  instantiate(c, Or2, xRf + 30, ROW3 - 70,
+    { a: ctrl.nets.regWrite, b: pairWr, y: anyWr }, { tag: 'awe' });
   instantiate(c, And2, xRf, ROW3 - 40,
-    { a: ctrl.nets.regWrite, b: nclk, y: regWriteGated }, { tag: 'wegate' });
+    { a: anyWr, b: nclk, y: regWriteGated }, { tag: 'wegate' });
+  // Write data: the accumulator for XCH, or a pair nibble for FIM/FIN.
+  const regD = [c.net(), c.net(), c.net(), c.net()];
+  for (let i = 0; i < 4; i++) {
+    const fa = c.net(), fp = c.net(), np = c.net();
+    instantiate(c, Inverter, xRf - 60, ROW3 + 40 + i * 26,
+      { a: pairWr, y: np }, { tag: `rdn${i}` });
+    instantiate(c, And2, xRf - 34, ROW3 + 40 + i * 26,
+      { a: accQ[i], b: np, y: fa }, { tag: `rda${i}` });
+    instantiate(c, And2, xRf - 34, ROW3 + 52 + i * 26,
+      { a: pairD[i], b: pairWr, y: fp }, { tag: `rdp${i}` });
+    instantiate(c, Or2, xRf - 8, ROW3 + 40 + i * 26,
+      { a: fa, b: fp, y: regD[i] }, { tag: `rdo${i}` });
+  }
+
+  // Write address: OPA for XCH, and the pair-alternating address for FIM
+  // and FIN so a pair write lands on the even register then the odd.
+  //
+  // Routing XCH through the pair address is wrong and quiet: bit 0 comes
+  // from the phase rather than from the instruction, so XCH r1 writes r0.
+  // The register that should have changed keeps its old value and one
+  // that should not have changed takes the new one.
+  const wa = [c.net(), c.net(), c.net(), c.net()];
+  for (let i = 0; i < 4; i++) {
+    const fp = c.net(), fx = c.net(), np = c.net();
+    instantiate(c, Inverter, xRf - 120, ROW3 + 40 + i * 26,
+      { a: pairWr, y: np }, { tag: `wan${i}` });
+    instantiate(c, And2, xRf - 94, ROW3 + 40 + i * 26,
+      { a: ra[i], b: pairWr, y: fp }, { tag: `wap${i}` });
+    instantiate(c, And2, xRf - 94, ROW3 + 52 + i * 26,
+      { a: ir[i], b: np, y: fx }, { tag: `wax${i}` });
+    instantiate(c, Or2, xRf - 68, ROW3 + 40 + i * 26,
+      { a: fp, b: fx, y: wa[i] }, { tag: `wao${i}` });
+  }
+
   const rf = instantiate(c, RegFile16x4, xRf, ROW3, {
-    wa0: ir[0], wa1: ir[1], wa2: ir[2], wa3: ir[3],
+    wa0: wa[0], wa1: wa[1], wa2: wa[2], wa3: wa[3],
     ra0: ra[0], ra1: ra[1], ra2: ra[2], ra3: ra[3],
-    d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
+    d0: regD[0], d1: regD[1], d2: regD[2], d3: regD[3],
     we: regWriteGated,
   }, { tag: 'rf' });
   c.region('Register file — read as a pair during SRC',
     xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+
+  // JIN's target is the pair it read, captured the same way FIN's
+  // address is — the low nibble in READ2, the high in READ1.
+  for (let i = 0; i < 4; i++) {
+    instantiate(c, register(1), 40, ROW2 + 300 + i * 26, {
+      clk: clkNet, nclk, load: ring.nets.p3,
+      d0: rf.nets[`q${i}`], q0: jinTarget[i],
+    }, { tag: `jt${i}` });
+  }
+  const jn = c.net();
+  instantiate(c, Inverter, 40, ROW2 + 420, { a: ctrl.nets.pcLoad, y: jn },
+    { tag: 'jln' });
+  instantiate(c, Inverter, 60, ROW2 + 420, { a: jn, y: pcLoadLine },
+    { tag: 'jlb' });
+
+  // FIN's address latch: r0 and r1 as they come off the read bus, one
+  // per phase. Separate from the SRC latch because FIN's address is
+  // consumed immediately rather than held for later instructions.
+  for (let i = 0; i < 4; i++) {
+    instantiate(c, register(1), xRf + rf.w + 4, ROW3 + 300 + i * 30, {
+      clk: clkNet, nclk, load: ring.nets.p2,
+      d0: rf.nets[`q${i}`], q0: finAddr[i],
+    }, { tag: `fa${i}` });
+  }
+  c.region('FIN address latch — r0, captured in READ1',
+    xRf + rf.w - 2, ROW3 + 294, xRf + rf.w + 90, ROW3 + 300 + 4 * 30);
+
+  // Writing a register pair: the operand's high nibble to the even
+  // register, the low nibble to the odd one — the manual's convention
+  // (FIM 2 254 leaves r2 = 15 and r3 = 14). FIN writes the same way but
+  // from the ROM byte it just fetched rather than from an operand.
+  for (let i = 0; i < 4; i++) {
+    const fromOpr = c.net(), fromRom = c.net(), nf = c.net();
+    const hi = c.net(), lo = c.net(), nsel = c.net();
+    // FIM takes the operand register, FIN the ROM's output
+    instantiate(c, Inverter, xRf + rf.w + 120, ROW3 + 300 + i * 30,
+      { a: opFIN, y: nf }, { tag: `pdn${i}` });
+    // high nibble in READ1, low nibble in READ2
+    instantiate(c, And2, xRf + rf.w + 146, ROW3 + 300 + i * 30,
+      { a: opr.nets[`q${i + 4}`], b: nf, y: hi }, { tag: `pdh${i}` });
+    instantiate(c, And2, xRf + rf.w + 146, ROW3 + 312 + i * 30,
+      { a: rom.nets[`d${i + 4}`], b: opFIN, y: fromRom }, { tag: `pdr${i}` });
+    instantiate(c, Or2, xRf + rf.w + 176, ROW3 + 300 + i * 30,
+      { a: hi, b: fromRom, y: fromOpr }, { tag: `pdo${i}` });
+    // the low nibble, same two sources
+    const lh = c.net(), lr = c.net();
+    instantiate(c, And2, xRf + rf.w + 146, ROW3 + 324 + i * 30,
+      { a: opr.nets[`q${i}`], b: nf, y: lh }, { tag: `pll${i}` });
+    instantiate(c, And2, xRf + rf.w + 146, ROW3 + 336 + i * 30,
+      { a: rom.nets[`d${i}`], b: opFIN, y: lr }, { tag: `plr${i}` });
+    instantiate(c, Or2, xRf + rf.w + 176, ROW3 + 324 + i * 30,
+      { a: lh, b: lr, y: lo }, { tag: `plo${i}` });
+    // pick which nibble by phase
+    instantiate(c, Inverter, xRf + rf.w + 206, ROW3 + 312 + i * 30,
+      { a: ring.nets.p3, y: nsel }, { tag: `psn${i}` });
+    const th = c.net(), tl = c.net();
+    instantiate(c, And2, xRf + rf.w + 232, ROW3 + 300 + i * 30,
+      { a: fromOpr, b: nsel, y: th }, { tag: `psh${i}` });
+    instantiate(c, And2, xRf + rf.w + 232, ROW3 + 312 + i * 30,
+      { a: lo, b: ring.nets.p3, y: tl }, { tag: `psl${i}` });
+    instantiate(c, Or2, xRf + rf.w + 262, ROW3 + 300 + i * 30,
+      { a: th, b: tl, y: pairD[i] }, { tag: `pso${i}` });
+  }
+  c.region('Pair write data — even register takes the high nibble',
+    xRf + rf.w + 114, ROW3 + 294, xRf + rf.w + 300, ROW3 + 300 + 4 * 30 + 40);
 
   // The SRC address latch: eight bits, filled a nibble per phase, held
   // until the next SRC.

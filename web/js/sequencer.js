@@ -1040,6 +1040,17 @@ export const MemControl = defineModule('memctrl', {
     { name: 'opSBM', x: -1.5, y: 46, side: 'in' },
     // DCL: the accumulator's low three bits select the RAM bank.
     { name: 'opDCL', x: -1.5, y: 50, side: 'in' },
+    // The register-pair group. All three address registers two at a time,
+    // which is why they live on the machine that already reads a pair.
+    { name: 'opFIM', x: -1.5, y: 54, side: 'in' },
+    { name: 'opFIN', x: -1.5, y: 58, side: 'in' },
+    { name: 'opJIN', x: -1.5, y: 62, side: 'in' },
+    { name: 'twoByte', x: -1.5, y: 66, side: 'in' },
+    // High during FIN's *second* instruction cycle. FIN is one byte but
+    // two cycles — the only instruction in the set that is — because it
+    // needs to read a register pair, address the ROM with it, and write
+    // a register pair, which does not fit in one pass of the ring.
+    { name: 'finCycle2', x: -1.5, y: 70, side: 'in' },
     // outputs
     { name: 'pcInc', x: 320, y: 0, side: 'out' },
     { name: 'irLoad', x: 320, y: 6, side: 'out' },
@@ -1056,18 +1067,56 @@ export const MemControl = defineModule('memctrl', {
     { name: 'aluSub', x: 320, y: 66, side: 'out' },
     { name: 'carryWrite', x: 320, y: 72, side: 'out' },
     { name: 'bankLoad', x: 320, y: 78, side: 'out' },
+    // Writing a pair: the even register in one phase, the odd in the
+    // next, mirroring how SRC reads one.
+    { name: 'pairHi', x: 320, y: 84, side: 'out' },
+    { name: 'pairLo', x: 320, y: 90, side: 'out' },
+    // FIN drives the ROM from r0:r1 rather than from the program counter
+    { name: 'romFromPair', x: 320, y: 96, side: 'out' },
+    // JIN loads the program counter from the pair it read
+    { name: 'pcLoad', x: 320, y: 102, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pR1 = m.port('pRead1');
     const pR2 = m.port('pRead2'), pE = m.port('pExec');
 
-    // the opcode is captured during FETCH, and the PC steps then too
+    // The opcode is captured during FETCH, and the PC steps then too.
     const nF = m.net();
     m.instantiate(Inverter, 0, 0, { a: pF, y: nF });
     m.instantiate(Inverter, GATE_W * 2, 0, { a: nF, y: m.port('irLoad') });
+
+    // It steps a second time during DECODE for a two-byte instruction,
+    // so the operand byte is not fetched as the next opcode.
+    //
+    // This machine has no FETCH2 phase — every instruction it had was one
+    // byte, so it never needed one. FIM is the first that carries an
+    // operand, and without the extra step the machine executes the
+    // operand as an instruction: FIM 0P 0x0C is followed by 0x0C decoding
+    // as NOP, and everything after it runs one address early. The
+    // four-phase machines solve this with a whole phase; here the operand
+    // is captured during DECODE, so only the increment is needed.
+    const inc2 = m.net(), anyInc = m.net(), gated = m.net();
+    m.instantiate(And2, 0, GATE_H * 2,
+      { a: m.port('pDecode'), b: m.port('twoByte'), y: inc2 });
+    m.instantiate(Or2, GATE_W * 3, GATE_H * 2,
+      { a: pF, b: inc2, y: anyInc });
+    // …but not on FIN's first cycle. FIN re-fetches the same byte on its
+    // second pass, so the counter must sit still through the first — a
+    // one-byte instruction that occupies two cycles still advances the
+    // program by one.
+    const finHold = m.net(), nHold = m.net();
+    const nf2 = m.net();
+    m.instantiate(Inverter, GATE_W * 6, GATE_H * 3,
+      { a: m.port('finCycle2'), y: nf2 });
+    m.instantiate(And2, GATE_W * 8, GATE_H * 3,
+      { a: m.port('opFIN'), b: nf2, y: finHold });
+    m.instantiate(Inverter, GATE_W * 11, GATE_H * 3,
+      { a: finHold, y: nHold });
+    m.instantiate(And2, GATE_W * 13, GATE_H * 2,
+      { a: anyInc, b: nHold, y: gated });
     const nF2 = m.net();
-    m.instantiate(Inverter, 0, GATE_H * 2, { a: pF, y: nF2 });
-    m.instantiate(Inverter, GATE_W * 2, GATE_H * 2,
+    m.instantiate(Inverter, GATE_W * 16, GATE_H * 2, { a: gated, y: nF2 });
+    m.instantiate(Inverter, GATE_W * 18, GATE_H * 2,
       { a: nF2, y: m.port('pcInc') });
 
     // SRC fills its latch a nibble at a time: the pair's even register in
@@ -1141,6 +1190,41 @@ export const MemControl = defineModule('memctrl', {
     // DCL latches the accumulator's low three bits as the bank select.
     m.instantiate(And2, GATE_W * 5, GATE_H * 22,
       { a: pE, b: m.port('opDCL'), y: m.port('bankLoad') });
+
+    // Writing a register pair, for FIM and FIN. Same two-phase shape as
+    // reading one: the even register takes the high nibble, the odd the
+    // low. That order is the manual's — FIM 2 254 leaves r2 holding 15
+    // and r3 holding 14 — and it is the same convention SRC uses, which
+    // is what makes a pair a consistent 8-bit quantity across the whole
+    // instruction set.
+    //
+    // FIN only writes on its SECOND cycle. On the first it is reading r0
+    // and r1 to build the ROM address, and writing then would clobber the
+    // very registers it is reading from — visibly, since RP=0 makes the
+    // source and destination the same pair.
+    const finWrite = m.net(), pairWrite = m.net();
+    m.instantiate(And2, GATE_W * 5, GATE_H * 23,
+      { a: m.port('opFIN'), b: m.port('finCycle2'), y: finWrite });
+    m.instantiate(Or2, GATE_W * 5, GATE_H * 24,
+      { a: m.port('opFIM'), b: finWrite, y: pairWrite });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 24,
+      { a: pR1, b: pairWrite, y: m.port('pairHi') });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 26,
+      { a: pR2, b: pairWrite, y: m.port('pairLo') });
+
+    // FIN reads program memory at r0:r1 rather than at the program
+    // counter. The ROM address multiplexes for one instruction, which is
+    // the only time in this machine that the program counter does not
+    // drive it.
+    const fn = m.net();
+    m.instantiate(Inverter, GATE_W * 5, GATE_H * 28,
+      { a: m.port('opFIN'), y: fn });
+    m.instantiate(Inverter, GATE_W * 7, GATE_H * 28,
+      { a: fn, y: m.port('romFromPair') });
+
+    // JIN loads the low eight bits of the program counter from the pair.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 30,
+      { a: pE, b: m.port('opJIN'), y: m.port('pcLoad') });
   },
 });
 
