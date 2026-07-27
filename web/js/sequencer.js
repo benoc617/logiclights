@@ -40,12 +40,27 @@ export const PHASES = ['FETCH', 'DECODE', 'EXEC'];
 //           instruction passes through doing nothing
 //   EXEC    act
 //
-// The real 4004 does the same thing for the same reason, spread over more
-// phases because its bus is four bits wide: an instruction that needs a
-// 12-bit address cannot get one in a single memory cycle. Dropping the
-// multiplexed bus removes the nibble-shuffling phases but not this one —
-// the operand still has to be fetched from somewhere before it can be
-// used, and that is architecture rather than packaging.
+// This is NOT the real 4004's phase structure, and the difference is worth
+// stating rather than glossing.
+//
+// The 4004 runs eight phases per instruction — A1 A2 A3 M1 M2 X1 X2 X3.
+// A1-A3 push a 12-bit address out one nibble at a time; M1-M2 read the
+// instruction back one nibble at a time; X1-X3 execute. Five of those
+// eight exist because the chip had sixteen pins and a four-bit bus. They
+// are about moving bits through a narrow wire, not about what an
+// instruction means.
+//
+// The four phases here are a different decomposition of the same job, not
+// a subset of the real one: the address goes out whole, the byte comes
+// back whole, and FETCH2 exists only because a two-byte instruction really
+// does have a second byte to read. That much is architecture — an operand
+// has to be fetched before it can be used on any machine — but the
+// *shape* is ours.
+//
+// This follows the scope call in 4004.md: keep what the instruction set
+// requires, drop what pin scarcity forced. Honouring the multiplexed bus
+// would roughly triple the control-sequencing device count to demonstrate
+// 1971 packaging.
 //
 // FETCH2 is unconditional in the ring and conditional in its *effect*.
 // A ring counter that could skip a phase would need a mux in the ring
