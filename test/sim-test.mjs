@@ -13,7 +13,7 @@ import {
 } from '../web/js/decode.js';
 import { buildJcnMachine } from '../web/js/behaviour/cmos.js';
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
-import { ringCounter, ConditionTree, IsZero4 } from '../web/js/sequencer.js';
+import { ringCounter, ConditionTree, IsZero4, SubOperand } from '../web/js/sequencer.js';
 
 let failures = 0;
 let checks = 0;
@@ -2126,6 +2126,116 @@ function flipAndStep(c, label, on) {
   const withPinLow = runLoop(false);
   expect(c, 'the loop runs while TEST is high', withPinHigh > 1, true);
   expect(c, 'pulling TEST low breaks out of the loop', withPinLow, 0);
+}
+
+// ── SUB's operand conditioning ───────────────────────────────────────────
+// The 4004 subtracts by adding the complement, with the carry inverted on
+// the way in — ACC + ~REG + ~carry — and a carry *out* that means "no
+// borrow". Both inversions come from one XOR per bit against the same
+// select, so ADD and SUB share the adder entirely.
+//
+// Swept over every operand pair and both carries in both modes: 1,024
+// cases. Exhaustive is worth it because the inverted-carry convention is
+// the kind of thing that is right for single digits and wrong when chained
+// across nibbles, which a spot check would miss.
+{
+  const want = (sub, acc, reg, cy) =>
+    sub ? acc + ((~reg) & 15) + ((~cy) & 1) : acc + reg + cy;
+  let bad = 0;
+  for (let acc = 0; acc < 16; acc++) {
+    for (let reg = 0; reg < 16; reg++) {
+      for (const cy of [0, 1]) {
+        for (const sub of [0, 1]) {
+          const d = new Circuit('subop');
+          d.implicitGround = false;
+          let n = 0;
+          const mk = v => {
+            const net = d.net();
+            d.addSwitch(`s${n++}`, net, 'toggle', 0, 0, { from: 0, to: 1 })
+              .on = !!v;
+            return net;
+          };
+          const S = instantiate(d, SubOperand, 0, 0, {
+            r0: mk(reg & 1), r1: mk((reg >> 1) & 1),
+            r2: mk((reg >> 2) & 1), r3: mk((reg >> 3) & 1),
+            carry: mk(cy), sub: mk(sub),
+          });
+          const A = instantiate(d, rippleAdder(4), 200, 0, {
+            a0: mk(acc & 1), a1: mk((acc >> 1) & 1),
+            a2: mk((acc >> 2) & 1), a3: mk((acc >> 3) & 1),
+            b0: S.nets.b0, b1: S.nets.b1, b2: S.nets.b2, b3: S.nets.b3,
+            cin: S.nets.cin,
+          });
+          settle(d);
+          let got = 0;
+          for (let i = 0; i < 4; i++) {
+            if (d.value[A.nets[`s${i}`]] === HI) got |= 1 << i;
+          }
+          const gotCy = d.value[A.nets.cout] === HI ? 1 : 0;
+          const t = want(sub, acc, reg, cy);
+          if (got !== (t & 15) || gotCy !== (t > 15 ? 1 : 0)) bad++;
+        }
+      }
+    }
+  }
+  const d = new Circuit('subop');
+  expect(d, 'ADD and SUB over every operand pair and carry', bad, 0);
+}
+
+// ── the subtract machine ─────────────────────────────────────────────────
+// SUB and LD running as instructions, with the register file feeding the
+// accumulator for the first time.
+{
+  const c = buildCircuit('submachine');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  const reg = i => {
+    const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+    return bits.every(b => b === '0' || b === '1')
+      ? parseInt(bits.slice().reverse().join(''), 2) : null;
+  };
+
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+  // Worked out from the instruction semantics, not read off the circuit.
+  const want = [
+    { ir: 0xD9, acc: 9, cy: 0 },                  // LDM 9
+    { ir: 0xB0, acc: 9, cy: 0, r: [0, 9] },       // XCH r0 — write half
+    { ir: 0xD4, acc: 4, cy: 0 },                  // LDM 4
+    { ir: 0xB1, acc: 4, cy: 0, r: [1, 4] },       // XCH r1
+    { ir: 0xA0, acc: 9, cy: 0 },                  // LD r0 — the read path
+    { ir: 0xF1, acc: 9, cy: 0 },                  // CLC
+    { ir: 0x91, acc: 5, cy: 1 },                  // SUB r1 → 5, no borrow
+    { ir: 0xB2, acc: 5, cy: 1, r: [2, 5] },       // XCH r2
+  ];
+  for (let k = 0; k < want.length; k++) {
+    const w = want[k];
+    for (let p = 0; p < 4; p++) tick();
+    expect(c, `step ${k} runs 0x${w.ir.toString(16)}`, rd('IR', 8), w.ir);
+    expect(c, `step ${k} (0x${w.ir.toString(16)}) ACC`, rd('ACC', 4), w.acc);
+    expect(c, `step ${k} (0x${w.ir.toString(16)}) carry`,
+      lampV(c, 'CY') === HI ? 1 : 0, w.cy);
+    if (w.r) expect(c, `step ${k} wrote r${w.r[0]}`, reg(w.r[0]), w.r[1]);
+  }
+
+  // XCH's read half is deliberately off on this machine, and this asserts
+  // that rather than leaving it unstated: the accumulator keeps its value
+  // across an XCH. When the read path lands, this flips — and the
+  // replacement must use two *different* operands, because swapping equal
+  // values cannot tell a swap from a no-op.
+  {
+    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+    for (let p = 0; p < 4; p++) tick();          // LDM 9
+    const before = rd('ACC', 4);
+    for (let p = 0; p < 4; p++) tick();          // XCH r0
+    expect(c, 'XCH does not yet read back into the accumulator',
+      rd('ACC', 4), before);
+    expect(c, 'XCH still writes its register', reg(0), before);
+  }
 }
 
 // ── the accumulator group ────────────────────────────────────────────────

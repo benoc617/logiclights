@@ -15,7 +15,8 @@ import { romArray } from '../rom.js';
 import { InstructionDecoder, OPR_NAMES, disassemble } from '../decode.js';
 import {
   ringCounter, ControlUnit, ControlUnit4, ConditionTree, IsZero4,
-  AccOperand, CarryLogic, PHASES, PHASES4,
+  AccOperand, CarryLogic, SubOperand, TwoPhaseClock,
+  PHASES, PHASES4,
 } from '../sequencer.js';
 import { buildRom8 } from './rom-circuit.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from '../regfile.js';
@@ -1443,6 +1444,12 @@ export function buildJcnMachine(program = P3_PROGRAM) {
   const xMux = xCf + 90;
   const accD = [];
   for (let i = 0; i < 4; i++) {
+    // This machine has the three-phase control unit, whose accumulator
+    // has exactly two sources — so the immediate select is still derived
+    // here as "not from the ALU". The four-phase machines take an explicit
+    // accFromImm from their control unit instead, because once there are
+    // more than two sources, "whatever nobody else selected" stops being
+    // a definition.
     const fromAlu = c.net(), fromImm = c.net(), d = c.net(), nSel = c.net();
     instantiate(c, Inverter, xMux, ROW3 + i * 40 + 20,
       { a: ctrl.nets.accFromAlu, y: nSel }, { tag: `mxn${i}` });
@@ -1704,8 +1711,10 @@ function buildTwoByteMachine() {
     opJUN: dec.nets.op4, opJCN: dec.nets.op1, opLDM: dec.nets.op13,
     opADD: dec.nets.op8, opXCH: dec.nets.op11, opINC: dec.nets.op6,
     condTake,
-    // this machine's program has no accumulator-group instructions
-    accGroup: VSS,
+    // No accumulator-group, SUB or LD here, and no path from the register
+    // file back to the accumulator — so XCH stays a one-way write. Tied
+    // low deliberately rather than left floating.
+    accGroup: VSS, opSUB: VSS, opLD: VSS, opXCHread: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — four phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -1773,6 +1782,10 @@ function buildTwoByteMachine() {
   const xMux = xCf + 90;
   const accD = [];
   for (let i = 0; i < 4; i++) {
+    // Two sources here, so the immediate select is derived as "not from
+    // the ALU". The subtract machine has five and takes an explicit
+    // accFromImm from its control unit instead — past two sources,
+    // "whatever nobody else selected" stops being a definition.
     const fromAlu = c.net(), fromImm = c.net(), d = c.net(), nSel = c.net();
     instantiate(c, Inverter, xMux, ROW3 + i * 40 + 20,
       { a: ctrl.nets.accFromAlu, y: nSel }, { tag: `mxn${i}` });
@@ -1850,6 +1863,55 @@ function buildTwoByteMachine() {
   };
   return c;
 }
+
+// SUB and LD.
+//
+// Both need the same thing: a path *from* the register file back into the
+// accumulator. Every machine before this one could only write registers.
+//
+//   LD r    ACC ← r
+//   SUB r   ACC ← ACC + ~r + ~carry
+//
+// XCH is decoded and writes its register, but its read half is switched
+// off — see the note on opXCHread below. It is incomplete here, not
+// wrong.
+//
+// SUB's carry convention is the part worth reading twice, and it is
+// checked against the manual rather than assumed. On the way *in*, carry=1
+// means a borrow happened. On the way *out*, carry=1 means no borrow
+// happened. The sense flips across the instruction, which is why Intel's
+// manual tells you to put a CMC between successive SUBs when chaining
+// them across nibbles. Getting this wrong would still pass every
+// single-digit test and fail only on multi-digit subtraction.
+//
+// XCH is the one that looks hard and is not. Both the accumulator and the
+// register file are written on the same clock edge, and both read their
+// sources combinationally before it — so the old accumulator reaches the
+// register and the old register reaches the accumulator in the same
+// instant, with no temporary anywhere. A swap needing a scratch register
+// is a software problem, not a hardware one.
+//
+//   LDM 9 · XCH r0 · LDM 4 · XCH r1 · LD r0 · CLC · SUB r1 · XCH r2
+//
+// which computes 9 − 4 = 5 with carry 1 (no borrow), then parks the result
+// in r2 and wraps. Watch the carry after SUB: it is *set*, which on this
+// machine means the subtraction did not borrow.
+const PSUB_PROGRAM = [
+  0xD9,   // 0  LDM 9
+  0xB0,   // 1  XCH r0     r0 = 9
+  0xD4,   // 2  LDM 4
+  0xB1,   // 3  XCH r1     r1 = 4
+  0xA0,   // 4  LD r0      ACC = 9
+  0xF1,   // 5  CLC        no borrow in
+  0x91,   // 6  SUB r1     ACC = 9 − 4 = 5, carry 1 = no borrow
+  0xB2,   // 7  XCH r2     store the result in r2, and the PC wraps
+];
+// A note on testing this, learned the hard way. An earlier version of
+// this program exercised XCH against a register that already held the
+// accumulator's value. Swap, one-way write and no-op all produce
+// identical output in that case, so the test passed while proving
+// nothing. Any future test of a real XCH has to use two *different*
+// values, or it is not testing anything.
 
 // The accumulator group in hardware.
 //
@@ -1964,6 +2026,7 @@ function buildAccGroupMachine() {
     // line — the failure that bit twice before, so every port is bound
     // deliberately even when the answer is "never".
     opJUN: VSS, opJCN: VSS, opADD: VSS, opXCH: VSS, opINC: VSS,
+    opSUB: VSS, opLD: VSS, opXCHread: VSS,
     opLDM: dec.nets.op13,
     condTake: VSS, accGroup,
   }, { tag: 'ctrl' });
@@ -2174,6 +2237,330 @@ function buildAccGroupMachine() {
   return c;
 }
 
+function buildSubMachine() {
+  const c = new Circuit('Subtract and Load');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addClock(clkSw, { period: 1200 });
+  instantiate(c, Inverter, 20, 44, { a: clkNet, y: nclk });
+
+  const ROW2 = 150;
+  const ring = instantiate(c, ringCounter(4), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring — FETCH / DECODE / FETCH2 / EXEC',
+    36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  const nFetch = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
+
+  const pcLoadLine = c.net(), pcEnable = c.net();
+  const PC = instantiate(c, programCounter(3), 40, ROW2, {
+    clk: clkNet, nclk, en: pcEnable, rst, load: pcLoadLine,
+    a0: VSS, a1: VSS, a2: VSS,
+  }, { tag: 'pc' });
+  c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(PSUB_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, xRom, ROW2,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register — the opcode',
+    xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
+
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
+  c.region('Instruction decoder', xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
+
+  const ROW3 = ROW2 + 380;
+  const accQ = [c.net(), c.net(), c.net(), c.net()];
+  const accZero = c.net(), carryQ = c.net();
+
+  // CLC is the only accumulator-group instruction this program uses, and
+  // it does not write the accumulator — so accGroup stays low and only
+  // the carry logic sees it.
+  const CLC = dec.nets.acc1;
+
+  const xCtrl = xDec + dec.w + 40;
+  const ctrl = instantiate(c, ControlUnit4, xCtrl, ROW2, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1,
+    pFetch2: ring.nets.p2, pExec: ring.nets.p3,
+    twoByte: dec.nets.twoByte,
+    opJUN: VSS, opJCN: VSS, opINC: VSS, condTake: VSS,
+    opLDM: dec.nets.op13, opADD: dec.nets.op8,
+    opSUB: dec.nets.op9, opLD: dec.nets.op10, opXCH: dec.nets.op11,
+    // XCH's read half is not yet wired: the register file's cells are
+    // transparent while written, so reading and writing one row in a
+    // single phase still collapses the exchange into a one-way copy.
+    // Turning this on before that is fixed makes XCH silently wrong
+    // rather than merely incomplete, so it stays off and the machine
+    // documents the gap instead of hiding it.
+    opXCHread: VSS,
+    accGroup: VSS,
+  }, { tag: 'ctrl' });
+  c.region('Control unit — four phases',
+    xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
+
+  const pcEnN = c.net();
+  instantiate(c, Inverter, xCtrl, ROW2 + ctrl.h + 8,
+    { a: ctrl.nets.pcInc, y: pcEnN }, { tag: 'pen' });
+  instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 8,
+    { a: pcEnN, y: pcEnable }, { tag: 'pen2' });
+  instantiate(c, Inverter, xCtrl + 40, ROW2 + ctrl.h + 8,
+    { a: VDD, y: pcLoadLine }, { tag: 'nold' });
+
+  // The register file. Its write data is the accumulator, and its read
+  // address is the same nibble as its write address — which is exactly
+  // what makes XCH a swap: the row being written is the row being read,
+  // and both happen on the same edge.
+  // The write enable is gated by the clock's low half.
+  //
+  // This is what makes XCH a swap rather than a self-assignment, and it is
+  // worth being precise about why. The register file's cells are
+  // level-sensitive latches — the 4004's were too — so while `we` is high
+  // the cell is *transparent*: whatever is on the write data appears
+  // immediately on the read bus. XCH reads and writes the same row, so
+  // without this gate the accumulator would capture the value it was in
+  // the middle of writing, and the swap would be a no-op in one direction.
+  //
+  // The write lands on φ2, after the read on φ1 has already happened.
+  //
+  // This is how the real chip does it, and it is worth following exactly
+  // rather than approximating. From Intel's transistor-level schematic
+  // (sheet 2, "INDEX REGISTER CONTROL"; sheet 3, the accumulator block):
+  // the index register's read and write paths are gated on *different
+  // phases of a two-phase clock*, and the read path is enabled by a term
+  // the drawing spells out as INC + ISZ + ADD + SUB + XCH + LD — XCH
+  // sitting in the same list as LD, because both read a register.
+  //
+  // What the schematic also settles is that there is no temporary
+  // register. The chip has ACC, a CARRY F/F, the ADDER and an ADB register
+  // on the adder's second input, and nothing that exists to hold a value
+  // mid-swap. Non-overlapping phases are what make the scratch space
+  // unnecessary: the old register value reaches the accumulator during φ1,
+  // and the old accumulator value reaches the register during φ2, with a
+  // gap in between where neither path is live.
+  //
+  // The 4004 took φ1 and φ2 as two of its sixteen pins. Generating them
+  // from one clock here is the concession; the non-overlap is not.
+  const phi = instantiate(c, TwoPhaseClock, 20, 70, { clk: clkNet },
+    { tag: 'phi' });
+  c.region('Two-phase clock — φ1 reads, φ2 writes',
+    14, 64, 20 + phi.w + 10, 70 + phi.h + 10);
+
+  // The ADB register: the accumulator's value, held on the adder's second
+  // input.
+  //
+  // This is the piece the schematic supplies and that guessing did not.
+  // Sheet 3 shows the accumulator block driving an ADB REGISTER through
+  // control lines labelled ACC→ADB and CY→ADB, with ADD→ACC coming back
+  // the other way. The chip has no scratch register for XCH because ADB
+  // *is* the holding place — it already exists to feed the adder for ADD,
+  // and XCH reuses it.
+  //
+  // That is what makes the exchange work without a race. ADB captures the
+  // old accumulator on φ1, before anything is written; the register file's
+  // write on φ2 then takes its data from ADB rather than from the live
+  // accumulator, so the accumulator is free to load the register's old
+  // value in the same instruction. Two registers, two phases, no scratch.
+  //
+  // Without it, both directions of the swap read the same net at the same
+  // instant and the exchange collapses into a one-way write — which is
+  // exactly what this machine did before the schematic was consulted.
+  // ADB captures on the falling edge, half a cycle *after* the
+  // accumulator has latched. So while the accumulator moves on to the
+  // register's old value, ADB still holds what the accumulator had when
+  // the instruction began — which is exactly the value the register file
+  // needs to be written with, and exactly what a swap requires.
+  const adb = instantiate(c, register(4), xDec, ROW3 - 150, {
+    clk: nclk, nclk: clkNet, load: VDD,
+    d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
+  }, { tag: 'adb' });
+  c.region('ADB register — the accumulator, held for the adder and for XCH',
+    xDec - 6, ROW3 - 156, xDec + 150, ROW3 - 66);
+
+  const regWriteGated = c.net();
+  instantiate(c, And2, xDec, ROW3 - 60,
+    { a: ctrl.nets.regWrite, b: phi.nets.phi2, y: regWriteGated },
+    { tag: 'wegate' });
+
+  const xRf = 40;
+  const rf = instantiate(c, RegFile16x4, xRf, ROW3, {
+    wa0: ir[0], wa1: ir[1], wa2: ir[2], wa3: ir[3],
+    ra0: ir[0], ra1: ir[1], ra2: ir[2], ra3: ir[3],
+    // written from ADB, not from the live accumulator — see above
+    d0: adb.nets.q0, d1: adb.nets.q1, d2: adb.nets.q2, d3: adb.nets.q3,
+    we: regWriteGated,
+  }, { tag: 'rf' });
+  c.region('Register file — LD and SUB read it, XCH writes it',
+    xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+
+  // SUB conditioning: complement the register and the carry, or pass both
+  // through for ADD.
+  const xSub = xRf + rf.w + 40;
+  const subop = instantiate(c, SubOperand, xSub, ROW3, {
+    r0: rf.nets.q0, r1: rf.nets.q1, r2: rf.nets.q2, r3: rf.nets.q3,
+    carry: carryQ, sub: ctrl.nets.aluSub,
+  }, { tag: 'subop' });
+  c.region('SUB conditioning — invert the operand and the carry',
+    xSub - 6, ROW3 - 6, xSub + subop.w + 20, ROW3 + subop.h + 10);
+
+  const xAdd = xSub + subop.w + 60;
+  const adder = instantiate(c, rippleAdder(4), xAdd, ROW3, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+    b0: subop.nets.b0, b1: subop.nets.b1,
+    b2: subop.nets.b2, b3: subop.nets.b3,
+    cin: subop.nets.cin,
+  }, { tag: 'add' });
+  c.region('Adder — shared by ADD and SUB',
+    xAdd - 6, ROW3 - 6, xAdd + adder.w + 6, ROW3 + adder.h + 6);
+
+  // The accumulator's source mux: adder, immediate, or the register file.
+  const ROW4 = ROW3 + 260;
+  const xMux = 40;
+  const accD = [];
+  for (let i = 0; i < 4; i++) {
+    const y = ROW4 + i * 40;
+    const fAlu = c.net(), fImm = c.net(), fReg = c.net();
+    instantiate(c, And2, xMux, y,
+      { a: adder.nets[`s${i}`], b: ctrl.nets.accFromAlu, y: fAlu },
+      { tag: `mxa${i}` });
+    instantiate(c, And2, xMux, y + 12,
+      { a: ir[i], b: ctrl.nets.accFromImm, y: fImm }, { tag: `mxi${i}` });
+    instantiate(c, And2, xMux, y + 24,
+      { a: rf.nets[`q${i}`], b: ctrl.nets.accFromReg, y: fReg },
+      { tag: `mxr${i}` });
+    const o1 = c.net(), d = c.net();
+    instantiate(c, Or2, xMux + 40, y, { a: fAlu, b: fImm, y: o1 },
+      { tag: `mo1${i}` });
+    instantiate(c, Or2, xMux + 70, y, { a: o1, b: fReg, y: d },
+      { tag: `mo2${i}` });
+    accD.push(d);
+  }
+  c.region('Accumulator source mux — adder / immediate / register',
+    xMux - 6, ROW4 - 8, xMux + 110, ROW4 + 4 * 40);
+
+  const xAcc = xMux + 140;
+  instantiate(c, register(4), xAcc, ROW4, {
+    clk: clkNet, nclk, load: ctrl.nets.accLoad,
+    d0: accD[0], d1: accD[1], d2: accD[2], d3: accD[3],
+    q0: accQ[0], q1: accQ[1], q2: accQ[2], q3: accQ[3],
+  }, { tag: 'acc' });
+  c.region('Accumulator', xAcc - 6, ROW4 - 6, xAcc + 140, ROW4 + 90);
+
+  const xZ = xAcc + 160;
+  instantiate(c, IsZero4, xZ, ROW4, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], z: accZero,
+  }, { tag: 'zero' });
+  c.region('Zero detect', xZ - 6, ROW4 - 6, xZ + 90, ROW4 + 50);
+
+  // The carry: written by ADD/SUB from the adder, and by CLC directly.
+  const xCar = xZ + 120;
+  const carry = instantiate(c, CarryLogic, xCar, ROW4, {
+    carry: carryQ, opCLC: CLC, opSTC: VSS, opCMC: VSS, opTCC: VSS,
+  }, { tag: 'carry' });
+  c.region('Carry logic', xCar - 6, ROW4 - 6, xCar + carry.w + 10,
+    ROW4 + carry.h + 10);
+
+  const carryD = c.net(), carryLoad = c.net();
+  {
+    const fAdd = c.net(), fOwn = c.net(), any = c.net();
+    instantiate(c, And2, xCar, ROW4 + 120,
+      { a: adder.nets.cout, b: ctrl.nets.accFromAlu, y: fAdd },
+      { tag: 'cya' });
+    instantiate(c, And2, xCar, ROW4 + 134,
+      { a: carry.nets.d, b: carry.nets.sel, y: fOwn }, { tag: 'cyo' });
+    instantiate(c, Or2, xCar + 40, ROW4 + 120,
+      { a: fAdd, b: fOwn, y: carryD }, { tag: 'cyd' });
+
+    const w1 = c.net();
+    instantiate(c, Or2, xCar + 40, ROW4 + 160,
+      { a: ctrl.nets.accFromAlu, b: carry.nets.sel, y: w1 }, { tag: 'cw1' });
+    instantiate(c, And2, xCar + 70, ROW4 + 160,
+      { a: w1, b: ring.nets.p3, y: any }, { tag: 'cw2' });
+    const anyN = c.net();
+    instantiate(c, Inverter, xCar + 100, ROW4 + 160, { a: any, y: anyN },
+      { tag: 'cwn' });
+    instantiate(c, Inverter, xCar + 120, ROW4 + 160,
+      { a: anyN, y: carryLoad }, { tag: 'cwb' });
+  }
+
+  instantiate(c, register(1), xCar + 170, ROW4, {
+    clk: clkNet, nclk, load: carryLoad, d0: carryD, q0: carryQ,
+  }, { tag: 'cf' });
+  c.region('Carry flag', xCar + 164, ROW4 - 6, xCar + 234, ROW4 + 60);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5, { short: `P${i}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 26 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 42 + i * 4.5, { short: `IR${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`ACC${i}`, accQ[i], xEnd - 5, 82 + i * 4.5, { short: `ACC${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`R${i}`, rf.nets[`q${i}`], xEnd - 5, 104 + i * 4.5, { short: `R${i}` });
+  }
+  c.addLamp('CY', carryQ, xEnd - 5, 126, { short: 'CY' });
+  c.addLamp('ZERO', accZero, xEnd - 5, 131, { short: 'Z' });
+
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3];
+  c.cells = rf.stored;
+  c.control = {
+    pcInc: ctrl.nets.pcInc, irLoad: ctrl.nets.irLoad,
+    accLoad: ctrl.nets.accLoad, accFromReg: ctrl.nets.accFromReg,
+    aluSub: ctrl.nets.aluSub, regWrite: ctrl.nets.regWrite,
+  };
+  c.program = PSUB_PROGRAM;
+  c.execAddr = () => {
+    let ir8 = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net] === 1) {
+        ir8 |= 1 << i;
+      }
+    }
+    return c.program.indexOf(ir8);
+  };
+  return c;
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -2243,6 +2630,25 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  submachine: {
+    build: buildSubMachine,
+    readout: v => {
+      const ph = PHASES4[[0, 1, 2, 3].find(i => (v.P >> i) & 1)] ?? '—';
+      const { text } = disassemble(v.IR);
+      return `${ph}  ·  PC ${v.PC}  ·  ${text}`
+        + `  ·  ACC ${v.ACC}  R ${v.R}`
+        + `${v.CY ? '  carry — no borrow' : ''}${v.Z ? '  zero' : ''}`;
+    },
+    read: (c, v) => c.cells.map((nets, i) => {
+      const bits = nets.map(n => VALUE_CHAR[c.value[n]]);
+      const settled = bits.every(b => b === '0' || b === '1');
+      return {
+        label: `r${i}`,
+        text: settled ? String(parseInt(bits.slice().reverse().join(''), 2)) : '–',
+        mark: i === (v.IR & 15) ? 'read' : null,
+      };
+    }),
   },
   accgroup: {
     build: buildAccGroupMachine,

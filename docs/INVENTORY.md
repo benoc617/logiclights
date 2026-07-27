@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**58 circuits** across 4 sections.
+**59 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (25)
+### CMOS (26)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -96,8 +96,9 @@ circuit exists to explain.
 | Jump Machine | Machines | · | 1730 | · | 8 | 817 |
 | Adding Machine | Machines | · | 3538 | · | 8 | 1595 |
 | Conditional Machine | Machines | · | 3599 | · | 8 | 1628 |
-| Two-Byte Machine | Machines | · | 3794 | · | 8 | 1717 |
-| Accumulator Group | Machines | · | 2405 | · | 8 | 1164 |
+| Two-Byte Machine | Machines | · | 3840 | · | 8 | 1740 |
+| Subtract and Load | Machines | · | 3984 | · | 8 | 1815 |
+| Accumulator Group | Machines | · | 2451 | · | 8 | 1187 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -122,26 +123,26 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 58 |
+| Circuits | 59 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 23132 |
+| Transistors | 27208 |
 | Diodes | 4 |
-| Resistors | 320 |
+| Resistors | 328 |
 
 ### Largest circuits
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Two-Byte Machine | 3802 | 1717 |
+| Subtract and Load | 3992 | 1815 |
+| Two-Byte Machine | 3848 | 1740 |
 | Conditional Machine | 3607 | 1628 |
 | Adding Machine | 3546 | 1595 |
-| Accumulator Group | 2413 | 1164 |
-| Jump Machine | 1738 | 817 |
+| Accumulator Group | 2459 | 1187 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **149492 checks, 0 failures**
+`node test/sim-test.mjs` → **149561 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

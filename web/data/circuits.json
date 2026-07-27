@@ -432,6 +432,28 @@
       }
     },
     {
+      "id": "submachine",
+      "group": "CMOS · Machines",
+      "name": "Subtract and Load",
+      "desc": "SUB and LD — two instructions that need a path from the register file back into the accumulator, which no earlier machine had.\n\nSUB is the cheap one, and it is cheap for a reason worth seeing. The adder is already there, and subtracting is adding the complement, so SUB and ADD are the same hardware with one XOR per bit deciding whether the operand is inverted. Nothing else is added.\n\nThe carry convention is where the 4004 gets strange, and it is worth reading twice. On the way in, carry=1 means a borrow happened. On the way out, carry=1 means a borrow did NOT happen. The sense flips across the instruction — Intel's own manual tells you to put a CMC between successive SUBs when chaining them across nibbles. A machine that used the carry directly would still pass every single-digit test and fail only on multi-digit subtraction, which is the kind of bug that survives a long time.\n\nThe same XOR that inverts the operand also inverts the carry, so the odd convention costs exactly nothing in gates.\n\nThe program computes 9 − 4 = 5 and watch the carry afterwards: it is set, which on this machine means the subtraction did not borrow.\n\nXCH is decoded and writes its register, but its read half is deliberately switched off here. On the real 4004 XCH is a genuine exchange — it is the only way to write a register at all, since the chip has no store instruction. Making it one on this skeleton needs the register file's read and write separated in time, because the cells are transparent while being written and a same-row read returns the value going in. Intel solved that with a two-phase clock and the ADB register on the adder's second input. Until that is built here, XCH stays a one-way write and says so, rather than being quietly wrong.",
+      "hints": {
+        "CLK": "the clock — four phases per instruction",
+        "RST": "back to FETCH at address 0",
+        "P": "the phase ring: FETCH, DECODE, FETCH2, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register",
+        "ACC": "the accumulator",
+        "R": "the register file's read bus",
+        "CY": "carry — after SUB, 1 means no borrow",
+        "Z": "the accumulator is zero"
+      },
+      "state": {
+        "title": "Registers",
+        "columns": 4,
+        "key": "amber = the register this instruction addresses"
+      }
+    },
+    {
       "id": "accgroup",
       "group": "CMOS · Machines",
       "name": "Accumulator Group",

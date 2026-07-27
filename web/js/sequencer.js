@@ -413,6 +413,113 @@ export const CarryLogic = defineModule('carry', {
   },
 });
 
+// A two-phase clock generator: φ1 and φ2, non-overlapping.
+//
+// This is the 4004's actual clocking scheme, and it is the reason the chip
+// can read and write one register array in a single instruction without a
+// temporary register anywhere. Intel's schematic (sheet 2, "INDEX REGISTER
+// CONTROL") gates the index register's write path and its read path on
+// different phases, so the two never happen at the same instant even
+// though they belong to the same instruction.
+//
+// Non-overlapping is the whole point and the part that is easy to get
+// wrong. Two phases derived as `clk` and `NOT clk` would overlap during
+// the gate delay of the inverter, and in that sliver both paths are live —
+// which on a transparent latch is exactly the race that makes an exchange
+// collapse into a self-assignment. Each phase here is ANDed with the
+// *inverse of the other*, so a gap opens at every crossing:
+//
+//   clk    ‾‾‾‾|____|‾‾‾‾|____
+//   φ1     ‾‾|__________|‾‾|__      high while clk is high, minus the gap
+//   φ2     ____|‾‾‾|______|‾‾‾      high while clk is low,  minus the gap
+//
+// The real chip took φ1 and φ2 as *external pins* — two of its sixteen —
+// because at 1971 densities generating them on-die was not worth the
+// area. Generating them here from one clock is the concession; the
+// non-overlap they guarantee is not.
+export const TwoPhaseClock = defineModule('phi', {
+  ports: [
+    { name: 'clk', x: -1.5, y: 0, side: 'in' },
+    { name: 'phi1', x: GATE_W * 12, y: 0, side: 'out' },
+    { name: 'phi2', x: GATE_W * 12, y: 8, side: 'out' },
+  ],
+  build(m) {
+    const clk = m.port('clk');
+    const nclk = m.net();
+    m.instantiate(Inverter, 0, 0, { a: clk, y: nclk });
+
+    // The gap comes from delaying each phase's *rise* rather than from
+    // cross-coupling the two outputs.
+    //
+    // Cross-coupling is the textbook drawing and it does not start: φ1
+    // waits for φ2 to be low, φ2 waits for φ1 to be low, and at power-up
+    // both are Z, so neither ever rises. That is the same deadlock the
+    // ring counter has without its reset, and it is worth not repeating.
+    //
+    // Instead each phase is ANDed with a delayed copy of its own clock
+    // sense. The delay chain is an even number of inverters, so the sense
+    // is kept; the AND then holds the phase low for that delay after the
+    // clock edge, which is the gap. Falling edges are not delayed, so the
+    // phases go low promptly and the gap never closes.
+    const d1 = m.net(), d1b = m.net();
+    m.instantiate(Inverter, GATE_W * 3, 0, { a: clk, y: d1 });
+    m.instantiate(Inverter, GATE_W * 5, 0, { a: d1, y: d1b });
+    m.instantiate(And2, GATE_W * 8, 0, { a: clk, b: d1b, y: m.port('phi1') });
+
+    const d2 = m.net(), d2b = m.net();
+    m.instantiate(Inverter, GATE_W * 3, GATE_H * 2, { a: nclk, y: d2 });
+    m.instantiate(Inverter, GATE_W * 5, GATE_H * 2, { a: d2, y: d2b });
+    m.instantiate(And2, GATE_W * 8, GATE_H * 2,
+      { a: nclk, b: d2b, y: m.port('phi2') });
+  },
+});
+
+// SUB's operand conditioning.
+//
+// The 4004 subtracts the way every two's-complement machine does — add the
+// complement — but its carry convention is genuinely odd, and it is odd in
+// a way that is easy to "fix" into being wrong. From the manual:
+//
+//   ACC ← ACC + ~REG + ~carry
+//
+// Note the *inverted* carry in. On the way in, carry=1 means a borrow
+// happened; on the way out, carry=1 means no borrow happened. The sense
+// flips across the instruction, which is why the manual tells you to put a
+// `CMC` between successive `SUB`s when chaining them across nibbles. A
+// machine that used the carry directly would be subtly wrong only on
+// multi-digit subtraction — the case nobody checks first.
+//
+// So this block conditions both operands for the adder: complement the
+// register, complement the carry, and let the same ripple adder that does
+// ADD do the work. Nothing else changes.
+export const SubOperand = defineModule('subop', {
+  ports: [
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `r${i}`, x: -1.5, y: i * 4, side: 'in',
+    })),
+    { name: 'carry', x: -1.5, y: 18, side: 'in' },
+    { name: 'sub', x: -1.5, y: 22, side: 'in' },
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `b${i}`, x: GATE_W * 10, y: i * 4, side: 'out',
+    })),
+    { name: 'cin', x: GATE_W * 10, y: 18, side: 'out' },
+  ],
+  build(m) {
+    const sub = m.port('sub');
+    // Each bit passes through unchanged for ADD and inverted for SUB —
+    // an XOR with the select line, which is the standard adder/subtractor
+    // trick and the same one `alu.js` uses one level down.
+    for (let i = 0; i < 4; i++) {
+      m.instantiate(Xor2, 0, i * (GATE_H + 2),
+        { a: m.port(`r${i}`), b: sub, y: m.port(`b${i}`) });
+    }
+    // The carry in is inverted for SUB and passed through for ADD — the
+    // same XOR, which is what makes the odd convention cost nothing.
+    m.instantiate(Xor2, GATE_W * 4, GATE_H * 5,
+      { a: m.port('carry'), b: sub, y: m.port('cin') });
+  },
+});
+
 // A control unit for the four-phase cycle, with two-byte fetch.
 //
 // The difference from the three-phase one is `oprLoad`: during FETCH2 a
@@ -442,6 +549,12 @@ export const ControlUnit4 = defineModule('ctrl4', {
     // datapath's business. It only needs to know the accumulator is being
     // written, which is one line rather than thirteen.
     { name: 'accGroup', x: -1.5, y: 50, side: 'in' },
+    { name: 'opSUB', x: -1.5, y: 54, side: 'in' },
+    { name: 'opLD', x: -1.5, y: 58, side: 'in' },
+    // XCH's read half: high only on a machine that has a path from the
+    // register file back into the accumulator. Tie it low and XCH stays
+    // the one-way write the earlier machines implement.
+    { name: 'opXCHread', x: -1.5, y: 62, side: 'in' },
     { name: 'pcInc', x: 340, y: 0, side: 'out' },
     { name: 'pcLoad', x: 340, y: 6, side: 'out' },
     { name: 'irLoad', x: 340, y: 12, side: 'out' },
@@ -453,7 +566,13 @@ export const ControlUnit4 = defineModule('ctrl4', {
     // there were only two sources. With five, the immediate needs to say
     // so itself rather than being the default nobody selected.
     { name: 'accFromImm', x: 340, y: 36, side: 'out' },
-    { name: 'regWrite', x: 340, y: 42, side: 'out' },
+    // High when the accumulator should take the register file's output
+    // directly — LD, and the read half of XCH.
+    { name: 'accFromReg', x: 340, y: 42, side: 'out' },
+    // High for SUB, feeding SubOperand. ADD and SUB share the adder and
+    // differ only in this line.
+    { name: 'aluSub', x: 340, y: 48, side: 'out' },
+    { name: 'regWrite', x: 340, y: 54, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pF2 = m.port('pFetch2'), pE = m.port('pExec');
@@ -490,24 +609,73 @@ export const ControlUnit4 = defineModule('ctrl4', {
     m.instantiate(And2, GATE_W * 13, GATE_H * 6,
       { a: anyInc, b: njump, y: m.port('pcInc') });
 
-    // LDM, ADD and the accumulator group all write the accumulator;
-    // accFromAlu and accFromImm pick the source between them.
-    const wantAcc = m.net(), wantAcc2 = m.net();
+    // Everything that writes the accumulator: LDM, ADD, SUB, LD, XCH and
+    // the accumulator group. accFromAlu / accFromImm / accFromReg pick
+    // between the sources.
+    const wA = m.net(), wB = m.net(), wC = m.net(), wantAcc = m.net();
     m.instantiate(Or2, GATE_W * 4, GATE_H * 8,
-      { a: m.port('opLDM'), b: m.port('opADD'), y: wantAcc });
-    m.instantiate(Or2, GATE_W * 6, GATE_H * 8,
-      { a: wantAcc, b: m.port('accGroup'), y: wantAcc2 });
-    m.instantiate(And2, GATE_W * 8, GATE_H * 8,
-      { a: pE, b: wantAcc2, y: m.port('accLoad') });
-    m.instantiate(And2, GATE_W * 4, GATE_H * 9,
-      { a: pE, b: m.port('opADD'), y: m.port('accFromAlu') });
+      { a: m.port('opLDM'), b: m.port('opADD'), y: wA });
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 9,
+      { a: m.port('opSUB'), b: m.port('opLD'), y: wB });
+    m.instantiate(Or2, GATE_W * 6, GATE_H * 8, { a: wA, b: wB, y: wC });
+    // XCH writes the accumulator too — a swap is a write in both
+    // directions — but only on a machine that has a path from the
+    // register file back to the accumulator. `opXCHread` is that machine
+    // saying so.
+    //
+    // This has to be a separate input from `opXCH`, not the same line.
+    // The machines built before LD decode XCH and write the register, but
+    // have no return path: telling them XCH writes the accumulator makes
+    // the source mux select nothing, and the accumulator captures zero.
+    // The two-byte machine's countdown quietly loaded 0 over its 15 with
+    // no other symptom — the failure looked like a decode bug three
+    // modules away.
+    const wD = m.net();
+    m.instantiate(Or2, GATE_W * 6, GATE_H * 9,
+      { a: m.port('accGroup'), b: m.port('opXCHread'), y: wD });
+    m.instantiate(Or2, GATE_W * 8, GATE_H * 8, { a: wC, b: wD, y: wantAcc });
+    m.instantiate(And2, GATE_W * 10, GATE_H * 8,
+      { a: pE, b: wantAcc, y: m.port('accLoad') });
+
+    // ADD and SUB both come from the adder.
+    //
+    // The OR is on the *phase* side rather than in front of accFromAlu,
+    // so accFromAlu stays exactly one gate deep. That matters more than it
+    // looks: the machines built before SUB derive their immediate select
+    // by inverting this line, and adding a gate here put the two selects a
+    // delay apart — during which the mux drove neither source and the
+    // accumulator captured nothing. The two-byte machine's countdown
+    // stopped decrementing, with no other symptom.
+    const exAdd = m.net(), exSub = m.net();
     m.instantiate(And2, GATE_W * 4, GATE_H * 10,
+      { a: pE, b: m.port('opADD'), y: exAdd });
+    m.instantiate(And2, GATE_W * 4, GATE_H * 11,
+      { a: pE, b: m.port('opSUB'), y: exSub });
+    m.instantiate(Or2, GATE_W * 8, GATE_H * 10,
+      { a: exAdd, b: exSub, y: m.port('accFromAlu') });
+    m.instantiate(And2, GATE_W * 4, GATE_H * 12,
       { a: pE, b: m.port('opLDM'), y: m.port('accFromImm') });
 
+    // LD and XCH both read the register file into the accumulator.
+    const fromReg = m.net();
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 13,
+      { a: m.port('opLD'), b: m.port('opXCHread'), y: fromReg });
+    m.instantiate(And2, GATE_W * 8, GATE_H * 13,
+      { a: pE, b: fromReg, y: m.port('accFromReg') });
+
+    // SUB conditions the adder's operands; it is not gated by a phase
+    // because the adder is combinational and only its captured result
+    // matters.
+    const sn = m.net();
+    m.instantiate(Inverter, GATE_W * 4, GATE_H * 14,
+      { a: m.port('opSUB'), y: sn });
+    m.instantiate(Inverter, GATE_W * 6, GATE_H * 14,
+      { a: sn, y: m.port('aluSub') });
+
     const rw = m.net();
-    m.instantiate(Or2, GATE_W * 4, GATE_H * 10,
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 15,
       { a: m.port('opXCH'), b: m.port('opINC'), y: rw });
-    m.instantiate(And2, GATE_W * 8, GATE_H * 10,
+    m.instantiate(And2, GATE_W * 8, GATE_H * 15,
       { a: pE, b: rw, y: m.port('regWrite') });
   },
 });
