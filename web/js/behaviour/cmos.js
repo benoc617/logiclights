@@ -1560,14 +1560,22 @@ export function buildJcnMachine(program = P3_PROGRAM) {
 // machines do, visible in their listings as a NOP that is really an
 // operand.
 //
-// Now `JCN 12, 6` reads properly: mask 12 in the first byte, target 6 in
-// the second, independent of each other.
+// Now the mask and the target are independent, which is what lets this
+// program use `JCN 13` — a mask that would have been unusable when the
+// low nibble also had to be an address.
+//
+// Mask 13 is 1101: test zero, test the TEST pin, invert. So the loop
+// continues while the accumulator is non-zero AND the TEST pin is high,
+// and pulling TEST low breaks out of it early. That is what the pin was
+// for on the real chip — an external input a program could poll without
+// an interrupt — and it is only demonstrable once a condition mask stops
+// doubling as a jump address.
 const P4_PROGRAM = [
   0xDF,   // 0  LDM 15     ACC = 15 (= -1)
   0xB0,   // 1  XCH r0     r0 = 15
   0xD4,   // 2  LDM 4      the countdown
   0x80,   // 3  ADD r0     ACC -= 1        ← loop body
-  0x1C,   // 4  JCN 12 ─┐  jump if not zero…
+  0x1D,   // 4  JCN 13 ─┐  loop while not zero *and* TEST is high…
   0x03,   // 5     to 3 ─┘  …to address 3, in its own byte
   0x40,   // 6  JUN ────┐   done: start over
   0x00,   // 7     to 0 ─┘

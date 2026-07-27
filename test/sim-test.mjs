@@ -2032,6 +2032,10 @@ function flipAndStep(c, label, on) {
 
   expect(c, 'the ring has four phases', c.phases.length, 4);
 
+  // The program's JCN uses mask 13, which tests the TEST pin as well as
+  // zero: the loop runs while the accumulator is non-zero AND TEST is
+  // high. So TEST goes high for the tests that expect the loop to run.
+  sw(c, 'TEST', true);
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
   for (let k = 0; k < 20; k++) {
     expect(c, `exactly one phase active at step ${k}`,
@@ -2042,6 +2046,7 @@ function flipAndStep(c, label, on) {
   // oprLoad must fire only during FETCH2, and only for an instruction that
   // has an operand. Firing on a one-byte instruction would capture the
   // *next opcode* as an operand and the jump would go somewhere arbitrary.
+  sw(c, 'TEST', true);
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
   let loads = 0, wrongPhase = 0, wrongInstr = 0;
   for (let k = 0; k < 60; k++) {
@@ -2062,6 +2067,7 @@ function flipAndStep(c, label, on) {
   // program's JCN is 0x1C at address 4 with operand 3 at address 5: the
   // opcode's low bits are 12, so a machine still reading them would jump
   // to 4 and this would fail.
+  sw(c, 'TEST', true);
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
   let jumpedTo = null;
   for (let k = 0; k < 60 && jumpedTo === null; k++) {
@@ -2073,12 +2079,35 @@ function flipAndStep(c, label, on) {
   expect(c, 'the jump used the operand byte, not the opcode', jumpedTo, 3);
 
   // and the countdown still runs, so the loop terminates
+  sw(c, 'TEST', true);
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
   const seen = new Set();
   for (let k = 0; k < 90; k++) { tick(); seen.add(rd('ACC', 4)); }
   for (const v of [4, 3, 2, 1, 0]) {
     expect(c, `two-byte machine counts through ${v}`, seen.has(v), true);
   }
+
+  // The TEST pin is a real input and must change what the program does.
+  // Mask 13 continues the loop only while the pin is high, so pulling it
+  // low has to break out at the first JCN — which is the whole point of
+  // having the pin, and was not demonstrable before the mask stopped
+  // doubling as a jump address.
+  const runLoop = pin => {
+    sw(c, 'TEST', pin);
+    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+    let taken = 0;
+    for (let k = 0; k < 40; k++) {
+      const isExec = c.value[c.phases[3]] === HI;
+      if (isExec && ((rd('IR', 8) >> 4) & 15) === 1
+          && lampV(c, 'TAKE') === HI) taken++;
+      tick();
+    }
+    return taken;
+  };
+  const withPinHigh = runLoop(true);
+  const withPinLow = runLoop(false);
+  expect(c, 'the loop runs while TEST is high', withPinHigh > 1, true);
+  expect(c, 'pulling TEST low breaks out of the loop', withPinLow, 0);
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────

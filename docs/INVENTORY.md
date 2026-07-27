@@ -96,7 +96,7 @@ circuit exists to explain.
 | Jump Machine | Machines | · | 1338 | · | 8 | 621 |
 | Adding Machine | Machines | · | 3146 | · | 8 | 1399 |
 | Conditional Machine | Machines | · | 3207 | · | 8 | 1432 |
-| Two-Byte Machine | Machines | · | 3391 | · | 8 | 1515 |
+| Two-Byte Machine | Machines | · | 3390 | · | 8 | 1515 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -124,7 +124,7 @@ circuit exists to explain.
 | Circuits | 57 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 17972 |
+| Transistors | 17971 |
 | Diodes | 4 |
 | Resistors | 312 |
 
@@ -132,7 +132,7 @@ circuit exists to explain.
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Two-Byte Machine | 3399 | 1515 |
+| Two-Byte Machine | 3398 | 1515 |
 | Conditional Machine | 3215 | 1432 |
 | Adding Machine | 3154 | 1399 |
 | 16×4 Register File | 1488 | 635 |
@@ -140,7 +140,7 @@ circuit exists to explain.
 
 ## Test suite
 
-`node test/sim-test.mjs` → **149115 checks, 0 failures**
+`node test/sim-test.mjs` → **149117 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well
