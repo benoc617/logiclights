@@ -26,7 +26,7 @@
 import { VDD, VSS } from './engine.js';
 import { defineModule } from './module.js';
 import {
-  Inverter, And2, Or2, Nor2, DFlipFlop, GATE_W, GATE_H,
+  Inverter, And2, Or2, Nor2, Xor2, DFlipFlop, GATE_W, GATE_H,
 } from './gates.js';
 
 export const PHASES = ['FETCH', 'DECODE', 'EXEC'];
@@ -110,6 +110,9 @@ export const ControlUnit = defineModule('ctrl', {
     { name: 'opXCH', x: -1.5, y: 26, side: 'in' },
     { name: 'opINC', x: -1.5, y: 30, side: 'in' },
     { name: 'opADD', x: -1.5, y: 34, side: 'in' },
+    { name: 'opJCN', x: -1.5, y: 38, side: 'in' },
+    // from the condition tree: this conditional jump's test came out true
+    { name: 'condTake', x: -1.5, y: 42, side: 'in' },
     // to the datapath
     { name: 'pcInc', x: 300, y: 0, side: 'out' },    // advance the PC
     { name: 'pcLoad', x: 300, y: 6, side: 'out' },   // jump: load the PC
@@ -133,9 +136,19 @@ export const ControlUnit = defineModule('ctrl', {
 
     // The PC advances on FETCH too, so the next address is ready by the
     // time this instruction finishes. A jump overrides it at EXEC.
+    // A jump happens on an unconditional JUN, or on a JCN whose condition
+    // came out true. Both are gated by EXEC, and from the program
+    // counter's point of view they are the same event — which is exactly
+    // why the condition tree is a separate block: it decides, the control
+    // unit only acts.
+    const jcnTake = m.net(), wantJump = m.net();
+    m.instantiate(And2, GATE_W * 4, GATE_H * 1,
+      { a: m.port('opJCN'), b: m.port('condTake'), y: jcnTake });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 1,
+      { a: m.port('opJUN'), b: jcnTake, y: wantJump });
     const jump = m.net();
-    m.instantiate(And2, GATE_W * 4, GATE_H * 2,
-      { a: pE, b: m.port('opJUN'), y: jump });
+    m.instantiate(And2, GATE_W * 10, GATE_H * 2,
+      { a: pE, b: wantJump, y: jump });
     const njump = m.net();
     m.instantiate(Inverter, GATE_W * 7, GATE_H * 2, { a: jump, y: njump });
     m.instantiate(And2, GATE_W * 9, GATE_H * 2,
@@ -162,5 +175,86 @@ export const ControlUnit = defineModule('ctrl', {
       { a: m.port('opXCH'), b: m.port('opINC'), y: rw });
     m.instantiate(And2, GATE_W * 8, GATE_H * 8,
       { a: pE, b: rw, y: m.port('regWrite') });
+  },
+});
+
+// The JCN condition tree: does this conditional jump take?
+//
+// JCN's operand nibble is a condition *mask*, not a code — the real 4004
+// tests several things at once and ORs the results, then optionally
+// inverts. The bits, from the actual encoding:
+//
+//   OPA bit 3  invert the whole result
+//   OPA bit 2  accumulator is zero
+//   OPA bit 1  carry is set
+//   OPA bit 0  the TEST pin is low
+//
+// So `JCN 4` jumps if the accumulator is zero, `JCN 12` jumps if it is
+// *not* zero, `JCN 2` jumps on carry, and `JCN 6` jumps if either. That
+// composability is why it is a mask: one instruction covers what a
+// conventional machine spends four opcodes on.
+//
+// TEST is a real pin on the chip — an external input the program can branch
+// on, which is how a 4004 read a keyboard without an interrupt. It is
+// exposed here as an ordinary switch, because that is what it was.
+//
+// The inversion bit is what makes this a *tree* rather than a lookup: the
+// same three condition inputs feed one OR, and bit 3 decides whether the
+// jump takes on that result or its complement.
+export const ConditionTree = defineModule('cond', {
+  ports: [
+    // the mask, from the instruction's low nibble
+    { name: 'm0', x: -1.5, y: 0, side: 'in' },   // TEST
+    { name: 'm1', x: -1.5, y: 4, side: 'in' },   // carry
+    { name: 'm2', x: -1.5, y: 8, side: 'in' },   // accumulator zero
+    { name: 'm3', x: -1.5, y: 12, side: 'in' },  // invert
+    // machine state
+    { name: 'accZero', x: -1.5, y: 18, side: 'in' },
+    { name: 'carry', x: -1.5, y: 22, side: 'in' },
+    { name: 'test', x: -1.5, y: 26, side: 'in' },
+    { name: 'take', x: GATE_W * 20, y: 8, side: 'out' },
+  ],
+  build(m) {
+    // each condition contributes only if its mask bit is set
+    const cZero = m.net(), cCarry = m.net(), cTest = m.net();
+    m.instantiate(And2, 0, 0,
+      { a: m.port('m2'), b: m.port('accZero'), y: cZero });
+    m.instantiate(And2, 0, GATE_H + 2,
+      { a: m.port('m1'), b: m.port('carry'), y: cCarry });
+    // TEST is active *low* on the real chip, so the mask bit tests for the
+    // pin being low rather than high — one of those details that looks like
+    // an error until you check the datasheet.
+    const nTest = m.net();
+    m.instantiate(Inverter, 0, GATE_H * 2 + 4, { a: m.port('test'), y: nTest });
+    m.instantiate(And2, GATE_W * 3, GATE_H * 2 + 4,
+      { a: m.port('m0'), b: nTest, y: cTest });
+
+    // any selected condition true → the raw result
+    const anyA = m.net(), raw = m.net();
+    m.instantiate(Or2, GATE_W * 6, 0, { a: cZero, b: cCarry, y: anyA });
+    m.instantiate(Or2, GATE_W * 9, 0, { a: anyA, b: cTest, y: raw });
+
+    // bit 3 inverts: take = raw XOR invert, which is the whole trick
+    m.instantiate(Xor2, GATE_W * 13, 0,
+      { a: raw, b: m.port('m3'), y: m.port('take') });
+  },
+});
+
+// Is a 4-bit value zero? An OR of every bit, inverted — the flag JCN needs
+// and the one a machine has to compute rather than store, because the
+// accumulator changes for reasons other than a comparison.
+export const IsZero4 = defineModule('zero4', {
+  ports: [
+    ...Array.from({ length: 4 }, (_, i) => ({
+      name: `a${i}`, x: -1.5, y: i * 4, side: 'in',
+    })),
+    { name: 'z', x: GATE_W * 10, y: 6, side: 'out' },
+  ],
+  build(m) {
+    const o1 = m.net(), o2 = m.net(), any = m.net();
+    m.instantiate(Or2, 0, 0, { a: m.port('a0'), b: m.port('a1'), y: o1 });
+    m.instantiate(Or2, 0, GATE_H + 2, { a: m.port('a2'), b: m.port('a3'), y: o2 });
+    m.instantiate(Or2, GATE_W * 4, 0, { a: o1, b: o2, y: any });
+    m.instantiate(Inverter, GATE_W * 8, 0, { a: any, y: m.port('z') });
   },
 });

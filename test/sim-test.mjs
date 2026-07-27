@@ -9,7 +9,7 @@ import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch, register, rippleAdder } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
 import { InstructionDecoder } from '../web/js/decode.js';
-import { ringCounter } from '../web/js/sequencer.js';
+import { ringCounter, ConditionTree, IsZero4 } from '../web/js/sequencer.js';
 
 let failures = 0;
 let checks = 0;
@@ -1697,6 +1697,105 @@ function flipAndStep(c, label, on) {
       }
     }
   }
+}
+
+// ── JCN: the condition tree ──────────────────────────────────────────────
+// JCN's operand is a mask, not a code: bit 2 tests zero, bit 1 tests carry,
+// bit 0 tests the TEST pin, bit 3 inverts the result. Swept exhaustively
+// against the real semantics, because a condition tree that is subtly wrong
+// makes a program take a branch it should not and the symptom appears
+// somewhere else entirely.
+{
+  const want = (mask, z, cy, test) => {
+    const raw = (((mask >> 2) & 1) && z)
+      || (((mask >> 1) & 1) && cy)
+      || ((mask & 1) && !test);
+    return ((mask >> 3) & 1) ? !raw : !!raw;
+  };
+  for (let mask = 0; mask < 16; mask++) {
+    for (const z of [0, 1]) {
+      for (const cy of [0, 1]) {
+        for (const test of [0, 1]) {
+          const c = new Circuit('cond');
+          c.implicitGround = false;
+          const mk = v => {
+            const n = c.net();
+            c.addSwitch(`S${c.netCount}`, n, 'toggle', 0, 0, { from: 0, to: 1 })
+              .on = !!v;
+            return n;
+          };
+          const I = instantiate(c, ConditionTree, 0, 0, {
+            m0: mk(mask & 1), m1: mk((mask >> 1) & 1),
+            m2: mk((mask >> 2) & 1), m3: mk((mask >> 3) & 1),
+            accZero: mk(z), carry: mk(cy), test: mk(test),
+          });
+          settle(c);
+          expect(c, `JCN mask ${mask} z=${z} cy=${cy} t=${test}`,
+            c.value[I.nets.take] === HI, want(mask, z, cy, test));
+        }
+      }
+    }
+  }
+}
+{
+  // The zero detector: an OR of every bit, inverted. It has to be computed
+  // rather than stored, because the accumulator changes for reasons other
+  // than a comparison and a stale flag would branch on old data.
+  for (let v = 0; v < 16; v++) {
+    const c = new Circuit('zero');
+    c.implicitGround = false;
+    const bind = {};
+    for (let i = 0; i < 4; i++) {
+      const n = c.net();
+      c.addSwitch(`A${i}`, n, 'toggle', 0, 0, { from: 0, to: 1 }).on =
+        !!((v >> i) & 1);
+      bind[`a${i}`] = n;
+    }
+    const I = instantiate(c, IsZero4, 0, 0, bind);
+    settle(c);
+    expect(c, `zero detect ${v}`, c.value[I.nets.z] === HI, v === 0);
+  }
+}
+{
+  // The machine: a conditional jump must actually not take when its
+  // condition is false. The plan calls for one taken and one untaken JCN
+  // before trusting any loop.
+  const c = buildCircuit('jcnmachine');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+  // walk far enough to reach the JCN with the accumulator at zero
+  let sawJcn = false, tookWhenZero = null;
+  for (let k = 0; k < 40; k++) {
+    const isExec = c.value[c.phases[2]] === HI;
+    const isJcn = ((rd('IR', 8) >> 4) & 15) === 1;
+    if (isExec && isJcn) {
+      sawJcn = true;
+      // JCN 12 is jump-if-not-zero; with ACC zero it must fall through
+      if (lampV(c, 'ZERO') === HI) tookWhenZero = lampV(c, 'TAKE') === HI;
+    }
+    tick();
+  }
+  expect(c, 'the program reaches its JCN', sawJcn, true);
+  expect(c, 'JCN 12 does not take while the accumulator is zero',
+    tookWhenZero, false);
+
+  // pcLoad must follow the condition, not the opcode: a JCN that does not
+  // take must leave the program counter alone.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  let loadedWithoutTaking = 0;
+  for (let k = 0; k < 40; k++) {
+    const isJcn = ((rd('IR', 8) >> 4) & 15) === 1;
+    if (isJcn && c.value[c.control.pcLoad] === HI
+        && lampV(c, 'TAKE') !== HI) loadedWithoutTaking++;
+    tick();
+  }
+  expect(c, 'an untaken JCN never loads the PC', loadedWithoutTaking, 0);
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────

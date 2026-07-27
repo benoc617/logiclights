@@ -386,6 +386,29 @@
       }
     },
     {
+      "id": "jcnmachine",
+      "group": "CMOS · Machines",
+      "name": "Conditional Machine",
+      "desc": "The last bring-up milestone, and the one that makes the machine interesting rather than a straight line. JCN's operand is a condition mask, not a code, and that is the character of the instruction: bit 2 tests the accumulator for zero, bit 1 tests the carry, bit 0 tests the TEST pin, and bit 3 inverts the whole result. So JCN 4 jumps when the accumulator is zero and JCN 12 jumps when it is not — one OR over the same three inputs, with one bit deciding whether to take the answer or its complement. One instruction covers what a conventional machine spends four opcodes on. TEST was a real pin on the chip, an external input a program could branch on, which is how a 4004 polled a keyboard without interrupts; it is a switch here because that is what it was, so flip it and watch a running program change course. Watch TK in the outputs: it is the condition tree's answer, and pcLoad follows it only when the instruction is a JCN.",
+      "hints": {
+        "CLK": "the clock — three edges per instruction",
+        "RST": "back to FETCH at address 0",
+        "TEST": "the TEST pin — an external input JCN can branch on",
+        "P": "the phase ring: FETCH, DECODE, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register — for JCN its low nibble is the condition mask",
+        "ACC": "the accumulator",
+        "Z": "the accumulator is zero (computed, not stored)",
+        "CY": "the carry flag",
+        "TK": "the condition tree says this jump takes"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

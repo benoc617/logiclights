@@ -13,7 +13,7 @@ import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
 import { romArray } from '../rom.js';
 import { InstructionDecoder, OPR_NAMES } from '../decode.js';
-import { ringCounter, ControlUnit, PHASES } from '../sequencer.js';
+import { ringCounter, ControlUnit, ConditionTree, IsZero4, PHASES } from '../sequencer.js';
 import { buildRom8 } from './rom-circuit.js';
 import { RegFile16x4, REG_WIDTH, REG_ADDR } from '../regfile.js';
 import { mosScaffold, cmosInv, buildRing, w } from './mos-scaffold.js';
@@ -547,10 +547,11 @@ function buildSequenced() {
     twoByte: dec.nets.twoByte,
     opJUN: dec.nets.op4, opLDM: dec.nets.op13,
     opXCH: dec.nets.op11, opINC: dec.nets.op6,
-    // This machine has no adder, so ADD is tied low rather than left
-    // floating — an unbound port would be Z, and a Z into the control
-    // unit's OR would let accLoad fire on instructions it should ignore.
-    opADD: VSS,
+    // Ports this machine has no hardware for are tied low rather than
+    // left unbound: an unbound port floats at Z, and a Z into the control
+    // unit's ORs lets control lines fire on instructions they should
+    // ignore. The test suite catches it, which is how this was found.
+    opADD: VSS, opJCN: VSS, condTake: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — phase AND instruction',
     xCtrl - 6, ROW3 - 6, xCtrl + ctrl.w + 6, ROW3 + ctrl.h + 6);
@@ -677,10 +678,11 @@ function buildAccumulator() {
     twoByte: dec.nets.twoByte,
     opJUN: dec.nets.op4, opLDM: dec.nets.op13,
     opXCH: dec.nets.op11, opINC: dec.nets.op6,
-    // This machine has no adder, so ADD is tied low rather than left
-    // floating — an unbound port would be Z, and a Z into the control
-    // unit's OR would let accLoad fire on instructions it should ignore.
-    opADD: VSS,
+    // Ports this machine has no hardware for are tied low rather than
+    // left unbound: an unbound port floats at Z, and a Z into the control
+    // unit's ORs lets control lines fire on instructions they should
+    // ignore. The test suite catches it, which is how this was found.
+    opADD: VSS, opJCN: VSS, condTake: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — phase AND instruction',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -834,10 +836,11 @@ function buildJumpMachine() {
     twoByte: dec.nets.twoByte,
     opJUN: dec.nets.op4, opLDM: dec.nets.op13,
     opXCH: dec.nets.op11, opINC: dec.nets.op6,
-    // This machine has no adder, so ADD is tied low rather than left
-    // floating — an unbound port would be Z, and a Z into the control
-    // unit's OR would let accLoad fire on instructions it should ignore.
-    opADD: VSS,
+    // Ports this machine has no hardware for are tied low rather than
+    // left unbound: an unbound port floats at Z, and a Z into the control
+    // unit's ORs lets control lines fire on instructions they should
+    // ignore. The test suite catches it, which is how this was found.
+    opADD: VSS, opJCN: VSS, condTake: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — phase AND instruction',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -1002,6 +1005,8 @@ function buildAddMachine() {
     opJUN: dec.nets.op4, opLDM: dec.nets.op13,
     opXCH: dec.nets.op11, opINC: dec.nets.op6,
     opADD: dec.nets.op8,
+    // no condition tree in this machine yet — tied low, not left floating
+    opJCN: VSS, condTake: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit', xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
 
@@ -1128,6 +1133,232 @@ function buildAddMachine() {
   return c;
 }
 
+
+// P3 — conditional jumps. The last bring-up milestone, and the one that
+// makes the machine Turing-interesting rather than a straight line.
+//
+// JCN's operand is a condition *mask*, not a code, and that is the whole
+// character of the instruction. The real bits:
+//
+//   bit 3  invert the result
+//   bit 2  accumulator is zero
+//   bit 1  carry is set
+//   bit 0  the TEST pin is low
+//
+// So `JCN 4` jumps when the accumulator is zero and `JCN 12` jumps when it
+// is not — same three condition inputs, one OR, and bit 3 deciding whether
+// to take the result or its complement. One instruction covers what a
+// conventional machine spends four opcodes on.
+//
+// TEST was a real pin: an external input a program could branch on, which
+// is how a 4004 polled a keyboard without interrupts. It is a switch here
+// because that is what it was — flip it and watch a running program change
+// course.
+//
+// The program counts the accumulator down and loops until it hits zero,
+// which is the first program here whose length depends on its data rather
+// than on how many instructions were written.
+const P3_PROGRAM = [
+  0xD3,   // LDM 3     ACC = 3
+  0xB0,   // XCH 0     R0 = 3
+  0xDD,   // LDM 13    ACC = 13  (= -3 in four bits)
+  0x80,   // ADD 0     ACC += 3  → 0 on the third pass, with carry
+  0x1C,   // JCN 12,4  jump to 4 while ACC is *not* zero  → spins here
+  0x00,   // NOP
+  0x40,   // JUN 0     start again
+  0x00,   // NOP
+];
+
+function buildJcnMachine() {
+  const c = new Circuit('Conditional Machine');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net(), test = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addSwitch('TEST', test, 'toggle', 4, 16, { to: VSS });
+  c.addClock(clkSw, { period: 1400 });
+  instantiate(c, Inverter, 20, 44, { a: clkNet, y: nclk });
+
+  const ROW2 = 150;
+  const ring = instantiate(c, ringCounter(3), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring', 36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  const nFetch = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
+
+  const pcLoadLine = c.net();
+  const jumpTarget = [c.net(), c.net(), c.net()];
+  const PC = instantiate(c, programCounter(3), 40, ROW2, {
+    clk: clkNet, nclk, en: ring.nets.p0, rst, load: pcLoadLine,
+    a0: jumpTarget[0], a1: jumpTarget[1], a2: jumpTarget[2],
+  }, { tag: 'pc' });
+  c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(P3_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, xRom, ROW2,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register', xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
+
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
+  c.region('Instruction decoder', xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
+
+  // ── the datapath ───────────────────────────────────────────────────────
+  const ROW3 = ROW2 + 380;
+  const accQ = [c.net(), c.net(), c.net(), c.net()];
+  const accZero = c.net(), carryQ = c.net();
+
+  // The condition tree. It reads the mask straight out of the instruction
+  // and the flags straight out of the datapath, and answers one question:
+  // does this jump take?
+  const condTake = c.net();
+  const xCond = 40;
+  instantiate(c, ConditionTree, xCond, ROW3, {
+    m0: ir[0], m1: ir[1], m2: ir[2], m3: ir[3],
+    accZero, carry: carryQ, test, take: condTake,
+  }, { tag: 'cond' });
+  c.region('Condition tree — does this jump take?',
+    xCond - 6, ROW3 - 6, xCond + 180, ROW3 + 70);
+
+  const xCtrl = xDec + dec.w + 40;
+  const ctrl = instantiate(c, ControlUnit, xCtrl, ROW2, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1, pExec: ring.nets.p2,
+    twoByte: dec.nets.twoByte,
+    opJUN: dec.nets.op4, opLDM: dec.nets.op13,
+    opXCH: dec.nets.op11, opINC: dec.nets.op6,
+    opADD: dec.nets.op8, opJCN: dec.nets.op1, condTake,
+  }, { tag: 'ctrl' });
+  c.region('Control unit', xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
+
+  const jn = c.net();
+  instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 20,
+    { a: ctrl.nets.pcLoad, y: jn }, { tag: 'jn' });
+  instantiate(c, Inverter, xCtrl + 40, ROW2 + ctrl.h + 20,
+    { a: jn, y: pcLoadLine }, { tag: 'jp' });
+  for (let i = 0; i < 3; i++) {
+    const t = c.net();
+    instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 44 + i * 24,
+      { a: ir[i], y: t }, { tag: `jt${i}n` });
+    instantiate(c, Inverter, xCtrl + 40, ROW2 + ctrl.h + 44 + i * 24,
+      { a: t, y: jumpTarget[i] }, { tag: `jt${i}` });
+  }
+
+  const xRf = xCond + 200;
+  const rf = instantiate(c, RegFile16x4, xRf, ROW3, {
+    wa0: ir[0], wa1: ir[1], wa2: ir[2], wa3: ir[3],
+    ra0: ir[0], ra1: ir[1], ra2: ir[2], ra3: ir[3],
+    d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
+    we: ctrl.nets.regWrite,
+  }, { tag: 'rf' });
+  c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+
+  const xAdd = xRf + rf.w + 50;
+  const adder = instantiate(c, rippleAdder(4), xAdd, ROW3, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+    b0: rf.nets.q0, b1: rf.nets.q1, b2: rf.nets.q2, b3: rf.nets.q3,
+    cin: VSS,
+  }, { tag: 'add' });
+  c.region('Adder', xAdd - 6, ROW3 - 6, xAdd + adder.w + 6, ROW3 + adder.h + 6);
+
+  const xCf = xAdd + adder.w + 40;
+  const cf = instantiate(c, register(1), xCf, ROW3, {
+    clk: clkNet, nclk, load: ctrl.nets.accFromAlu, d0: adder.nets.cout,
+    q0: carryQ,
+  }, { tag: 'cf' });
+  c.region('Carry flag', xCf - 6, ROW3 - 6, xCf + 70, ROW3 + 60);
+
+  const xMux = xCf + 90;
+  const accD = [];
+  for (let i = 0; i < 4; i++) {
+    const fromAlu = c.net(), fromImm = c.net(), d = c.net(), nSel = c.net();
+    instantiate(c, Inverter, xMux, ROW3 + i * 40 + 20,
+      { a: ctrl.nets.accFromAlu, y: nSel }, { tag: `mxn${i}` });
+    instantiate(c, And2, xMux + 20, ROW3 + i * 40,
+      { a: adder.nets[`s${i}`], b: ctrl.nets.accFromAlu, y: fromAlu }, { tag: `mxa${i}` });
+    instantiate(c, And2, xMux + 20, ROW3 + i * 40 + 22,
+      { a: ir[i], b: nSel, y: fromImm }, { tag: `mxi${i}` });
+    instantiate(c, Or2, xMux + 50, ROW3 + i * 40,
+      { a: fromAlu, b: fromImm, y: d }, { tag: `mxo${i}` });
+    accD.push(d);
+  }
+  c.region('Source mux', xMux - 6, ROW3 - 6, xMux + 90, ROW3 + 4 * 40);
+
+  const xAcc = xMux + 110;
+  instantiate(c, register(4), xAcc, ROW3, {
+    clk: clkNet, nclk, load: ctrl.nets.accLoad,
+    d0: accD[0], d1: accD[1], d2: accD[2], d3: accD[3],
+    q0: accQ[0], q1: accQ[1], q2: accQ[2], q3: accQ[3],
+  }, { tag: 'acc' });
+  c.region('Accumulator', xAcc - 6, ROW3 - 6, xAcc + 140, ROW3 + 90);
+
+  // the zero flag is computed, not stored — the accumulator changes for
+  // reasons other than a comparison, so this has to follow it continuously
+  const xZ = xAcc + 160;
+  instantiate(c, IsZero4, xZ, ROW3, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], z: accZero,
+  }, { tag: 'zero' });
+  c.region('Zero detect', xZ - 6, ROW3 - 6, xZ + 90, ROW3 + 50);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5, { short: `P${i}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 20 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 36 + i * 4.5, { short: `IR${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`ACC${i}`, accQ[i], xEnd - 5, 76 + i * 4.5, { short: `ACC${i}` });
+  }
+  c.addLamp('ZERO', accZero, xEnd - 5, 98, { short: 'Z' });
+  c.addLamp('CARRY', carryQ, xEnd - 5, 103, { short: 'CY' });
+  c.addLamp('TAKE', condTake, xEnd - 5, 108, { short: 'TK' });
+
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
+  c.control = {
+    pcLoad: ctrl.nets.pcLoad, accLoad: ctrl.nets.accLoad,
+    accFromAlu: ctrl.nets.accFromAlu, regWrite: ctrl.nets.regWrite,
+    condTake,
+  };
+  c.program = P3_PROGRAM;
+  return c;
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -1197,6 +1428,32 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  jcnmachine: {
+    build: buildJcnMachine,
+    readout: v => {
+      const ph = PHASES[[0, 1, 2].find(i => (v.P >> i) & 1)] ?? '—';
+      const name = OPR_NAMES[(v.IR >> 4) & 15] || 'escape';
+      const arg = name === 'LDM' ? ` ${v.IR & 15}`
+        : name === 'JCN' ? ` mask ${v.IR & 15}`
+        : ['ADD', 'XCH'].includes(name) ? ` r${v.IR & 15}`
+        : name === 'JUN' ? ` ${v.IR & 7}` : '';
+      return `${ph}  ·  PC ${v.PC}  ·  ${name}${arg}  ·  ACC ${v.ACC}`
+        + `${v.Z ? '  zero' : ''}${v.CY ? '  carry' : ''}`
+        + `${name === 'JCN' ? (v.TK ? '  → taking' : '  → not taking') : ''}`;
+    },
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   addmachine: {
     build: buildAddMachine,

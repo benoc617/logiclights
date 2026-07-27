@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**55 circuits** across 4 sections.
+**56 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (22)
+### CMOS (23)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -91,10 +91,11 @@ circuit exists to explain.
 | 4-bit Counter | Sequential | · | 180 | · | · | 87 |
 | 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
 | Fetch Machine | Machines | · | 834 | · | 8 | 386 |
-| Sequenced Machine | Machines | · | 1121 | · | 8 | 518 |
-| Accumulator Machine | Machines | · | 1255 | · | 8 | 579 |
-| Jump Machine | Machines | · | 1326 | · | 8 | 615 |
-| Adding Machine | Machines | · | 3134 | · | 8 | 1393 |
+| Sequenced Machine | Machines | · | 1133 | · | 8 | 524 |
+| Accumulator Machine | Machines | · | 1267 | · | 8 | 585 |
+| Jump Machine | Machines | · | 1338 | · | 8 | 621 |
+| Adding Machine | Machines | · | 3146 | · | 8 | 1399 |
+| Conditional Machine | Machines | · | 3207 | · | 8 | 1432 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -119,26 +120,26 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 55 |
+| Circuits | 56 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 11326 |
+| Transistors | 14581 |
 | Diodes | 4 |
-| Resistors | 296 |
+| Resistors | 304 |
 
 ### Largest circuits
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Adding Machine | 3142 | 1393 |
+| Conditional Machine | 3215 | 1432 |
+| Adding Machine | 3154 | 1399 |
 | 16×4 Register File | 1488 | 635 |
-| Jump Machine | 1334 | 615 |
-| Accumulator Machine | 1263 | 579 |
-| Sequenced Machine | 1129 | 518 |
+| Jump Machine | 1346 | 621 |
+| Accumulator Machine | 1275 | 585 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **148237 checks, 0 failures**
+`node test/sim-test.mjs` → **148424 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well
