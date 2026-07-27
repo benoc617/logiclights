@@ -20,19 +20,12 @@ the line falls where it does.
 
 ## Adding a circuit
 
-1. Write the builder in the behaviour module for its technology
-   (`relays.js`, `general.js`, `cmos.js`, `nmos.js`), and add it to that
-   file's exported map under a new id.
-2. Add the matching entry to `circuits.json`. At minimum `id`, `group`,
-   `name`, `desc`.
-3. If it needs a `readout`, `table` or `state`, the declarative half goes in
-   the JSON and the function half in the behaviour map — `select` for a
-   table, `read` for state.
-4. Add tests. `node test/sim-test.mjs` must pass before every commit; see
-   CLAUDE.md.
+The full procedure is in [CLAUDE.md](../CLAUDE.md#adding-a-circuit) — this
+file covers only the data/behaviour split it refers to.
 
-The group must match the devices the circuit is actually made of. The test
-suite checks that — a circuit filed under CMOS really does have to use
+One rule specific to that split, beyond the strict join described above:
+the group must match the devices the circuit is actually made of. The test
+suite checks it — a circuit filed under CMOS really does have to use
 complementary pairs.
 
 ## Why the split is here and not elsewhere

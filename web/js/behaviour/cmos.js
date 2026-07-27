@@ -2342,9 +2342,10 @@ function buildSubMachine() {
   // without this gate the accumulator would capture the value it was in
   // the middle of writing, and the swap would be a no-op in one direction.
   //
-  // The write lands on φ2, after the read on φ1 has already happened.
+  // The register file's write lands on φ2.
   //
-  // This is how the real chip does it, and it is worth following exactly
+  // This is how the real chip separates a register read from a register
+  // write inside one instruction, and it is worth following exactly
   // rather than approximating. From Intel's transistor-level schematic
   // (sheet 2, "INDEX REGISTER CONTROL"; sheet 3, the accumulator block):
   // the index register's read and write paths are gated on *different
@@ -2362,9 +2363,13 @@ function buildSubMachine() {
   //
   // The 4004 took φ1 and φ2 as two of its sixteen pins. Generating them
   // from one clock here is the concession; the non-overlap is not.
+  //
+  // What is built so far is the clock and the φ2-gated write. The φ1 read
+  // path into the accumulator is not wired yet, which is why XCH is still
+  // one-way on this machine — see opXCHread above.
   const phi = instantiate(c, TwoPhaseClock, 20, 70, { clk: clkNet },
     { tag: 'phi' });
-  c.region('Two-phase clock — φ1 reads, φ2 writes',
+  c.region('Two-phase clock — φ2 gates the register write',
     14, 64, 20 + phi.w + 10, 70 + phi.h + 10);
 
   // The ADB register: the accumulator's value, held on the adder's second
@@ -2377,15 +2382,17 @@ function buildSubMachine() {
   // *is* the holding place — it already exists to feed the adder for ADD,
   // and XCH reuses it.
   //
-  // That is what makes the exchange work without a race. ADB captures the
-  // old accumulator on φ1, before anything is written; the register file's
-  // write on φ2 then takes its data from ADB rather than from the live
-  // accumulator, so the accumulator is free to load the register's old
-  // value in the same instruction. Two registers, two phases, no scratch.
+  // On the real chip that is what makes the exchange work without a race:
+  // ADB holds the old accumulator while the register file's write takes
+  // its data from ADB rather than from the live accumulator, so the
+  // accumulator is free to load the register's old value in the same
+  // instruction. Two registers, two phases, no scratch.
   //
-  // Without it, both directions of the swap read the same net at the same
-  // instant and the exchange collapses into a one-way write — which is
-  // exactly what this machine did before the schematic was consulted.
+  // Here it is built but not yet load-bearing. XCH's read half is off
+  // (see opXCHread above), so ADB currently only supplies the register
+  // file's write data — which it does correctly, but which a plain
+  // connection to the accumulator would also do. It earns its place when
+  // the read path lands.
   // ADB captures on the falling edge, half a cycle *after* the
   // accumulator has latched. So while the accumulator moves on to the
   // register's old value, ADB still holds what the accumulator had when

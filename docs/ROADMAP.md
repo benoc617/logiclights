@@ -92,13 +92,14 @@ generated, so this file does not repeat them.
       the JCN condition tree. Three-phase and four-phase variants; the
       four-phase one honours two-byte instructions.
 - [ ] **Intel 4004** — in progress, and the bring-up ladder is complete.
-      Eight machines exist, each isolating one idea: fetch, phase
+      Nine machines exist, each isolating one idea: fetch, phase
       sequencing, an accumulator, a loadable PC, the real ADD datapath,
-      conditional jumps, two-byte fetch, and the accumulator group. What
-      remains is instruction-set coverage rather than new structure —
-      fifteen of the 45 defined instructions now act on hardware. See the
-      checklist in [4004.md](4004.md), which has the full plan and program
-      corpus too.
+      conditional jumps, two-byte fetch, the accumulator group, and SUB
+      with the first register-to-accumulator path. What remains is
+      instruction-set coverage rather than new structure — seventeen of
+      the 45 defined instructions now act on hardware. See the checklist
+      in [4004.md](4004.md), which has the full plan and program corpus
+      too.
 
 ## Engineering to unblock the big machines
 
@@ -120,8 +121,8 @@ generated, so this file does not repeat them.
       are no timing assertions in the suite. Treat them as orders of
       magnitude.)
 - [x] **Test suite wall time** — `test/run.mjs` shards `sim-test.mjs` at its
-      section markers and runs the pieces across cores: 4m37s → ~60s, same
-      149,492 checks. Two follow-ups are measured and written up in
+      section markers and runs the pieces across cores: 4m37s → ~60s, with
+      no change to what is checked. Two follow-ups are measured and written up in
       [TEST-SPEED.md](TEST-SPEED.md): one block ("JCN, every mask, in the
       machine") is 58.8s by itself and is now the floor, and `settle()`
       costs ~29ms per tick on the larger machines, which looks like more
