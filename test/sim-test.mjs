@@ -17,7 +17,7 @@ import {
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
 import {
   ringCounter, ConditionTree, IsZero4, SubOperand, KeyboardProcess,
-  DecimalAdjust,
+  DecimalAdjust, addressStack,
 } from '../web/js/sequencer.js';
 
 let failures = 0;
@@ -2088,82 +2088,56 @@ function flipAndStep(c, label, on) {
   expect(c, 'oprLoad only fires during FETCH2', wrongPhase, 0);
   expect(c, 'oprLoad only fires for two-byte instructions', wrongInstr, 0);
 
-  // The jump goes to the *operand*, not to the opcode's low bits. The
-  // program's ISZ is 0x70 at address 2 with operand 2 at address 3: the
-  // opcode's low bits are 0, so a machine still reading them would jump
-  // to 0 and this would fail.
-  sw(c, 'TEST', true);
-  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-  let jumpedTo = null;
-  for (let k = 0; k < 60 && jumpedTo === null; k++) {
-    const wasJump = c.value[c.control.pcLoad] === HI && phase() === 3;
-    tick();
-    if (wasJump) jumpedTo = rd('PC', 3);
-  }
-  expect(c, 'a jump happened', jumpedTo !== null, true);
-  expect(c, 'the jump used the operand byte, not the opcode', jumpedTo, 2);
-
-  // ISZ: increment the register, jump while the result is NOT zero.
+  // JMS and BBL: a subroutine call and return, over the address stack.
   //
-  // The name describes the fall-through, not the branch, and the manual
-  // states it as the jump: "if the result does not equal 0000B, the 8 bits
-  // specified by ADDR replace the lowest 8 bits of the program counter."
-  // Starting from 13 the loop should run 14, 15, then fall through at 0.
+  // The program is LDM 1 / JMS 5 / JUN 0 / … / LDM 7 / BBL 9, so a full
+  // cycle is: push the return address, run the subroutine, return, loop.
   {
-    const reg = i => {
-      const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
-      return bits.every(b => b === '0' || b === '1')
-        ? parseInt(bits.slice().reverse().join(''), 2) : null;
-    };
     sw(c, 'TEST', true);
     sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
 
-    const seen = [];
-    let fellThrough = null;
-    for (let k = 0; k < 10; k++) {
+    const at = [];
+    for (let k = 0; k < 5; k++) {
       for (let p = 0; p < 4; p++) tick();
-      if (rd('IR', 8) === 0x70) {                     // ISZ r0
-        const v = reg(0);
-        seen.push(v);
-        // the PC stays on the ISZ while it jumps, and moves past it once
-        if (fellThrough === null && rd('PC', 3) !== 2) fellThrough = v;
-      }
+      at.push({ ir: rd('IR', 8), pc: rd('PC', 3), acc: rd('ACC', 4) });
     }
-    expect(c, 'ISZ incremented through 14', seen.includes(14), true);
-    expect(c, 'ISZ incremented through 15', seen.includes(15), true);
-    expect(c, 'ISZ wrapped to zero', seen.includes(0), true);
-    expect(c, 'ISZ fell through exactly when the register hit zero',
-      fellThrough, 0);
 
-    // The increment must be by one every time. An incrementer wired to
-    // the register file's live read bus closes a read → increment → write
-    // → read loop and free-runs while the write latch is open, advancing
-    // by an irregular amount — 13, 2, 11, 3, 9 — which looks like a decode
-    // fault and is a topology one. The hold register is what prevents it.
-    for (let i = 1; i < seen.length; i++) {
-      if (seen[i - 1] === 0) continue;                // a fresh XCH reload
-      expect(c, `ISZ step ${i} advanced by exactly one`,
-        seen[i], (seen[i - 1] + 1) & 15);
-    }
+    expect(c, 'JMS jumped to its operand', at[1].pc, 5);
+    expect(c, 'the subroutine ran', at[2].acc, 7);
+
+    // The return address is the instruction AFTER the JMS and its
+    // operand byte — 3, not 1. Pushing the PC any earlier would return
+    // into the middle of the call.
+    expect(c, 'BBL returned to the address after the call', at[3].pc, 3);
+
+    // BBL loads its own low nibble on the way out, so the 7 the
+    // subroutine computed is gone. That is what "branch back and load"
+    // means, and it is why a 4004 subroutine returns values in registers
+    // rather than in the accumulator.
+    expect(c, 'BBL loaded its immediate over the subroutine result',
+      at[3].acc, 9);
+
+    // …and the loop closes.
+    expect(c, 'execution continued from the return address', at[4].pc, 0);
   }
 
-  // The TEST pin is a real input and must change what the program does.
-  // Mask 13 continues the loop only while the pin is high, so pulling it
-  // low has to break out — which is the whole point of having the pin.
-  const runLoop = pin => {
-    sw(c, 'TEST', pin);
-    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-    let taken = 0;
-    for (let k = 0; k < 40; k++) {
-      const isExec = c.value[c.phases[3]] === HI;
-      if (isExec && ((rd('IR', 8) >> 4) & 15) === 1
-          && lampV(c, 'TAKE') === HI) taken++;
-      tick();
-    }
-    return taken;
-  };
-  expect(c, 'the JCN takes while TEST is high', runLoop(true) > 0, true);
-  expect(c, 'pulling TEST low stops it taking', runLoop(false), 0);
+  // The TEST pin is still a real input. This program has no JCN, so what
+  // it must NOT do is change anything — a pin wired into the wrong term
+  // would show up as a different instruction stream.
+  {
+    const trace = pin => {
+      sw(c, 'TEST', pin);
+      sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+      const seen = [];
+      for (let k = 0; k < 8; k++) {
+        for (let p = 0; p < 4; p++) tick();
+        seen.push(rd('PC', 3));
+      }
+      return seen.join(',');
+    };
+    expect(c, 'TEST does not affect a program without JCN',
+      trace(true), trace(false));
+  }
 }
 
 // ── the accumulator group ────────────────────────────────────────────────

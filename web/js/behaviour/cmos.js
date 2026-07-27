@@ -17,6 +17,7 @@ import {
   ringCounter, ControlUnit, ControlUnit4, ConditionTree, IsZero4,
   AccOperand, CarryLogic, SubOperand, TwoPhaseClock,
   DecimalAdjust, KeyboardProcess, Incrementer4, SrcLatch, MemControl,
+  addressStack,
   PHASES5,
   PHASES, PHASES4,
 } from '../sequencer.js';
@@ -1276,15 +1277,28 @@ export function buildJcnMachine(program = P3_PROGRAM) {
 // for on the real chip — an external input a program could poll without
 // an interrupt — and it is only demonstrable once a condition mask stops
 // doubling as a jump address.
+// A subroutine call and return, which is what the address stack is for.
+//
+//   LDM 1     something in the accumulator to lose
+//   JMS 5     push the return address (3) and jump to the subroutine
+//   LDM 7     the subroutine's work
+//   BBL 9     pop the return address, and load 9 on the way out
+//   JUN 0     start again
+//
+// Watch the accumulator across BBL. It holds 7 inside the subroutine and
+// 9 on return, because BBL loads its own immediate — so a subroutine
+// cannot hand a result back in the accumulator. The return instruction
+// overwrites it. That is not a limitation of this build; it is what BBL
+// does, and it is why 4004 subroutines return values in registers.
 const P4_PROGRAM = [
-  0xDD,   // 0  LDM 13     the loop count, as a negative
-  0xB0,   // 1  XCH r0     r0 = 13
-  0x70,   // 2  ISZ r0 ─┐  increment r0; jump while it is NOT zero…
-  0x02,   // 3     to 2 ─┘  …back to itself, so this is the whole loop
-  0x1D,   // 4  JCN 13 ─┐  and once r0 wraps, loop again while TEST is high
-  0x00,   // 5     to 0 ─┘
-  0x40,   // 6  JUN ────┐   TEST low: start over anyway
-  0x00,   // 7     to 0 ─┘
+  0xD1,   // 0  LDM 1
+  0x50,   // 1  JMS ────┐  push 3, jump to the subroutine
+  0x05,   // 2     to 5 ─┘
+  0x40,   // 3  JUN ────┐  the return lands here
+  0x00,   // 4     to 0 ─┘
+  0xD7,   // 5  LDM 7      the subroutine
+  0xC9,   // 6  BBL 9      pop and return, loading 9
+  0x00,   // 7  NOP
 ];
 
 // The accumulator group: thirteen instructions sharing one opcode.
@@ -1418,6 +1432,7 @@ function buildTwoByteMachine() {
     // low deliberately rather than left floating.
     accGroup: VSS, opSUB: VSS, opLD: VSS, opXCHread: VSS,
     opISZ: dec.nets.op7, iszTake,
+    opJMS: dec.nets.op5, opBBL: dec.nets.op12,
   }, { tag: 'ctrl' });
   c.region('Control unit — four phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -1444,18 +1459,38 @@ function buildTwoByteMachine() {
   c.region('Operand register — the second byte',
     xOpr - 6, ROW2 - 6, xOpr + 150, ROW2 + 90);
 
+  // The address stack — three registers on a cylinder, per section 2.4 of
+  // the manual. JMS pushes the PC (already stepped past the JMS and its
+  // operand, so it is the return address); BBL pops it.
+  const xStk = xOpr;
+  const stack = instantiate(c, addressStack(3), xStk, ROW2 - 260, {
+    clk: clkNet, nclk, rst,
+    push: ctrl.nets.stackPush, pop: ctrl.nets.stackPop,
+    d0: PC.nets.q0, d1: PC.nets.q1, d2: PC.nets.q2,
+  }, { tag: 'stk' });
+  c.region('Address stack — three registers on a cylinder, pointer rotates',
+    xStk - 6, ROW2 - 266, xStk + stack.w + 10, ROW2 - 260 + stack.h + 10);
+
   // the jump target now comes from the operand, not the opcode
   const jn = c.net();
   instantiate(c, Inverter, xOpr + 20, ROW2 + 100,
     { a: ctrl.nets.pcLoad, y: jn }, { tag: 'jn' });
   instantiate(c, Inverter, xOpr + 40, ROW2 + 100,
     { a: jn, y: pcLoadLine }, { tag: 'jp' });
+  // The jump target: the operand byte for JUN/JCN/JMS/ISZ, or the stack's
+  // return address for BBL. One mux, because from the program counter's
+  // point of view a return is just a jump to an address it did not have
+  // to fetch.
   for (let i = 0; i < 3; i++) {
-    const t = c.net();
+    const fo = c.net(), fs = c.net(), nb = c.net();
     instantiate(c, Inverter, xOpr + 20, ROW2 + 124 + i * 24,
-      { a: opr.nets[`q${i}`], y: t }, { tag: `jt${i}n` });
-    instantiate(c, Inverter, xOpr + 40, ROW2 + 124 + i * 24,
-      { a: t, y: jumpTarget[i] }, { tag: `jt${i}` });
+      { a: dec.nets.op12, y: nb }, { tag: `jt${i}n` });
+    instantiate(c, And2, xOpr + 44, ROW2 + 124 + i * 24,
+      { a: opr.nets[`q${i}`], b: nb, y: fo }, { tag: `jto${i}` });
+    instantiate(c, And2, xOpr + 44, ROW2 + 136 + i * 24,
+      { a: stack.nets[`q${i}`], b: dec.nets.op12, y: fs }, { tag: `jts${i}` });
+    instantiate(c, Or2, xOpr + 74, ROW2 + 124 + i * 24,
+      { a: fo, b: fs, y: jumpTarget[i] }, { tag: `jt${i}` });
   }
 
   // The register file's write data is a two-way choice: the accumulator
@@ -1560,19 +1595,27 @@ function buildTwoByteMachine() {
   const xMux = xCf + 90;
   const accD = [];
   for (let i = 0; i < 4; i++) {
-    // Two sources here, so the immediate select is derived as "not from
-    // the ALU". The subtract machine has five and takes an explicit
-    // accFromImm from its control unit instead — past two sources,
-    // "whatever nobody else selected" stops being a definition.
-    const fromAlu = c.net(), fromImm = c.net(), d = c.net(), nSel = c.net();
+    // Three sources: the adder, LDM's immediate, and BBL's.
+    //
+    // BBL loading its own low nibble is the trap worth seeing — a
+    // subroutine cannot return a value in the accumulator, because the
+    // return instruction overwrites it on the way out. It takes the same
+    // IR bits as LDM, so it is a separate select rather than separate
+    // wiring.
+    const fromAlu = c.net(), fromImm = c.net(), fromBbl = c.net();
+    const o1 = c.net(), d = c.net(), nSel = c.net();
     instantiate(c, Inverter, xMux, ROW3 + i * 40 + 20,
       { a: ctrl.nets.accFromAlu, y: nSel }, { tag: `mxn${i}` });
     instantiate(c, And2, xMux + 20, ROW3 + i * 40,
       { a: adder.nets[`s${i}`], b: ctrl.nets.accFromAlu, y: fromAlu }, { tag: `mxa${i}` });
     instantiate(c, And2, xMux + 20, ROW3 + i * 40 + 22,
       { a: ir[i], b: nSel, y: fromImm }, { tag: `mxi${i}` });
+    instantiate(c, And2, xMux + 20, ROW3 + i * 40 + 34,
+      { a: ir[i], b: ctrl.nets.accFromBbl, y: fromBbl }, { tag: `mxb${i}` });
     instantiate(c, Or2, xMux + 50, ROW3 + i * 40,
-      { a: fromAlu, b: fromImm, y: d }, { tag: `mxo${i}` });
+      { a: fromAlu, b: fromImm, y: o1 }, { tag: `mxo${i}` });
+    instantiate(c, Or2, xMux + 76, ROW3 + i * 40,
+      { a: o1, b: fromBbl, y: d }, { tag: `mxp${i}` });
     accD.push(d);
   }
   c.region('Source mux', xMux - 6, ROW3 - 6, xMux + 90, ROW3 + 4 * 40);
@@ -1629,7 +1672,11 @@ function buildTwoByteMachine() {
     pcInc: ctrl.nets.pcInc, pcLoad: ctrl.nets.pcLoad,
     irLoad: ctrl.nets.irLoad, oprLoad: ctrl.nets.oprLoad,
     accLoad: ctrl.nets.accLoad, regWrite: ctrl.nets.regWrite,
+    stackPush: ctrl.nets.stackPush, stackPop: ctrl.nets.stackPop,
   };
+  c.stackQ = [stack.nets.q0, stack.nets.q1, stack.nets.q2];
+  c.stackP = [stack.nets.p0, stack.nets.p1, stack.nets.p2];
+  c.jumpTarget = jumpTarget;
   c.program = P4_PROGRAM;
   c.execAddr = () => {
     let ir8 = 0;
@@ -1814,6 +1861,7 @@ function buildAccGroupMachine() {
     // deliberately even when the answer is "never".
     opJUN: VSS, opJCN: VSS, opADD: VSS, opXCH: VSS, opINC: VSS,
     opSUB: VSS, opLD: VSS, opXCHread: VSS, opISZ: VSS, iszTake: VSS,
+    opJMS: VSS, opBBL: VSS,
     opLDM: dec.nets.op13,
     condTake: VSS, accGroup,
   }, { tag: 'ctrl' });
@@ -2204,7 +2252,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     // deliberately rather than left floating, since an unbound control
     // port reads Z and can fire a control line.
     opJUN: VSS, opJCN: VSS, opINC: VSS, condTake: VSS,
-    opISZ: VSS, iszTake: VSS,
+    opISZ: VSS, iszTake: VSS, opJMS: VSS, opBBL: VSS,
     opLDM: dec.nets.op13, opADD: dec.nets.op8,
     opSUB: dec.nets.op9, opLD: dec.nets.op10, opXCH: dec.nets.op11,
     // This machine reads the register file on the clock's high half and

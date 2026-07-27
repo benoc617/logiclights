@@ -804,6 +804,9 @@ export const ControlUnit4 = defineModule('ctrl4', {
     { name: 'opXCHread', x: -1.5, y: 62, side: 'in' },
     // ISZ: increment a register, then jump if the result is NOT zero.
     { name: 'opISZ', x: -1.5, y: 66, side: 'in' },
+    // JMS calls a subroutine, BBL returns from one.
+    { name: 'opJMS', x: -1.5, y: 74, side: 'in' },
+    { name: 'opBBL', x: -1.5, y: 78, side: 'in' },
     // high when the incremented register came out non-zero
     { name: 'iszTake', x: -1.5, y: 70, side: 'in' },
     { name: 'pcInc', x: 340, y: 0, side: 'out' },
@@ -826,6 +829,10 @@ export const ControlUnit4 = defineModule('ctrl4', {
     // high when the register file's write data should come from the
     // incrementer rather than from the accumulator
     { name: 'regFromInc', x: 340, y: 60, side: 'out' },
+    { name: 'stackPush', x: 340, y: 66, side: 'out' },
+    { name: 'stackPop', x: 340, y: 72, side: 'out' },
+    // BBL loads its immediate into the accumulator on the way back
+    { name: 'accFromBbl', x: 340, y: 78, side: 'out' },
     { name: 'regWrite', x: 340, y: 54, side: 'out' },
   ],
   build(m) {
@@ -857,8 +864,17 @@ export const ControlUnit4 = defineModule('ctrl4', {
       { a: m.port('opISZ'), b: m.port('iszTake'), y: iszTake });
     m.instantiate(Or2, GATE_W * 7, GATE_H * 5,
       { a: jcnTake, b: iszTake, y: anyTake });
+    // JMS jumps to its operand like JUN, and BBL jumps to whatever the
+    // stack hands back — so both join the same want-jump term. What
+    // differs is where the address comes from, which is the datapath's
+    // business rather than the control unit's.
+    const callRet = m.net(), jun2 = m.net();
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 6,
+      { a: m.port('opJMS'), b: m.port('opBBL'), y: callRet });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 6,
+      { a: m.port('opJUN'), b: callRet, y: jun2 });
     m.instantiate(Or2, GATE_W * 7, GATE_H * 4,
-      { a: m.port('opJUN'), b: anyTake, y: wantJump });
+      { a: jun2, b: anyTake, y: wantJump });
     m.instantiate(And2, GATE_W * 10, GATE_H * 4, { a: pE, b: wantJump, y: jump });
     const jn = m.net();
     m.instantiate(Inverter, GATE_W * 13, GATE_H * 4, { a: jump, y: jn });
@@ -897,9 +913,15 @@ export const ControlUnit4 = defineModule('ctrl4', {
     // The two-byte machine's countdown quietly loaded 0 over its 15 with
     // no other symptom — the failure looked like a decode bug three
     // modules away.
-    const wD = m.net();
+    // BBL writes the accumulator too — that is the whole point of "branch
+    // back and LOAD". Selecting its source without enabling the write is
+    // a silent no-op: the mux drives the right value at the right moment
+    // and nothing captures it.
+    const wD0 = m.net(), wD = m.net();
     m.instantiate(Or2, GATE_W * 6, GATE_H * 9,
-      { a: m.port('accGroup'), b: m.port('opXCHread'), y: wD });
+      { a: m.port('accGroup'), b: m.port('opXCHread'), y: wD0 });
+    m.instantiate(Or2, GATE_W * 6, GATE_H * 10,
+      { a: wD0, b: m.port('opBBL'), y: wD });
     m.instantiate(Or2, GATE_W * 8, GATE_H * 8, { a: wC, b: wD, y: wantAcc });
     m.instantiate(And2, GATE_W * 10, GATE_H * 8,
       { a: pE, b: wantAcc, y: m.port('accLoad') });
@@ -938,6 +960,35 @@ export const ControlUnit4 = defineModule('ctrl4', {
       { a: m.port('opSUB'), y: sn });
     m.instantiate(Inverter, GATE_W * 6, GATE_H * 14,
       { a: sn, y: m.port('aluSub') });
+
+    // The stack. JMS pushes at EXEC; BBL pops one phase EARLIER.
+    //
+    // The push wants to be late: by EXEC the PC has stepped past the JMS
+    // and its operand byte, so the value pushed is the address of the
+    // next instruction rather than of the JMS itself. That is the return
+    // address, and taking it any earlier would return into the middle of
+    // the call.
+    //
+    // The pop wants to be early, for the opposite reason. Popping at EXEC
+    // moves the pointer on the same edge that loads the program counter,
+    // so the counter samples the stack's output *before* the pointer has
+    // backed up — and loads whatever the previous slot held, which for a
+    // fresh machine is zero. The symptom is a return that always goes to
+    // address 0: it looks like the stack never stored anything, when in
+    // fact it stored correctly and was read one phase too soon.
+    //
+    // Popping at FETCH2 gives the pointer a whole phase to settle, so the
+    // address is stable on the bus when EXEC loads it. Same read-then-act
+    // separation the register file needs for XCH, one level up.
+    m.instantiate(And2, GATE_W * 4, GATE_H * 18,
+      { a: pE, b: m.port('opJMS'), y: m.port('stackPush') });
+    m.instantiate(And2, GATE_W * 4, GATE_H * 19,
+      { a: pF2, b: m.port('opBBL'), y: m.port('stackPop') });
+    // BBL also loads its low nibble into the accumulator — the trap that
+    // a subroutine cannot return a result in the accumulator, because
+    // the return instruction overwrites it.
+    m.instantiate(And2, GATE_W * 4, GATE_H * 20,
+      { a: pE, b: m.port('opBBL'), y: m.port('accFromBbl') });
 
     // XCH, INC and ISZ all write a register. INC and ISZ write the
     // incremented value; XCH writes the accumulator, so regFromInc is
@@ -1092,3 +1143,151 @@ export const MemControl = defineModule('memctrl', {
       { a: pE, b: m.port('opDCL'), y: m.port('bankLoad') });
   },
 });
+
+// The 4004's address stack — three registers on a cylinder.
+//
+// This is not the stack most people picture, and the difference is the
+// whole reason it is worth building rather than modelling. From section
+// 2.4 of Intel's manual: "it may be helpful to visualize the stack as
+// three registers on the surface of a cylinder". Nothing shifts. A
+// pointer rotates, and the registers stay where they are:
+//
+//   write   store at the pointer, then advance it
+//   read    back the pointer up, then read — "the address read remains
+//           in the stack undisturbed"
+//
+// Two consequences fall out, both real 4004 behaviour rather than
+// simplifications:
+//
+//   A fourth call overwrites the first, silently. There is no overflow
+//   detection because there is nowhere to report it — figure 2-4 shows
+//   `d` landing on top of `a` and the manual just says the address is
+//   "overwritten and lost". Three levels of nesting is the budget, and
+//   exceeding it corrupts the return path with no diagnostic.
+//
+//   A return does not erase what it read. Reading is only moving the
+//   pointer back, so the value stays in its register — figure 2-5 shows
+//   three reads leaving all three addresses in place. A conventional
+//   pop-and-clear would behave identically for well-formed programs and
+//   differently for ill-formed ones, which is exactly the sort of detail
+//   that makes a reimplementation subtly not-the-chip.
+//
+// The pointer is a 3-state ring, so it is a ring counter — the same block
+// the phase ring uses, one more place where the same idea shows up. It
+// needs to count *both ways*, which a plain ring cannot, so each cell
+// takes its next value from a mux between its neighbours.
+export function addressStack(bits) {
+  return defineModule(`stack${bits}`, {
+    ports: [
+      { name: 'clk', x: 0, y: -3, side: 'top' },
+      { name: 'nclk', x: 0, y: -1, side: 'top' },
+      { name: 'rst', x: -1.5, y: 2, side: 'in' },
+      { name: 'push', x: -1.5, y: 6, side: 'in' },
+      { name: 'pop', x: -1.5, y: 10, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `d${i}`, x: -1.5, y: 16 + i * 4, side: 'in',
+      })),
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `q${i}`, x: GATE_W * 40, y: i * 4, side: 'out',
+      })),
+      // which register the pointer is on, for the display
+      ...Array.from({ length: 3 }, (_, i) => ({
+        name: `p${i}`, x: GATE_W * 40, y: 40 + i * 4, side: 'out',
+      })),
+    ],
+    build(m) {
+      const clk = m.port('clk'), nclk = m.port('nclk');
+      const rst = m.port('rst'), push = m.port('push'), pop = m.port('pop');
+
+      // The pointer: three one-hot cells. On push it moves forward, on
+      // pop backward, and reset drops it on register 0.
+      //
+      // A pop must move the pointer BEFORE the read, and a push AFTER the
+      // write. Both are handled by reading the *pre-pop* position for a
+      // write and the *post-pop* position for a read, which is what the
+      // two selection nets below are for.
+      const p = [0, 1, 2].map(() => m.net());
+      const nrst = m.net();
+      m.instantiate(Inverter, 0, 0, { a: rst, y: nrst });
+      for (let i = 0; i < 3; i++) {
+        const fwd = m.net(), bwd = m.net(), hold = m.net();
+        const move = m.net(), keep = m.net(), d = m.net();
+        // forward: take the cell behind us; backward: the one ahead
+        m.instantiate(And2, GATE_W * 3, i * 40,
+          { a: p[(i + 2) % 3], b: push, y: fwd });
+        m.instantiate(And2, GATE_W * 3, i * 40 + GATE_H,
+          { a: p[(i + 1) % 3], b: pop, y: bwd });
+        m.instantiate(Or2, GATE_W * 6, i * 40, { a: fwd, b: bwd, y: move });
+        // hold when neither push nor pop is asserted
+        const any = m.net(), nany = m.net();
+        m.instantiate(Or2, GATE_W * 3, i * 40 + GATE_H * 2,
+          { a: push, b: pop, y: any });
+        m.instantiate(Inverter, GATE_W * 6, i * 40 + GATE_H * 2,
+          { a: any, y: nany });
+        m.instantiate(And2, GATE_W * 8, i * 40 + GATE_H * 2,
+          { a: p[i], b: nany, y: hold });
+        m.instantiate(Or2, GATE_W * 11, i * 40, { a: move, b: hold, y: keep });
+        // reset forces cell 0 set and the others clear
+        if (i === 0) {
+          m.instantiate(Or2, GATE_W * 14, i * 40, { a: keep, b: rst, y: d });
+        } else {
+          m.instantiate(And2, GATE_W * 14, i * 40, { a: keep, b: nrst, y: d });
+        }
+        m.instantiate(DFlipFlop, GATE_W * 17, i * 40,
+          { d, q: p[i], clk, nclk }, { tag: `pf${i}` });
+        // publish
+        const t = m.net();
+        m.instantiate(Inverter, GATE_W * 22, i * 40, { a: p[i], y: t });
+        m.instantiate(Inverter, GATE_W * 24, i * 40,
+          { a: t, y: m.port(`p${i}`) });
+      }
+
+      // Where a write lands, and where a read comes from.
+      //
+      // Both use the pointer directly, and the ordering the manual
+      // describes — "the pointer is backed up one register, [then] the
+      // memory address indicated by the pointer is read" — falls out of
+      // the clock edge rather than needing extra logic. The pointer moves
+      // on the edge, so by the time the value is sampled it has already
+      // backed up and is pointing at the register to read.
+      //
+      // Selecting p[(i+1)%3] here instead looks right on paper and reads
+      // one register too far, because it backs up a second time on top of
+      // the edge. The symptom is returns that come back in the right
+      // *pattern* but from the wrong slot — d,c,b becomes c,b,d — which
+      // is only visible against the manual's own worked figure.
+      const wsel = p;
+      const rsel = p;
+
+      // Three register rows, each written when selected and pushed.
+      const cell = [];
+      for (let r = 0; r < 3; r++) {
+        const we = m.net();
+        m.instantiate(And2, GATE_W * 27, r * 40,
+          { a: wsel[r], b: push, y: we });
+        const bindq = [];
+        const bind = { clk, nclk, load: we };
+        for (let b = 0; b < bits; b++) {
+          bind[`d${b}`] = m.port(`d${b}`);
+          const q = m.net();
+          bind[`q${b}`] = q;
+          bindq.push(q);
+        }
+        m.instantiate(register(bits), GATE_W * 30, r * 40, bind,
+          { tag: `s${r}` });
+        cell.push(bindq);
+      }
+
+      // Read mux: the selected row drives the output bus.
+      for (let b = 0; b < bits; b++) {
+        const t0 = m.net(), t1 = m.net(), t2 = m.net(), o = m.net();
+        m.instantiate(And2, GATE_W * 34, b * 6, { a: cell[0][b], b: rsel[0], y: t0 });
+        m.instantiate(And2, GATE_W * 34, b * 6 + 8, { a: cell[1][b], b: rsel[1], y: t1 });
+        m.instantiate(And2, GATE_W * 34, b * 6 + 16, { a: cell[2][b], b: rsel[2], y: t2 });
+        m.instantiate(Or2, GATE_W * 37, b * 6, { a: t0, b: t1, y: o });
+        m.instantiate(Or2, GATE_W * 39, b * 6, { a: o, b: t2, y: m.port(`q${b}`) });
+      }
+      m.stackCells = cell;
+    },
+  });
+}
