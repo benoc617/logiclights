@@ -11,7 +11,7 @@ import { romArray } from '../web/js/rom.js';
 import {
   InstructionDecoder, disassemble, disassembleProgram, isTwoByte,
 } from '../web/js/decode.js';
-import { buildJcnMachine } from '../web/js/behaviour/cmos.js';
+import { buildJcnMachine, buildSubMachine } from '../web/js/behaviour/cmos.js';
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
 import { ringCounter, ConditionTree, IsZero4, SubOperand } from '../web/js/sequencer.js';
 
@@ -2202,39 +2202,72 @@ function flipAndStep(c, label, on) {
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
 
   // Worked out from the instruction semantics, not read off the circuit.
+  //
+  // XCH is a full exchange, so each one leaves the accumulator holding
+  // whatever that register held before — on the first pass the registers
+  // have never been written, so those accumulator values are whatever the
+  // uninitialised cells settle to and are not asserted. The register side
+  // is asserted throughout, and the second pass (below) pins the read
+  // side down with known values.
   const want = [
     { ir: 0xD9, acc: 9, cy: 0 },                  // LDM 9
-    { ir: 0xB0, acc: 9, cy: 0, r: [0, 9] },       // XCH r0 — write half
+    { ir: 0xB0, cy: 0, r: [0, 9] },               // XCH r0 — r0 := 9
     { ir: 0xD4, acc: 4, cy: 0 },                  // LDM 4
-    { ir: 0xB1, acc: 4, cy: 0, r: [1, 4] },       // XCH r1
+    { ir: 0xB1, cy: 0, r: [1, 4] },               // XCH r1 — r1 := 4
     { ir: 0xA0, acc: 9, cy: 0 },                  // LD r0 — the read path
     { ir: 0xF1, acc: 9, cy: 0 },                  // CLC
     { ir: 0x91, acc: 5, cy: 1 },                  // SUB r1 → 5, no borrow
-    { ir: 0xB2, acc: 5, cy: 1, r: [2, 5] },       // XCH r2
+    { ir: 0xB2, cy: 1, r: [2, 5] },               // XCH r2 — r2 := 5
   ];
   for (let k = 0; k < want.length; k++) {
     const w = want[k];
     for (let p = 0; p < 4; p++) tick();
     expect(c, `step ${k} runs 0x${w.ir.toString(16)}`, rd('IR', 8), w.ir);
-    expect(c, `step ${k} (0x${w.ir.toString(16)}) ACC`, rd('ACC', 4), w.acc);
+    if (w.acc !== undefined) {
+      expect(c, `step ${k} (0x${w.ir.toString(16)}) ACC`, rd('ACC', 4), w.acc);
+    }
     expect(c, `step ${k} (0x${w.ir.toString(16)}) carry`,
       lampV(c, 'CY') === HI ? 1 : 0, w.cy);
     if (w.r) expect(c, `step ${k} wrote r${w.r[0]}`, reg(w.r[0]), w.r[1]);
   }
 
-  // XCH's read half is deliberately off on this machine, and this asserts
-  // that rather than leaving it unstated: the accumulator keeps its value
-  // across an XCH. When the read path lands, this flips — and the
-  // replacement must use two *different* operands, because swapping equal
-  // values cannot tell a swap from a no-op.
+  // XCH is a genuine exchange, and proving that needs two *different*
+  // values. Swapping equal ones looks identical whether the hardware
+  // swaps, copies one way, or does nothing at all — an earlier version of
+  // this test did exactly that and passed while proving nothing.
+  //
+  // So: load 3, park it in r0, load 7, then exchange. A real swap leaves
+  // ACC=3 and r0=7. A one-way write leaves ACC=7. A no-op leaves r0=3.
+  // The three outcomes are distinguishable, which is the whole point.
   {
-    sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-    for (let p = 0; p < 4; p++) tick();          // LDM 9
-    const before = rd('ACC', 4);
-    for (let p = 0; p < 4; p++) tick();          // XCH r0
-    expect(c, 'XCH does not yet read back into the accumulator',
-      rd('ACC', 4), before);
-    expect(c, 'XCH still writes its register', reg(0), before);
+    const m = buildSubMachine([0xD3, 0xB0, 0xD7, 0xB0, 0, 0, 0, 0]);
+    const mtick = () => {
+      m.stepClock(); settle(m); m.stepClock(); settle(m);
+    };
+    const mrd = (p, n) => {
+      let v = 0;
+      for (let i = 0; i < n; i++) if (lampV(m, `${p}${i}`) === HI) v |= 1 << i;
+      return v;
+    };
+    const mreg = i => {
+      const bits = m.cells[i].map(n => VALUE_CHAR[m.value[n]]);
+      return bits.every(b => b === '0' || b === '1')
+        ? parseInt(bits.slice().reverse().join(''), 2) : null;
+    };
+    sw(m, 'RST', true); settle(m); mtick(); sw(m, 'RST', false); settle(m);
+
+    for (let p = 0; p < 4; p++) mtick();          // LDM 3
+    expect(m, 'LDM 3 loaded the accumulator', mrd('ACC', 4), 3);
+    for (let p = 0; p < 4; p++) mtick();          // XCH r0 — parks 3
+    expect(m, 'XCH wrote the accumulator into r0', mreg(0), 3);
+    for (let p = 0; p < 4; p++) mtick();          // LDM 7
+    expect(m, 'LDM 7 loaded the accumulator', mrd('ACC', 4), 7);
+
+    for (let p = 0; p < 4; p++) mtick();          // XCH r0 — the exchange
+    expect(m, 'XCH read the old register value into the accumulator',
+      mrd('ACC', 4), 3);
+    expect(m, 'XCH wrote the old accumulator into the register',
+      mreg(0), 7);
   }
 }
 

@@ -1864,17 +1864,15 @@ function buildTwoByteMachine() {
   return c;
 }
 
-// SUB and LD.
+// SUB, LD and a real XCH.
 //
-// Both need the same thing: a path *from* the register file back into the
-// accumulator. Every machine before this one could only write registers.
+// All three need the same thing: a path *from* the register file back
+// into the accumulator. Every machine before this one could only write
+// registers, so its XCH lost half of itself.
 //
 //   LD r    ACC ← r
+//   XCH r   ACC ↔ r, both directions in one instruction
 //   SUB r   ACC ← ACC + ~r + ~carry
-//
-// XCH is decoded and writes its register, but its read half is switched
-// off — see the note on opXCHread below. It is incomplete here, not
-// wrong.
 //
 // SUB's carry convention is the part worth reading twice, and it is
 // checked against the manual rather than assumed. On the way *in*, carry=1
@@ -2237,8 +2235,12 @@ function buildAccGroupMachine() {
   return c;
 }
 
-function buildSubMachine() {
-  const c = new Circuit('Subtract and Load');
+// `program` is a parameter so the test suite can drive cases the demo
+// program cannot reach. XCH in particular needs an exchange between two
+// *different* values to prove anything — swapping equal values looks
+// identical whether the hardware swaps, copies one way, or does nothing.
+export function buildSubMachine(program = PSUB_PROGRAM) {
+  const c = new Circuit('Subtract and Exchange');
   c.implicitGround = false;
 
   const clkNet = c.net(), nclk = c.net(), rst = c.net();
@@ -2264,7 +2266,7 @@ function buildSubMachine() {
   c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
 
   const xRom = 40 + PC.w + 30;
-  const Rom = romArray(PSUB_PROGRAM, 8, 3);
+  const Rom = romArray(program, 8, 3);
   const rom = instantiate(c, Rom, xRom, ROW2,
     { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
 
@@ -2308,13 +2310,9 @@ function buildSubMachine() {
     opJUN: VSS, opJCN: VSS, opINC: VSS, condTake: VSS,
     opLDM: dec.nets.op13, opADD: dec.nets.op8,
     opSUB: dec.nets.op9, opLD: dec.nets.op10, opXCH: dec.nets.op11,
-    // XCH's read half is not yet wired: the register file's cells are
-    // transparent while written, so reading and writing one row in a
-    // single phase still collapses the exchange into a one-way copy.
-    // Turning this on before that is fixed makes XCH silently wrong
-    // rather than merely incomplete, so it stays off and the machine
-    // documents the gap instead of hiding it.
-    opXCHread: VSS,
+    // This machine reads the register file on the clock's high half and
+    // writes it on the low half, so XCH is a genuine exchange.
+    opXCHread: dec.nets.op11,
     accGroup: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit — four phases',
@@ -2467,8 +2465,22 @@ function buildSubMachine() {
     xMux - 6, ROW4 - 8, xMux + 110, ROW4 + 4 * 40);
 
   const xAcc = xMux + 140;
+  // The accumulator samples on the clock's HIGH half, opposite to every
+  // other register here, and that is what completes XCH.
+  //
+  // A master-slave register is transparent on its master while the clock
+  // is low, so a normally-clocked register captures whatever `d` held
+  // during the low half. But the register file's write is gated to φ2 —
+  // also the low half — so by then the read bus already shows the value
+  // being written, and an exchange reads back what it just wrote.
+  //
+  // Swapping clk/nclk moves the accumulator's sampling window to the high
+  // half, where the read bus still holds the register's OLD value. The
+  // write then lands in the half that follows. Read first, write second,
+  // one instruction, no scratch register — which is what the two-phase
+  // clock buys and why the real chip needs no temporary for XCH.
   instantiate(c, register(4), xAcc, ROW4, {
-    clk: clkNet, nclk, load: ctrl.nets.accLoad,
+    clk: nclk, nclk: clkNet, load: ctrl.nets.accLoad,
     d0: accD[0], d1: accD[1], d2: accD[2], d3: accD[3],
     q0: accQ[0], q1: accQ[1], q2: accQ[2], q3: accQ[3],
   }, { tag: 'acc' });
@@ -2555,7 +2567,7 @@ function buildSubMachine() {
     accLoad: ctrl.nets.accLoad, accFromReg: ctrl.nets.accFromReg,
     aluSub: ctrl.nets.aluSub, regWrite: ctrl.nets.regWrite,
   };
-  c.program = PSUB_PROGRAM;
+  c.program = program;
   c.execAddr = () => {
     let ir8 = 0;
     for (let i = 0; i < 8; i++) {
