@@ -11,6 +11,7 @@ import { romArray } from '../web/js/rom.js';
 import {
   InstructionDecoder, disassemble, disassembleProgram, isTwoByte,
 } from '../web/js/decode.js';
+import { buildJcnMachine } from '../web/js/behaviour/cmos.js';
 import { ringCounter, ConditionTree, IsZero4 } from '../web/js/sequencer.js';
 
 let failures = 0;
@@ -1771,21 +1772,37 @@ function flipAndStep(c, label, on) {
   };
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
 
-  // walk far enough to reach the JCN with the accumulator at zero
-  let sawJcn = false, tookWhenZero = null;
-  for (let k = 0; k < 40; k++) {
+  // The program is a countdown, so the same JCN must take while the
+  // accumulator is non-zero and fall through when it reaches zero. Seeing
+  // only one branch would leave the other untested by the demo.
+  let tookWhenNonZero = 0, fellThroughWhenZero = 0, tookWhenZero = 0;
+  for (let k = 0; k < 60; k++) {
     const isExec = c.value[c.phases[2]] === HI;
     const isJcn = ((rd('IR', 8) >> 4) & 15) === 1;
     if (isExec && isJcn) {
-      sawJcn = true;
-      // JCN 12 is jump-if-not-zero; with ACC zero it must fall through
-      if (lampV(c, 'ZERO') === HI) tookWhenZero = lampV(c, 'TAKE') === HI;
+      const take = lampV(c, 'TAKE') === HI;
+      const zero = lampV(c, 'ZERO') === HI;
+      if (!zero && take) tookWhenNonZero++;
+      if (zero && !take) fellThroughWhenZero++;
+      if (zero && take) tookWhenZero++;     // must never happen
     }
     tick();
   }
-  expect(c, 'the program reaches its JCN', sawJcn, true);
-  expect(c, 'JCN 12 does not take while the accumulator is zero',
-    tookWhenZero, false);
+  expect(c, 'JCN 12 takes while the accumulator is not zero',
+    tookWhenNonZero > 0, true);
+  expect(c, 'JCN 12 falls through when the accumulator is zero',
+    fellThroughWhenZero > 0, true);
+  expect(c, 'JCN 12 never takes while the accumulator is zero',
+    tookWhenZero, 0);
+
+  // and the countdown actually counts: the accumulator must pass through
+  // every value on its way down, not skip or stall
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  const seen = new Set();
+  for (let k = 0; k < 60; k++) { tick(); seen.add(rd('ACC', 4)); }
+  for (const v of [4, 3, 2, 1, 0]) {
+    expect(c, `the countdown passes through ${v}`, seen.has(v), true);
+  }
 
   // pcLoad must follow the condition, not the opcode: a JCN that does not
   // take must leave the program counter alone.
@@ -1849,6 +1866,113 @@ function flipAndStep(c, label, on) {
   }
 }
 
+// ── JCN, every mask, in the machine ──────────────────────────────────────
+// The ConditionTree module is swept exhaustively above, but a module is
+// not a machine: a tree that is right in isolation and mis-wired into the
+// datapath would pass that sweep and fail here. This drives the circuit's
+// own condition inputs — the live accumulator, its computed zero flag, the
+// carry register, the TEST switch — and checks the take line the control
+// unit actually sees, for every one of the sixteen masks.
+//
+// The masks are reached by walking the machine to states with different
+// flags rather than by forcing values in, because forcing them would test
+// a circuit nobody runs. The accumulator and carry are driven by the
+// datapath, exactly as they are on the real chip.
+{
+  // What the real 4004 does with a condition mask.
+  const want = (mask, z, cy, test) => {
+    const raw = (((mask >> 2) & 1) && z)
+      || (((mask >> 1) & 1) && cy)
+      || ((mask & 1) && !test);
+    return ((mask >> 3) & 1) ? !raw : !!raw;
+  };
+
+  const c = buildCircuit('jcnmachine');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+
+  // Walk the countdown and check the take line at every JCN, against the
+  // flags the machine itself computed. The countdown drives the
+  // accumulator from 4 down to 0, so this covers both the zero and
+  // non-zero cases with a real fetched instruction and real flags — and
+  // with the TEST pin in both positions.
+  for (const testPin of [false, true]) {
+    sw(c, 'RST', true); settle(c); tick();
+    sw(c, 'RST', false); sw(c, 'TEST', testPin); settle(c);
+    let checked = 0;
+    for (let k = 0; k < 80; k++) {
+      const isExec = c.value[c.phases[2]] === HI;
+      const ir = rd('IR', 8);
+      if (isExec && ((ir >> 4) & 15) === 1) {
+        const mask = ir & 15;
+        const z = lampV(c, 'ZERO') === HI ? 1 : 0;
+        const cy = lampV(c, 'CARRY') === HI ? 1 : 0;
+        expect(c, `JCN mask ${mask} z=${z} cy=${cy} test=${+testPin}`,
+          lampV(c, 'TAKE') === HI, want(mask, z, cy, testPin ? 1 : 0));
+        checked++;
+      }
+      tick();
+    }
+    expect(c, `the JCN was reached with TEST=${+testPin}`, checked > 0, true);
+  }
+}
+{
+  // Every mask, on a machine that actually fetches it. One circuit per
+  // mask: the ROM holds `JCN <mask>` after arithmetic that leaves known
+  // flags, so the condition tree is answering about a real instruction
+  // rather than about nets somebody poked.
+  //
+  // The setup leaves the accumulator at zero with the carry set — 13 + 3
+  // wraps in four bits — so z=1 and cy=1 at the JCN. That exercises both
+  // flags at once, and it is the state the countdown demo ends in.
+  const want = (mask, z, cy, test) => {
+    const raw = (((mask >> 2) & 1) && z)
+      || (((mask >> 1) & 1) && cy)
+      || ((mask & 1) && !test);
+    return ((mask >> 3) & 1) ? !raw : !!raw;
+  };
+  for (let mask = 0; mask < 16; mask++) {
+    for (const testPin of [false, true]) {
+      const m = buildJcnMachine([
+        0xD3,             // LDM 3
+        0xB0,             // XCH r0
+        0xDD,             // LDM 13  (= -3 in four bits)
+        0x80,             // ADD r0  → 0 with a carry out
+        0x10 | mask,      // JCN <mask>
+        0x00, 0x00, 0x00,
+      ]);
+      const tick = () => { m.stepClock(); settle(m); m.stepClock(); settle(m); };
+      const rd = (p, n) => {
+        let v = 0;
+        for (let i = 0; i < n; i++) if (lampV(m, `${p}${i}`) === HI) v |= 1 << i;
+        return v;
+      };
+      sw(m, 'RST', true); settle(m); tick();
+      sw(m, 'RST', false); sw(m, 'TEST', testPin); settle(m);
+
+      let saw = false;
+      for (let k = 0; k < 30 && !saw; k++) {
+        const isExec = m.value[m.phases[2]] === HI;
+        const ir = rd('IR', 8);
+        if (isExec && ((ir >> 4) & 15) === 1 && (ir & 15) === mask) {
+          const z = lampV(m, 'ZERO') === HI ? 1 : 0;
+          const cy = lampV(m, 'CARRY') === HI ? 1 : 0;
+          expect(m, `fetched JCN ${mask}, z=${z} cy=${cy} test=${+testPin}`,
+            lampV(m, 'TAKE') === HI, want(mask, z, cy, testPin ? 1 : 0));
+          saw = true;
+        }
+        tick();
+      }
+      expect(m, `mask ${mask} was fetched and executed (test=${+testPin})`,
+        saw, true);
+    }
+  }
+}
+
 // ── the program listing highlights the executing instruction ─────────────
 // Not the one being fetched. Those differ by a cycle: the PC advances
 // during FETCH, so by the time an instruction's effect is visible the
@@ -1867,16 +1991,16 @@ function flipAndStep(c, label, on) {
 
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
 
-  // Walk until the accumulator first becomes 3. The instruction that did
-  // it is LDM 3 at address 0 — the highlight must be there, not on the
+  // Walk until the accumulator first becomes 15. The instruction that did
+  // it is LDM 15 at address 0 — the highlight must be there, not on the
   // XCH at address 1 that the PC has already advanced to.
   let blamed = null;
   for (let k = 0; k < 12 && blamed === null; k++) {
     tick();
-    if (rd('ACC', 4) === 3) blamed = c.execAddr();
+    if (rd('ACC', 4) === 15) blamed = c.execAddr();
   }
-  expect(c, 'the accumulator reaches 3', blamed !== null, true);
-  expect(c, 'LDM 3 is blamed for the accumulator becoming 3', blamed, 0);
+  expect(c, 'the accumulator reaches 15', blamed !== null, true);
+  expect(c, 'LDM 15 is blamed for the accumulator becoming 15', blamed, 0);
 
   // and the highlighted address must always hold the byte the instruction
   // register is actually running

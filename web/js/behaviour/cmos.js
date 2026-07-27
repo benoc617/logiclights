@@ -1273,18 +1273,35 @@ function buildAddMachine() {
 // The program counts the accumulator down and loops until it hits zero,
 // which is the first program here whose length depends on its data rather
 // than on how many instructions were written.
+// A countdown that loops on its own condition, which is the point of a
+// conditional jump. r0 holds 15 — which is -1 in four bits — so each ADD
+// takes one off the accumulator. The JCN sends control back to the ADD
+// while the result is not yet zero, so the loop runs three times and then
+// falls through. Both branches, in one program.
+//
+// The loop body sits at address 4 because it has to. This machine has no
+// two-byte fetch, so a jump's target is the low bits of its own byte — and
+// for JCN that nibble is *also* the condition mask. `JCN 12` therefore
+// means "jump if not zero" AND "jump to 4" inseparably: mask 12 is 1100,
+// whose low three bits are 100. On the real chip the mask and the target
+// are in different bytes and no such coupling exists; here it is the most
+// visible consequence of the missing two-byte fetch, and worth seeing
+// rather than hiding behind a program arranged to avoid it.
 const P3_PROGRAM = [
-  0xD3,   // LDM 3     ACC = 3
-  0xB0,   // XCH 0     R0 = 3
-  0xDD,   // LDM 13    ACC = 13  (= -3 in four bits)
-  0x80,   // ADD 0     ACC += 3  → 0 on the third pass, with carry
-  0x1C,   // JCN 12,4  jump to 4 while ACC is *not* zero  → spins here
+  0xDF,   // LDM 15    ACC = 15, which is -1 in four bits
+  0xB0,   // XCH r0    r0 = 15, the amount to add each pass
+  0xD4,   // LDM 4     ACC = 4, the countdown
   0x00,   // NOP
-  0x40,   // JUN 0     start again
+  0x80,   // ADD r0    ACC -= 1          ← the loop body, and JCN's target
+  0x1C,   // JCN 12    back to 4 while ACC is not zero
+  0x40,   // JUN 0     fell through: start the whole thing again
   0x00,   // NOP
 ];
 
-function buildJcnMachine() {
+// `program` lets a test build this machine around a different ROM — the
+// same circuit, a different eight bytes — so every JCN mask can be checked
+// against a really fetched instruction rather than by forcing nets.
+export function buildJcnMachine(program = P3_PROGRAM) {
   const c = new Circuit('Conditional Machine');
   c.implicitGround = false;
 
@@ -1312,7 +1329,7 @@ function buildJcnMachine() {
   c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
 
   const xRom = 40 + PC.w + 30;
-  const Rom = romArray(P3_PROGRAM, 8, 3);
+  const Rom = romArray(program, 8, 3);
   const rom = instantiate(c, Rom, xRom, ROW2,
     { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
 
@@ -1470,7 +1487,7 @@ function buildJcnMachine() {
     accFromAlu: ctrl.nets.accFromAlu, regWrite: ctrl.nets.regWrite,
     condTake,
   };
-  c.program = P3_PROGRAM;
+  c.program = program;
   // The address the instruction register was loaded from — which is the
   // instruction actually executing, not the one being fetched. The PC has
   // already advanced past it by the time its effect is visible, so this is
