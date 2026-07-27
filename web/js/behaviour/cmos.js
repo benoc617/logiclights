@@ -8,7 +8,7 @@
 import { Circuit, VDD, VSS, VALUE_CHAR } from '../engine.js';
 import { MOS_H, MOS_GATE, switchSpdtT } from '../geometry.js';
 import { instantiate } from '../module.js';
-import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter, register } from '../gates.js';
+import { And2, Or2, Xor2, DLatch, FullAdder, DFlipFlop, Inverter, counter, register, programCounter } from '../gates.js';
 import { Alu4, ALU_BITS } from '../alu.js';
 import { decoder as cmosDecoder } from '../rom.js';
 import { romArray } from '../rom.js';
@@ -725,6 +725,173 @@ function buildAccumulator() {
   return c;
 }
 
+
+// P1b — jumps take effect. The accumulator machine with a loadable PC.
+//
+// Until now JUN decoded correctly and lit its control line, and then
+// nothing happened: the program counter could only count, so the machine
+// walked off the end of the ROM and wrapped by accident rather than by
+// instruction. Giving the PC a load input is what turns a decoded jump into
+// a taken one.
+//
+// The precedence matters and is easy to get backwards. The PC advances
+// during FETCH so the next address is ready when the instruction finishes
+// — which means a jump discovered at EXEC arrives to find the counter has
+// already moved on. Load therefore has to *overwrite* the incremented
+// value, not combine with it.
+//
+// The program counts the accumulator up by loading three values, then jumps
+// back to the top. With the jump working the machine runs a genuine loop:
+// the PC returns to 0 because an instruction said so, and you can watch
+// pcLoad fire on the edge that does it.
+const P1B_PROGRAM = [
+  0xD3,   // LDM 3   → ACC = 3
+  0x00,   // NOP
+  0xDC,   // LDM 12  → ACC = 12
+  0x00,   // NOP
+  0xD5,   // LDM 5   → ACC = 5
+  0x00,   // NOP
+  0x40,   // JUN 0   → back to the top
+  0x00,   // NOP     (never reached once the jump works)
+];
+
+function buildJumpMachine() {
+  const c = new Circuit('Jump Machine');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addClock(clkSw, { period: 1400 });
+  instantiate(c, Inverter, 20, 40, { a: clkNet, y: nclk });
+
+  const ROW2 = 150;
+  const ring = instantiate(c, ringCounter(3), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring — FETCH / DECODE / EXEC',
+    36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  const nFetch = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
+
+  // The jump target. JUN's operand nibble is the high 4 bits of a 12-bit
+  // address on the real chip; this ROM is 8 words, so the low 3 bits of
+  // the instruction are the whole address here. That is the one place this
+  // machine simplifies the encoding, and it is because the ROM is small
+  // rather than because the decode is wrong.
+  // The PC is built before the instruction register exists, so its load
+  // and address inputs are allocated here and driven further down — nets
+  // are the wiring, so binding order does not matter.
+  const pcLoadLine = c.net();
+  const jumpTarget = [c.net(), c.net(), c.net()];
+  const PC = instantiate(c, programCounter(3), 40, ROW2, {
+    clk: clkNet, nclk, en: ring.nets.p0, rst, load: pcLoadLine,
+    a0: jumpTarget[0], a1: jumpTarget[1], a2: jumpTarget[2],
+  }, { tag: 'pc' });
+  c.region('Program counter — counts, or loads a jump target',
+    36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(P1B_PROGRAM, 8, 3);
+  const rom = instantiate(c, Rom, xRom, ROW2,
+    { a0: PC.nets.q0, a1: PC.nets.q1, a2: PC.nets.q2 }, { tag: 'rom' });
+
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register — loads only during FETCH',
+    xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
+
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
+  c.region('Instruction decoder — one line per opcode',
+    xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
+
+  const xCtrl = xDec + dec.w + 40;
+  const ctrl = instantiate(c, ControlUnit, xCtrl, ROW2, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1, pExec: ring.nets.p2,
+    twoByte: dec.nets.twoByte,
+    opJUN: dec.nets.op4, opLDM: dec.nets.op13,
+    opXCH: dec.nets.op11, opINC: dec.nets.op6,
+  }, { tag: 'ctrl' });
+  c.region('Control unit — phase AND instruction',
+    xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
+
+  // Close the jump loop: the control unit's pcLoad drives the PC's load,
+  // and the instruction's low bits are the target address. Buffered so the
+  // PC is driven by a gate rather than loading the control unit's output.
+  const jn = c.net();
+  instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 20,
+    { a: ctrl.nets.pcLoad, y: jn }, { tag: 'jn' });
+  instantiate(c, Inverter, xCtrl + 40, ROW2 + ctrl.h + 20,
+    { a: jn, y: pcLoadLine }, { tag: 'jp' });
+  for (let i = 0; i < 3; i++) {
+    const t = c.net();
+    instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 44 + i * 24,
+      { a: ir[i], y: t }, { tag: `jt${i}n` });
+    instantiate(c, Inverter, xCtrl + 40, ROW2 + ctrl.h + 44 + i * 24,
+      { a: t, y: jumpTarget[i] }, { tag: `jt${i}` });
+  }
+
+  const xAcc = xCtrl + ctrl.w + 50;
+  const acc = instantiate(c, register(4), xAcc, ROW2, {
+    clk: clkNet, nclk, load: ctrl.nets.accLoad,
+    d0: ir[0], d1: ir[1], d2: ir[2], d3: ir[3],
+  }, { tag: 'acc' });
+  c.region('Accumulator — loads on EXEC of an LDM',
+    xAcc - 6, ROW2 - 6, xAcc + acc.w + 6, ROW2 + acc.h + 6);
+
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5, { short: `P${i}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 20 + i * 4.5, { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 36 + i * 4.5, { short: `IR${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`ACC${i}`, acc.nets[`q${i}`], xEnd - 5, 76 + i * 4.5, { short: `ACC${i}` });
+  }
+  c.addLamp('JUMP', pcLoadLine, xEnd - 5, 98, { short: 'JMP' });
+
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
+  c.control = {
+    pcInc: ctrl.nets.pcInc, pcLoad: ctrl.nets.pcLoad,
+    irLoad: ctrl.nets.irLoad, accLoad: ctrl.nets.accLoad,
+    regWrite: ctrl.nets.regWrite,
+  };
+  c.program = P1B_PROGRAM;
+  return c;
+}
+
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
 const ALU_OPS = ['+', '\u2212', 'AND', 'OR', 'XOR', '<<'];
@@ -794,6 +961,28 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  jumpmachine: {
+    build: buildJumpMachine,
+    readout: v => {
+      const ph = PHASES[[0, 1, 2].find(i => (v.P >> i) & 1)] ?? '—';
+      const name = OPR_NAMES[(v.IR >> 4) & 15] || 'escape';
+      const arg = name === 'LDM' ? ` ${v.IR & 15}` : name === 'JUN' ? ` ${v.IR & 7}` : '';
+      return `${ph}  ·  PC ${v.PC}  ·  ${name}${arg}  ·  ACC = ${v.ACC}`
+        + `${v.JMP ? '  ← jumping' : ''}`;
+    },
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   accmachine: {
     build: buildAccumulator,

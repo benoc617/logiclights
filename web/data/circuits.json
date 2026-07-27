@@ -345,6 +345,26 @@
       }
     },
     {
+      "id": "jumpmachine",
+      "group": "CMOS · Machines",
+      "name": "Jump Machine",
+      "desc": "The accumulator machine with a program counter that can be loaded, which is what turns a decoded jump into a taken one. Until now JUN decoded correctly and lit its control line and then nothing happened — the PC could only count, so the machine walked off the end of the ROM and wrapped by accident rather than by instruction. Now the program ends in JUN 0 and genuinely loops: watch JMP light on the edge that reloads the counter, and the PC snap back to 0 because an instruction said so. The precedence is the subtle part. The PC advances during FETCH so the next address is ready when the instruction finishes, which means a jump discovered at EXEC arrives to find the counter already moved on — load has to overwrite the incremented value rather than combine with it.",
+      "hints": {
+        "CLK": "the clock — three edges per instruction, one per phase",
+        "RST": "back to FETCH at address 0 (synchronous — costs one edge)",
+        "P": "the phase ring: FETCH, DECODE, EXEC",
+        "PC": "program counter — now loadable, not just countable",
+        "IR": "instruction register; its low bits are the jump target",
+        "ACC": "the accumulator",
+        "JMP": "the PC is being loaded — a jump is taking effect"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

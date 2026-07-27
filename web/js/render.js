@@ -19,6 +19,12 @@ const METAL = '#c7cfe0';
 const TEXT = '#8b93a7';
 const LAMP_ON = '#ffd67f';
 
+// Longest device name still worth drawing. Hand-routed circuits use short
+// deliberate names; composed machines generate instance tags that are both
+// longer and meaningless, and drawing those is what makes a zoomed-in
+// composed machine look like overlapping noise.
+const NAME_MAX = 6;
+
 const REGION_EDGE = 'rgba(120, 136, 178, 0.34)';
 const REGION_FILL = 'rgba(86, 100, 140, 0.07)';
 const REGION_TEXT = '#7f8ba8';
@@ -286,7 +292,9 @@ export class Renderer {
       ctx.font = '0.7px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(r.name, r.x + RELAY_W / 2, r.y - 0.45);
+      if (r.name.length <= NAME_MAX) {
+        ctx.fillText(r.name, r.x + RELAY_W / 2, r.y - 0.45);
+      }
     }
   }
 
@@ -362,7 +370,14 @@ export class Renderer {
     this.dot(ctx, p.a.x, p.a.y, va);
     this.dot(ctx, p.b.x, p.b.y, vb);
 
-    if (lod > 6) {
+    // Device names are worth drawing on the hand-routed circuits, where
+    // they were chosen to mean something (K1, PA, NB). On a composed
+    // machine they are auto-generated instance tags — `nand2112.PA` — which
+    // say nothing a reader wants and collide with their neighbours, since
+    // module layouts pack far tighter than hand-placed ones. So they are
+    // drawn only when short enough to be deliberate, and only when there is
+    // room for them.
+    if (lod > 6 && t.name.length <= NAME_MAX) {
       ctx.fillStyle = pmos ? '#9d86c9' : '#6f9dd0';
       ctx.font = '0.62px system-ui, sans-serif';
       ctx.textAlign = 'left';

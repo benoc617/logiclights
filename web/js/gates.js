@@ -386,3 +386,73 @@ export function register(bits) {
     },
   });
 }
+
+// A program counter: counts up, or loads an address on demand.
+//
+// A plain counter can only advance, which is enough to walk a program
+// straight through and then fall off the end. A jump means putting a
+// *chosen* address into it instead, so every bit needs a mux ahead of its
+// flip-flop: take the loaded address when `load` is high, take the
+// incremented value otherwise.
+//
+// Load beats increment when both are asserted. That precedence is not
+// arbitrary — the PC advances during FETCH so the next address is ready by
+// the time an instruction finishes, which means a jump discovered at EXEC
+// arrives to find the counter already moved on. The jump has to overwrite
+// that, not add to it.
+export function programCounter(bits) {
+  return defineModule(`pc${bits}`, {
+    ports: [
+      { name: 'clk', x: 0, y: -3, side: 'top' },
+      { name: 'nclk', x: 0, y: -1, side: 'top' },
+      { name: 'en', x: -1.5, y: 4, side: 'in' },
+      { name: 'rst', x: -1.5, y: 8, side: 'in' },
+      { name: 'load', x: -1.5, y: 12, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `a${i}`, x: -1.5, y: 18 + i * 4, side: 'in',
+      })),
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `q${i}`, x: 520, y: i * 4, side: 'out',
+      })),
+      { name: 'cout', x: 520, y: bits * 4, side: 'out' },
+    ],
+    build(m) {
+      const clk = m.port('clk'), nclk = m.port('nclk');
+      const load = m.port('load');
+      const nrst = m.net(), nload = m.net();
+      m.instantiate(Inverter, 0, 0, { a: m.port('rst'), y: nrst });
+      m.instantiate(Inverter, 0, GATE_H + 2, { a: load, y: nload });
+
+      // The counting half: the same carry chain a plain counter uses, but
+      // its result goes to a mux rather than straight to the flip-flop.
+      let carry = m.port('en');
+      const q = [];
+      for (let i = 0; i < bits; i++) {
+        q.push(m.port(`q${i}`));
+      }
+      for (let i = 0; i < bits; i++) {
+        const x = GATE_W * 4 + i * (GATE_W * 20);
+        const toggled = m.net(), counted = m.net();
+        const cout = i === bits - 1 ? m.port('cout') : m.net();
+
+        m.instantiate(Xor2, x, 0, { a: q[i], b: carry, y: toggled });
+        m.instantiate(And2, x + GATE_W * 3, 0,
+          { a: toggled, b: nrst, y: counted });
+        m.instantiate(And2, x, GATE_H * 2 + 4,
+          { a: q[i], b: carry, y: cout });
+
+        // the mux: loaded address, or the counted value
+        const takeA = m.net(), takeC = m.net(), d = m.net();
+        m.instantiate(And2, x + GATE_W * 6, 0,
+          { a: m.port(`a${i}`), b: load, y: takeA });
+        m.instantiate(And2, x + GATE_W * 6, GATE_H + 2,
+          { a: counted, b: nload, y: takeC });
+        m.instantiate(Or2, x + GATE_W * 9, 0, { a: takeA, b: takeC, y: d });
+
+        m.instantiate(DFlipFlop, x + GATE_W * 13, 0,
+          { d, q: q[i], clk, nclk }, { tag: `b${i}` });
+        carry = cout;
+      }
+    },
+  });
+}
