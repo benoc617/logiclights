@@ -77,6 +77,10 @@ web/
   js/alu.js           4-bit CMOS ALU, composed from gates.js
   js/rom.js           mask ROM array + row decoder (resistor or precharge)
   js/regfile.js       16×4 dual-port register file
+  js/decode.js        4004 instruction decode, in gates and as a
+                      disassembler sharing one opcode table
+  js/sequencer.js     ring counter, control units, JCN condition tree
+  js/ram4002.js       the 4002 RAM — modelled, not simulated (see rule 4)
   js/buses.js         groups switches/lamps into binary buses
   js/render.js        canvas renderer (pan/zoom, glow, LOD, region boxes)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"

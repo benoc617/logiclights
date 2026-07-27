@@ -188,8 +188,12 @@ export function disassemble(byte, next) {
   const opr = (byte >> 4) & 15, opa = byte & 15;
   const two = isTwoByte(byte);
 
-  if (opr === 14) return { text: ESC_MEM[opa] ?? `?${opa}`, twoByte: false };
-  if (opr === 15) return { text: ESC_ACC[opa] ?? `?${opa}`, twoByte: false };
+  // Three codes in the escape groups are genuinely undefined on the chip:
+  // 0xE3, and 0xFE/0xFF. The real 4004 does not decode them to anything,
+  // so neither does this — showing an invented mnemonic would be worse
+  // than admitting the gap.
+  if (opr === 14) return { text: ESC_MEM[opa] ?? '—', twoByte: false };
+  if (opr === 15) return { text: ESC_ACC[opa] ?? '—', twoByte: false };
 
   const name = OPR_NAMES[opr];
   const kind = OPA_KIND[opr];

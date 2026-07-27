@@ -50,10 +50,10 @@ generated, so this file does not repeat them.
       inverters, two pass gates, complementary enables so exactly one is
       ever open. Static storage — the holding loop drives, so a held bit
       reads STRONG rather than coasting on charge.
-- [ ] **Master-slave flip-flop** — two DLatches on opposite enables. Needed
-      for edge-triggered state (a PC that increments on a clock edge);
-      the register file gets by with level-sensitive latches, as the real
-      4004 did.
+- [x] **Master-slave flip-flop** — `DFlipFlop` in `gates.js`: two DLatches
+      on opposite clock phases, so new data cannot reach the output in the
+      phase it arrived. That is what makes counter feedback safe; built
+      from latches the incremented value races back through the adder.
 - [x] **ALU** — 4-bit, six functions (add / sub / AND / OR / XOR / shift
       left), one-hot decoded, steered onto a shared result bus by
       transmission gates, composed from gate modules rather than
@@ -66,21 +66,37 @@ generated, so this file does not repeat them.
       budget table guessed, because each cell is a full static latch plus
       its tri-state buffer rather than a 6T SRAM cell — see
       [INVENTORY.md](INVENTORY.md) for the measured count.
-- [ ] **Data RAM** — 6T SRAM cells would cut the per-cell cost
-      substantially versus the latch-based register file; worth doing when
-      the 16-nibble data store lands.
+- [x] **Data RAM** — decided *not* to build from cells. One real 4002 is
+      320 bits, ~7,400 transistors at this cell density and ~2,600 even
+      with a 6T SRAM cell, against a 2,300-transistor CPU — and it would
+      demonstrate nothing the register file has not already shown. The 4002
+      is modelled behaviourally in `ram4002.js` with its real organisation
+      (4 registers × 16 main + 4 status characters, four chips to a bank).
+      Its *interface* stays real. See CLAUDE.md rule 4 for the boundary.
 - [x] **Program ROM** — 8 × 8 NMOS array, a transistor per stored `0`,
       driven by a one-hot row decoder, bit lines pulled up and buffered out.
       Contents spell "LOGIC 42" in ASCII so the array holds something
       legible. Tests cover every decoder width (1/2/3 address bits — the
       1-bit path had its rows swapped when only 3-bit was exercised) and
       assert the sneak-path property directly.
-- [ ] Program counter (ripple counter) and instruction register
-- [ ] **Intel 4004** — the long arc, retargeted from the 8008 (4-bit
-      datapath, Harvard, no interrupts, 3-level stack, and the existing
-      4-bit circuits are already the right width). Needs the hierarchical
-      layout work below first. Full plan and program corpus in
-      [4004.md](4004.md).
+- [x] **Program counter and instruction register** — `counter(bits)` and
+      `programCounter(bits)` in `gates.js` (the latter loadable, for
+      jumps), plus the instruction register with a hold mux so a fetched
+      instruction stays stable across all phases of its execution.
+- [x] **Instruction decoder** — `decode.js`: the real encoding, one-hot
+      output, tested against all 256 bytes. Includes a disassembler that
+      shares the opcode table, so a program listing and the lit decoder
+      line cannot disagree.
+- [x] **Control sequencing** — `sequencer.js`: a ring counter generating
+      phases, a hardwired control unit (phase AND decoded instruction), and
+      the JCN condition tree. Three-phase and four-phase variants; the
+      four-phase one honours two-byte instructions.
+- [ ] **Intel 4004** — in progress, and the bring-up ladder is complete.
+      Six machines exist, each isolating one idea: fetch, phase
+      sequencing, an accumulator, a loadable PC, the real ADD datapath,
+      conditional jumps, and two-byte fetch. What remains is instruction-set
+      coverage rather than new structure — see the checklist in
+      [4004.md](4004.md). Full plan and program corpus there too.
 
 ## Engineering to unblock the big machines
 
@@ -125,7 +141,13 @@ generated, so this file does not repeat them.
 - [ ] **Saved circuits alongside the examples** — localStorage first; a
       shared library would need a small API (the ECS service could host it,
       but that turns a static app into a stateful one — decide deliberately)
-- [ ] Step mode: advance one device event at a time, pause/resume
+- [x] **Clock and step mode** — run / pause / single-step with a period
+      slider, shown for circuits that declare a clock. The clock refuses to
+      advance while the circuit is still settling, which is a correctness
+      requirement rather than politeness: clocking a synchronous machine
+      mid-propagation latches half-computed values.
+- [ ] Step *by device event* rather than by clock edge — finer than the
+      current stepping, for watching a carry propagate within one phase
 - [ ] Timing/waveform view of selected nets over time
 - [ ] Critical-path highlight and a device-delay count per circuit
 - [ ] Deep-link full state in the URL (circuit + input values), not just
