@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**59 circuits** across 4 sections.
+**57 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (26)
+### CMOS (24)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -92,8 +92,6 @@ circuit exists to explain.
 | 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
 | Fetch Machine | Machines | · | 1226 | · | 8 | 582 |
 | Sequenced Machine | Machines | · | 1525 | · | 8 | 720 |
-| Accumulator Machine | Machines | · | 1659 | · | 8 | 781 |
-| Jump Machine | Machines | · | 1730 | · | 8 | 817 |
 | Adding Machine | Machines | · | 3538 | · | 8 | 1595 |
 | Conditional Machine | Machines | · | 3599 | · | 8 | 1628 |
 | Two-Byte Machine | Machines | · | 3840 | · | 8 | 1740 |
@@ -123,12 +121,12 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 59 |
+| Circuits | 57 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 27603 |
+| Transistors | 24214 |
 | Diodes | 4 |
-| Resistors | 328 |
+| Resistors | 312 |
 
 ### Largest circuits
 

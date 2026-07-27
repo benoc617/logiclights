@@ -1562,12 +1562,14 @@ function flipAndStep(c, label, on) {
   }
 }
 
-// ── the accumulator machine: state that actually changes ─────────────────
-// The first machine here that acts on what it decoded. LDM loads its
-// operand nibble into the accumulator, so running the program leaves a
-// number behind — and only LDM does, which is the property worth guarding.
+// ── accLoad discipline, on the adding machine ───────────────────────────
+// These checks used to live on a machine of their own whose only idea was
+// "the accumulator changes". Every machine after it changes the
+// accumulator, so the machine went and the checks moved here — where they
+// are strictly harder, because this program has *two* instructions that
+// write the accumulator and the control unit has to tell them apart.
 {
-  const c = buildCircuit('accmachine');
+  const c = buildCircuit('addmachine');
   const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
   const rd = (p, n) => {
     let v = 0;
@@ -1576,45 +1578,45 @@ function flipAndStep(c, label, on) {
   };
   const phase = () => [0, 1, 2].findIndex(i => c.value[c.phases[i]] === HI);
 
+  // LDM leaves its operand behind, and a later LDM replaces it.
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
-
-  // Walk the program and record what the accumulator holds after each
-  // instruction. The ROM is LDM 3, NOP, LDM 12, NOP, LDM 5, NOP, NOP, NOP.
-  const wanted = [3, 3, 12, 12, 5, 5, 5, 5];
-  const got = [];
+  const seen = [];
   for (let k = 0; k < 8; k++) {
-    // advance a whole instruction: three phases
     for (let p = 0; p < 3; p++) tick();
-    got.push(rd('ACC', 4));
+    seen.push(rd('ACC', 4));
   }
-  // the accumulator holds each loaded value until the next LDM replaces it
-  expect(c, 'LDM loads the accumulator', got.includes(3), true);
-  expect(c, 'a later LDM replaces it', got.includes(12), true);
-  expect(c, 'and again', got.includes(5), true);
+  expect(c, 'LDM loads the accumulator', seen.includes(5), true);
+  expect(c, 'a later LDM replaces it', seen.includes(9), true);
 
-  // accLoad must fire only at EXEC of an LDM. Firing in another phase
-  // would write the accumulator from whatever the register happened to
-  // hold; firing on another instruction would corrupt it silently.
+  // accLoad must fire only at EXEC, and only for an instruction that
+  // really writes the accumulator. Firing in another phase would capture
+  // whatever the mux happened to be driving; firing on an unrelated
+  // instruction would corrupt the accumulator silently — the failure mode
+  // that actually happened once, when XCH was added to the write enable
+  // on a machine with no path back from the register file.
   sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
   let fires = 0, wrongPhase = 0, wrongInstr = 0;
-  for (let k = 0; k < 24; k++) {
+  for (let k = 0; k < 30; k++) {
     if (c.value[c.control.accLoad] === HI) {
       fires++;
       if (phase() !== 2) wrongPhase++;
-      if (((rd('IR', 8) >> 4) & 15) !== 13) wrongInstr++;   // 13 = LDM
+      const opr = (rd('IR', 8) >> 4) & 15;
+      if (opr !== 13 && opr !== 8) wrongInstr++;      // 13 = LDM, 8 = ADD
     }
     tick();
   }
   expect(c, 'accLoad fires at all', fires > 0, true);
   expect(c, 'accLoad only fires during EXEC', wrongPhase, 0);
-  expect(c, 'accLoad only fires for LDM', wrongInstr, 0);
+  expect(c, 'accLoad only fires for LDM or ADD', wrongInstr, 0);
 
-  // Every accumulator bit is statically driven — this is a register, not a
-  // node coasting on charge, so a paused machine keeps its value.
+  // Every accumulator bit is statically driven — this is a register, not
+  // a node coasting on stored charge, so a paused machine keeps its
+  // value while you look at it.
   for (let i = 0; i < 4; i++) {
     expect(c, `ACC${i} is statically driven`, lampStr(c, `ACC${i}`), STRONG);
   }
 }
+
 {
   // The register module on its own: it must hold when load is low, which
   // is the whole difference between a register and a wire.
