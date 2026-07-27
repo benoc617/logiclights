@@ -456,3 +456,39 @@ export function programCounter(bits) {
     },
   });
 }
+
+// A ripple-carry adder of `bits` stages: the same chain as the relay
+// 4-bit adder, built from gate modules.
+//
+// Ripple, not carry-lookahead, because the whole point of watching one is
+// that you can see the carry travel. It is also what the 4004 used — at
+// four bits the critical path is short enough that the extra gates a
+// lookahead needs would cost more than they save.
+export function rippleAdder(bits) {
+  return defineModule(`add${bits}`, {
+    ports: [
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `a${i}`, x: -1.5, y: i * 4, side: 'in',
+      })),
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `b${i}`, x: -1.5, y: 20 + i * 4, side: 'in',
+      })),
+      { name: 'cin', x: -1.5, y: 40, side: 'in' },
+      ...Array.from({ length: bits }, (_, i) => ({
+        name: `s${i}`, x: GATE_W * 8 * bits, y: i * 4, side: 'out',
+      })),
+      { name: 'cout', x: GATE_W * 8 * bits, y: 20, side: 'out' },
+    ],
+    build(m) {
+      let carry = m.port('cin');
+      for (let i = 0; i < bits; i++) {
+        const cout = i === bits - 1 ? m.port('cout') : m.net();
+        m.instantiate(FullAdder, i * (GATE_W * 8), 0, {
+          a: m.port(`a${i}`), b: m.port(`b${i}`), cin: carry,
+          sum: m.port(`s${i}`), cout,
+        }, { tag: `fa${i}` });
+        carry = cout;
+      }
+    },
+  });
+}

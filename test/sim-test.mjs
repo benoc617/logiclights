@@ -6,7 +6,7 @@ import { buildCircuit, CIRCUITS, GROUP_ORDER } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
 import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
 import { instantiate } from '../web/js/module.js';
-import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch, register } from '../web/js/gates.js';
+import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch, register, rippleAdder } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
 import { InstructionDecoder } from '../web/js/decode.js';
 import { ringCounter } from '../web/js/sequencer.js';
@@ -1622,6 +1622,81 @@ function flipAndStep(c, label, on) {
   expect(c, 'register holds while load is low', val(), 5);
   sLoad.on = true; settle(c); tick();
   expect(c, 'register loads again', val(), 10);
+}
+
+// ── the adding machine: the 4004's real ADD datapath ─────────────────────
+// ADD r is the accumulator plus the named register plus the carry flag,
+// result to the accumulator, carry updated. Every one of those is hardware
+// here, so the test walks the program and checks the arithmetic rather than
+// just that something changed.
+{
+  const c = buildCircuit('addmachine');
+  const tick = () => { c.stepClock(); settle(c); c.stepClock(); settle(c); };
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (lampV(c, `${p}${i}`) === HI) v |= 1 << i;
+    return v;
+  };
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+
+  // Program: LDM 5, XCH 0, LDM 9, ADD 0, ADD 0, NOP, JUN 0, NOP.
+  // Walk it and record the accumulator after each instruction completes.
+  const trace = [];
+  for (let k = 0; k < 8; k++) {
+    for (let p = 0; p < 3; p++) tick();
+    trace.push({ acc: rd('ACC', 4), carry: lampV(c, 'CARRY') === HI });
+  }
+  // 9 + 5 = 14 fits in four bits, so no carry
+  expect(c, 'ADD produces the sum', trace.some(t => t.acc === 14), true);
+  // 14 + 5 = 19, which is 3 with a carry out — the flag is the only place
+  // that fifth bit survives, which is why ADD has to write it
+  expect(c, 'ADD wraps and sets carry', trace.some(t => t.acc === 3 && t.carry), true);
+
+  // accFromAlu must steer the accumulator only for ADD. If it fired for
+  // LDM the accumulator would take the adder's output instead of the
+  // immediate, and LDM would quietly load the wrong number.
+  sw(c, 'RST', true); settle(c); tick(); sw(c, 'RST', false); settle(c);
+  let steered = 0, wrongInstr = 0;
+  for (let k = 0; k < 24; k++) {
+    if (c.value[c.control.accFromAlu] === HI) {
+      steered++;
+      if (((rd('IR', 8) >> 4) & 15) !== 8) wrongInstr++;   // 8 = ADD
+    }
+    tick();
+  }
+  expect(c, 'accFromAlu fires at all', steered > 0, true);
+  expect(c, 'accFromAlu only steers for ADD', wrongInstr, 0);
+}
+{
+  // The ripple adder module on its own, swept across every operand pair
+  // and both carry-ins — the same guarantee the relay adders get.
+  const Add = rippleAdder(4);
+  for (let a = 0; a < 16; a++) {
+    for (let b = 0; b < 16; b++) {
+      for (const ci of [0, 1]) {
+        const c = new Circuit('add4');
+        c.implicitGround = false;
+        const bind = {};
+        for (let i = 0; i < 4; i++) {
+          const na = c.net(), nb = c.net();
+          c.addSwitch(`A${i}`, na, 'toggle', 0, 0, { from: 0, to: 1 }).on =
+            !!((a >> i) & 1);
+          c.addSwitch(`B${i}`, nb, 'toggle', 0, 0, { from: 0, to: 1 }).on =
+            !!((b >> i) & 1);
+          bind[`a${i}`] = na; bind[`b${i}`] = nb;
+        }
+        const cn = c.net();
+        c.addSwitch('CI', cn, 'toggle', 0, 0, { from: 0, to: 1 }).on = !!ci;
+        bind.cin = cn;
+        const I = instantiate(c, Add, 0, 0, bind);
+        settle(c);
+        let sum = 0;
+        for (let i = 0; i < 4; i++) if (c.value[I.nets[`s${i}`]] === HI) sum |= 1 << i;
+        const co = c.value[I.nets.cout] === HI ? 1 : 0;
+        expect(c, `${a}+${b}+${ci}`, co * 16 + sum, a + b + ci);
+      }
+    }
+  }
 }
 
 // ── picker grouping ──────────────────────────────────────────────────────

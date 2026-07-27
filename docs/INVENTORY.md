@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**54 circuits** across 4 sections.
+**55 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (21)
+### CMOS (22)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -91,9 +91,10 @@ circuit exists to explain.
 | 4-bit Counter | Sequential | · | 180 | · | · | 87 |
 | 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
 | Fetch Machine | Machines | · | 834 | · | 8 | 386 |
-| Sequenced Machine | Machines | · | 1109 | · | 8 | 512 |
-| Accumulator Machine | Machines | · | 1243 | · | 8 | 573 |
-| Jump Machine | Machines | · | 1314 | · | 8 | 609 |
+| Sequenced Machine | Machines | · | 1121 | · | 8 | 518 |
+| Accumulator Machine | Machines | · | 1255 | · | 8 | 579 |
+| Jump Machine | Machines | · | 1326 | · | 8 | 615 |
+| Adding Machine | Machines | · | 3134 | · | 8 | 1393 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -118,26 +119,26 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 54 |
+| Circuits | 55 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 8156 |
+| Transistors | 11326 |
 | Diodes | 4 |
-| Resistors | 288 |
+| Resistors | 296 |
 
 ### Largest circuits
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
+| Adding Machine | 3142 | 1393 |
 | 16×4 Register File | 1488 | 635 |
-| Jump Machine | 1322 | 609 |
-| Accumulator Machine | 1251 | 573 |
-| Sequenced Machine | 1117 | 512 |
-| Fetch Machine | 842 | 386 |
+| Jump Machine | 1334 | 615 |
+| Accumulator Machine | 1263 | 579 |
+| Sequenced Machine | 1129 | 518 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **147685 checks, 0 failures**
+`node test/sim-test.mjs` → **148237 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

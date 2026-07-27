@@ -365,6 +365,27 @@
       }
     },
     {
+      "id": "addmachine",
+      "group": "CMOS · Machines",
+      "name": "Adding Machine",
+      "desc": "The 4004's real ADD datapath rather than a shortcut. ADD on the actual chip is `ADD r`: the accumulator plus the register the instruction names plus the carry flag, result back in the accumulator, carry updated — and every part of that sentence is a piece of hardware here. The register file is addressed by the instruction's low nibble, which is exactly what OPA means in the real encoding. A 4-bit ripple adder does the arithmetic. A one-bit carry register holds the flag, which ADD both reads and writes, so a chain of ADDs carries across nibbles the way the real machine's multi-digit arithmetic does. The new idea is the source mux: LDM and ADD both write the accumulator, so accLoad says whether to write and accFromAlu says from where. That is the first control line here that steers a datapath rather than simply enabling something, and it is the shape all datapath control eventually takes.",
+      "hints": {
+        "CLK": "the clock — three edges per instruction",
+        "RST": "back to FETCH at address 0",
+        "P": "the phase ring: FETCH, DECODE, EXEC",
+        "PC": "program counter",
+        "IR": "instruction register",
+        "ACC": "the accumulator",
+        "R": "the register the instruction is naming",
+        "CY": "the carry flag"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 4,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

@@ -109,12 +109,18 @@ export const ControlUnit = defineModule('ctrl', {
     { name: 'opLDM', x: -1.5, y: 22, side: 'in' },
     { name: 'opXCH', x: -1.5, y: 26, side: 'in' },
     { name: 'opINC', x: -1.5, y: 30, side: 'in' },
+    { name: 'opADD', x: -1.5, y: 34, side: 'in' },
     // to the datapath
     { name: 'pcInc', x: 300, y: 0, side: 'out' },    // advance the PC
     { name: 'pcLoad', x: 300, y: 6, side: 'out' },   // jump: load the PC
     { name: 'irLoad', x: 300, y: 12, side: 'out' },  // capture the fetched byte
     { name: 'accLoad', x: 300, y: 18, side: 'out' }, // write the accumulator
     { name: 'regWrite', x: 300, y: 24, side: 'out' },// write a register
+    // High when the accumulator should take the adder's output rather than
+    // the instruction's immediate. LDM and ADD both write the accumulator;
+    // this is what says *which source*, and it is the first control line
+    // that steers a datapath rather than simply enabling something.
+    { name: 'accFromAlu', x: 300, y: 30, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pD = m.port('pDecode'), pE = m.port('pExec');
@@ -138,9 +144,16 @@ export const ControlUnit = defineModule('ctrl', {
     m.instantiate(Inverter, GATE_W * 11, GATE_H * 2, { a: jump, y: t });
     m.instantiate(Inverter, GATE_W * 13, GATE_H * 2, { a: t, y: m.port('pcLoad') });
 
-    // LDM writes the accumulator with its operand; that happens at EXEC.
-    m.instantiate(And2, GATE_W * 4, GATE_H * 6,
-      { a: pE, b: m.port('opLDM'), y: m.port('accLoad') });
+    // LDM and ADD both write the accumulator at EXEC — one from the
+    // instruction's immediate, the other from the adder. accLoad says
+    // *whether* to write; accFromAlu says *from where*.
+    const wantAcc = m.net();
+    m.instantiate(Or2, GATE_W * 4, GATE_H * 6,
+      { a: m.port('opLDM'), b: m.port('opADD'), y: wantAcc });
+    m.instantiate(And2, GATE_W * 8, GATE_H * 6,
+      { a: pE, b: wantAcc, y: m.port('accLoad') });
+    m.instantiate(And2, GATE_W * 4, GATE_H * 7,
+      { a: pE, b: m.port('opADD'), y: m.port('accFromAlu') });
 
     // XCH and INC both write a register, so the write line is their OR
     // gated by EXEC — this is the shape every control line takes.
