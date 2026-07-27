@@ -22,9 +22,13 @@ for everything else live in [docs/DESIGN.md](docs/DESIGN.md).
    as static files. Anything that needs npm install, bundling, or a
    framework is out. This is what lets the app ship as a GitHub Pages site,
    an nginx container, and a single inlined HTML file simultaneously.
-2. **`node test/sim-test.mjs` must pass before every commit.** It is the
+2. **`node test/run.mjs` must pass before every commit.** It is the
    only guard on circuit correctness — the topologies are hand-wired and a
    one-character slip produces a plausible-looking circuit that adds wrong.
+   `run.mjs` shards `sim-test.mjs` across cores: the same checks in about a
+   quarter of the wall time. `node test/sim-test.mjs` still runs the suite
+   unchanged, and is the one to reach for when a failure wants a clean
+   stack trace or a debugger.
    Add cases for whatever you change.
 3. **Inventory lives in one generated file.** No document states a circuit
    count, a device total or a list of what exists — `docs/INVENTORY.md` is
@@ -87,7 +91,8 @@ web/
   js/picker.js        the nested circuit menu
   js/io-panel.js      binary I/O table: buses, hints, legends, live state
   js/main.js          canvas sizing, pointer input, the rAF loop
-test/sim-test.mjs     headless truth-table suite (no runner, plain node)
+test/sim-test.mjs     headless truth-table suite (no framework, plain node)
+test/run.mjs          shards the suite across cores; same checks, ~4x faster
 tools/inventory.mjs   generates docs/INVENTORY.md; --check guards it
 docs/INVENTORY.md     GENERATED — every count and the technology matrix
 Dockerfile            nginx image serving /lights/ for the puzzleboss stack

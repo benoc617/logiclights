@@ -88,7 +88,7 @@ one-hot decoding, two's-complement readouts, and the four-state device
 behaviour — drive strength, floating nets, and bus contention:
 
 ```bash
-node test/sim-test.mjs
+node test/run.mjs
 ```
 
 ## Deployment

@@ -151,7 +151,27 @@ rectangle so the circuit is never hidden behind it.
 
 ## Testing
 
-`test/sim-test.mjs` is plain node, no framework, no dependencies. It drives
+`test/run.mjs` is the runner to use day to day. It splits the suite at its
+`// ── ` section markers, runs the pieces across cores and sums the
+results — the same checks in roughly a quarter of the wall time. Two
+properties keep it honest and are worth not breaking:
+
+- **Blocks are independent.** Nothing carries state from one `// ── `
+  section to the next except the `checks`/`failures`/`clock` counters, and
+  no block depends on the `clock` value it inherits. A block that leaned
+  on an earlier one would still pass serially while going wrong — or
+  silently right — under the runner.
+- **A dead shard is a failure, not zero checks.** If a shard exits without
+  printing its summary the runner counts a failure, because "we lost some
+  tests" must never be indistinguishable from "everything passed".
+
+Helpers declared at top level inside a block (`lampV`, `testAdder`, the
+`GATES` table) are hoisted into every shard, so the suite can keep
+declaring them wherever they read best.
+
+`test/sim-test.mjs` is plain node, no framework, no dependencies, and still
+runs standalone exactly as before — reach for it when a failure wants a
+clean stack trace. It drives
 the real simulator through the real switch objects and asserts on lamp
 nets — there is no mock layer, so a passing test means current actually
 flowed. Coverage: every gate's truth table, latch set/hold/reset sequences,
