@@ -222,7 +222,7 @@ export function romArray(words, width, addrBits, opts = {}) {
       const xLast = xArray + (width - 1) * COL_PITCH;
       m.region('ROM array',
         xArray - 6, -4, xLast + 4, (rows - 1) * ROW_PITCH + 4);
-      m.region('ROM output buffers',
+      m.region('ROM buffers',
         xArray - 6, rows * ROW_PITCH + 1,
         xLast + 4, rows * ROW_PITCH + GATE_H * 2 + 6, { side: 'bottom' });
     },

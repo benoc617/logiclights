@@ -7,7 +7,7 @@ Every countable fact about the library, generated from the catalogue and
 from building each circuit. No other document repeats these numbers — they
 link here instead, because inventory written into prose goes stale quietly.
 
-**58 circuits** across 4 sections.
+**59 circuits** across 4 sections.
 
 ## The matrix
 
@@ -71,7 +71,7 @@ circuit exists to explain.
 | Diode Logic | — | · | · | 4 | 2 | 6 |
 | Three Technologies | — | 2 | 6 | · | 2 | 9 |
 
-### CMOS (25)
+### CMOS (26)
 
 | Circuit | Group | Relays | Transistors | Diodes | Resistors | Nets |
 |---|---|--:|--:|--:|--:|--:|
@@ -97,7 +97,8 @@ circuit exists to explain.
 | Two-Byte Machine | Machines | · | 5201 | · | 8 | 2387 |
 | Subtract and Exchange | Machines | · | 4298 | · | 8 | 1972 |
 | Accumulator Group | Machines | · | 2904 | · | 8 | 1415 |
-| Memory Machine | Machines | · | 6536 | · | 8 | 3028 |
+| Memory Machine | Machines | · | 6542 | · | 8 | 3031 |
+| Intel 4004 | Machines | · | 9718 | · | 8 | 4506 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -122,26 +123,26 @@ circuit exists to explain.
 
 | | Count |
 |---|--:|
-| Circuits | 58 |
+| Circuits | 59 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 33251 |
+| Transistors | 42975 |
 | Diodes | 4 |
-| Resistors | 320 |
+| Resistors | 328 |
 
 ### Largest circuits
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Memory Machine | 6544 | 3028 |
+| Intel 4004 | 9726 | 4506 |
+| Memory Machine | 6550 | 3031 |
 | Two-Byte Machine | 5209 | 2387 |
 | Subtract and Exchange | 4306 | 1972 |
 | Conditional Machine | 3863 | 1756 |
-| Adding Machine | 3802 | 1723 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **(suite failed — fix that before trusting this file)**
+`node test/sim-test.mjs` → **151010 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

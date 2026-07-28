@@ -1066,8 +1066,21 @@ export const MemControl = defineModule('memctrl', {
     // Conditions, evaluated outside and consulted here.
     { name: 'condTake', x: -1.5, y: 110, side: 'in' },
     { name: 'iszTake', x: -1.5, y: 114, side: 'in' },
-    // The accumulator group's escape line: 1111 decoded a second time.
+    // The accumulator group, in two lines rather than one. `accGroup` is
+    // the whole 1111 escape and says "this instruction defines the carry";
+    // `accToAcc` is the subset that also writes the accumulator.
+    //
+    // They differ by four instructions and the difference matters: CLC,
+    // CMC and STC touch only the carry, and DCL only the bank select.
+    // Loading the accumulator for those means selecting no mux source,
+    // and a mux with nothing selected drives zero — so CLC would clear the
+    // accumulator as well as the carry, silently.
     { name: 'accGroup', x: -1.5, y: 118, side: 'in' },
+    { name: 'accToAcc', x: -1.5, y: 126, side: 'in' },
+    // …and the narrower subset that takes the ADDER: IAC, DAC, TCS, DAA.
+    // The accumulator plus a constant, which is why the 4004 gets four
+    // more instructions for almost no silicon.
+    { name: 'aluGroup', x: -1.5, y: 130, side: 'in' },
     // XCH's read half — the register reaching the accumulator, which needs
     // its own line because XCH writes in both directions at once.
     { name: 'opXCHread', x: -1.5, y: 122, side: 'in' },
@@ -1207,7 +1220,7 @@ export const MemControl = defineModule('memctrl', {
     m.instantiate(Or2, GATE_W * 8, GATE_H * 6,
       { a: m.port('opLD'), b: m.port('opXCHread'), y: reads });
     m.instantiate(Or2, GATE_W * 8, GATE_H * 7,
-      { a: m.port('accGroup'), b: m.port('opBBL'), y: grp });
+      { a: m.port('accToAcc'), b: m.port('opBBL'), y: grp });
     m.instantiate(Or2, GATE_W * 10, GATE_H * 6, { a: reads, b: grp, y: w2 });
     const alu2 = m.net();
     m.instantiate(Or2, GATE_W * 10, GATE_H * 8,
@@ -1259,8 +1272,17 @@ export const MemControl = defineModule('memctrl', {
       { a: m.port('opADD'), b: m.port('opSUB'), y: arithR });
     m.instantiate(Or2, GATE_W * 7, GATE_H * 16,
       { a: arith, b: arithR, y: anyArith });
+    // IAC, DAC, TCS and DAA also take the adder's result — they are the
+    // accumulator plus a constant, which is the whole reason they cost no
+    // arithmetic of their own. They arrive on `aluGroup`, a subset of the
+    // escape rather than the whole of it: CMA, the rotates and KBP write
+    // the accumulator from elsewhere, and selecting the adder for them as
+    // well would put two sources on the mux at once.
+    const aluAny = m.net();
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 14,
+      { a: anyArith, b: m.port('aluGroup'), y: aluAny });
     m.instantiate(And2, GATE_W * 10, GATE_H * 16,
-      { a: pE, b: anyArith, y: m.port('accFromAlu') });
+      { a: pE, b: aluAny, y: m.port('accFromAlu') });
     // The accumulator group also writes the carry — the rotates move a bit
     // through it, and CLC/STC/CMC/TCC/TCS/DAA each define what it becomes.
     // Its own logic decides the value; this line only says "now".
@@ -1369,12 +1391,18 @@ export const MemControl = defineModule('memctrl', {
     // the counter stepped over both bytes during fetch.
     m.instantiate(And2, GATE_W * 5, GATE_H * 37,
       { a: pE, b: m.port('opJMS'), y: m.port('stackPush') });
-    // The pop happens at FETCH of the *next* pass rather than at EXEC:
-    // popping and loading the counter on the same edge races, and the
-    // counter wins about half the time. Reading the stack a phase early
-    // and letting the value sit on the load input is the fix.
+    // The pop happens one phase BEFORE the counter loads, not on the same
+    // edge and not after it. Popping and loading together races, and the
+    // counter wins about half the time; popping later is worse, because
+    // the stack's read port follows its pointer — so once the pointer has
+    // moved on, the read returns the slot the pointer now sits on rather
+    // than the one that was popped. Reading a phase early and letting the
+    // value stand on the load input is what makes it deterministic.
+    //
+    // READ2 here, FETCH2 on the four-phase machine: in both cases the
+    // phase immediately before EXEC.
     m.instantiate(And2, GATE_W * 5, GATE_H * 39,
-      { a: pF, b: m.port('opBBL'), y: m.port('stackPop') });
+      { a: pR2, b: m.port('opBBL'), y: m.port('stackPop') });
 
     // BBL's data field reaches the accumulator on the way out. This is the
     // reason a 4004 subroutine cannot return a value in the accumulator —

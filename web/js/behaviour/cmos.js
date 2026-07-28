@@ -441,8 +441,8 @@ function buildFetch() {
   // array hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
@@ -623,8 +623,8 @@ function buildSequenced() {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // …and what the sequenced machine adds: a phase ring, and a control
   // unit that ANDs a phase with a decoded instruction.
@@ -884,8 +884,8 @@ function buildAddMachine() {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // Control, then the ADD datapath: OPA names a register, the file reads
   // it, the adder sums it with the accumulator and the carry, and the mux
@@ -1196,8 +1196,8 @@ export function buildJcnMachine(program = P3_PROGRAM) {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // The conditional machine's addition is the loop back through the
   // condition tree: the accumulator's state decides whether the jump is
@@ -1677,15 +1677,15 @@ function buildTwoByteMachine() {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // Two bytes and a stack. The operand register holds the second byte, the
   // incrementer serves INC and ISZ, and the address stack remembers where
   // a JMS came from.
   c.flow('Instruction decoder', 'Control unit', { label: 'which' });
   c.flow('Phase ring', 'Control unit', { label: 'when' });
-  c.flow('ROM output buffers', 'Operand register', { label: 'byte 2' });
+  c.flow('ROM buffers', 'Operand register', { label: 'byte 2' });
   c.flow('Register file', 'Incrementer', { label: 'register' });
   c.flow('Incrementer', 'Register write mux');
   c.flow('Register write mux', 'Register file', { label: 'write back' });
@@ -2193,8 +2193,8 @@ function buildAccGroupMachine() {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // Thirteen instructions behind one opcode, all of them steering the
   // accumulator's source mux rather than adding new arithmetic.
@@ -2566,8 +2566,8 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // The read path back from the registers is what this machine adds, and
   // the two-phase clock is what makes XCH a true exchange.
@@ -2866,7 +2866,9 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     // 4004 binds these for real.
     opJUN: VSS, opJCN: VSS, opJMS: VSS, opBBL: VSS,
     opINC: VSS, opISZ: VSS, opADD: VSS, opSUB: VSS, opLD: VSS,
-    condTake: VSS, iszTake: VSS, accGroup: VSS, opXCHread: VSS,
+    condTake: VSS, iszTake: VSS, accGroup: VSS, accToAcc: VSS,
+    aluGroup: VSS,
+    opXCHread: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -3327,14 +3329,14 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   // hands back a byte, the register holds it, the decoder reads it.
   c.flow('Program counter', 'ROM row decode', { label: 'address' });
   c.flow('ROM row decode', 'ROM array');
-  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
-  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'byte' });
   c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
   // The memory group: a register pair becomes an address, the address
   // reaches the 4002 over a bus, and FIN steers the ROM from the same pair.
   c.flow('Instruction decoder', 'Control unit', { label: 'which' });
   c.flow('Phase ring', 'Control unit', { label: 'when' });
-  c.flow('ROM output buffers', 'Operand register', { label: 'byte 2' });
+  c.flow('ROM buffers', 'Operand register', { label: 'byte 2' });
   c.flow('Register file', 'SRC address latch', { label: 'pair' });
   c.flow('Register file', 'FIN address latch', { label: 'r0:r1' });
   c.flow('FIN address latch', 'ROM address mux', { label: 'FIN' });
@@ -3381,6 +3383,1027 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   };
   return c;
 }
+
+// The 4004 itself: every defined instruction but WPM, on one machine.
+//
+// The eight machines before this one each isolate an idea, which is what
+// makes them readable — and what makes none of them a CPU. This is the
+// whole datapath at once: the fetch loop, five phases, the register file,
+// the adder shared by four instructions, the accumulator group's escape
+// decode, the memory group across a bus, the address stack, and FIN's two
+// instruction cycles.
+//
+// It is a superset rather than a rewrite. Every block here is the module
+// the earlier machines already proved, wired together — the value of the
+// bring-up ladder is precisely that this step is composition and not new
+// logic. Where a block is new, it is only because two halves that lived on
+// different machines now have to coexist.
+//
+// Structure, left to right and top to bottom:
+//
+//   row 1   phase ring, program counter, ROM, instruction register,
+//           operand register, decoder, control unit, address stack
+//   row 2   register file, incrementer, SRC latch, FIN address latch
+//   row 3   the arithmetic: adder operands, adder, carry, accumulator
+//
+const PCPU_PROGRAM = [
+  // A program that touches every group and ends in the 4004's idiom for
+  // "stop": a jump to itself. There is no HLT.
+  0x20, 0x0A,   //  0  FIM 0P, 10   r0 = 0, r1 = 10 — an address for later
+  0xD5,         //  2  LDM 5        accumulator = 5
+  0xB2,         //  3  XCH r2       r2 = 5, accumulator = 0 (a real swap)
+  0xD3,         //  4  LDM 3        accumulator = 3
+  0x82,         //  5  ADD r2       3 + 5 = 8
+  0x62,         //  6  INC r2       r2 = 6
+  0xF1,         //  7  CLC          clear the carry before subtracting
+  0x92,         //  8  SUB r2       8 - 6 = 2, carry set (no borrow)
+  0xF2,         //  9  IAC          2 + 1 = 3
+  0x21,         // 10  SRC 0P       send r0:r1 = 0x0A to the memory bus
+  0xE0,         // 11  WRM          RAM[0][0][10] = 3
+  0xE9,         // 12  RDM          read it straight back
+  0x50, 0x11,   // 13  JMS 17       call the subroutine at 17
+  0x40, 0x14,   // 15  JUN 20       the return lands here, then to the spin
+  0xF5,         // 17  RAL          rotate left through carry
+  0xF6,         // 18  RAR          and back — the pair is the identity
+  0xC7,         // 19  BBL 7        return, loading 7 over the accumulator
+  0x40, 0x14,   // 20  JUN 20       spin: the 4004 has no HLT
+];
+
+export function buildCpu4004(program = PCPU_PROGRAM) {
+  const c = new Circuit('Intel 4004');
+  c.implicitGround = false;
+
+  const clkNet = c.net(), nclk = c.net(), rst = c.net(), test = c.net();
+  const clkSw = c.addSwitch('CLK', clkNet, 'toggle', 4, 6, { to: VSS });
+  c.addSwitch('RST', rst, 'toggle', 4, 11, { to: VSS });
+  c.addSwitch('TEST', test, 'toggle', 4, 16, { to: VSS });
+  c.addClock(clkSw, { period: 1200 });
+  instantiate(c, Inverter, 20, 44, { a: clkNet, y: nclk });
+
+  const ROW2 = 170;
+  const ring = instantiate(c, ringCounter(5), 40, 0,
+    { clk: clkNet, nclk, rst }, { tag: 'ring' });
+  c.region('Phase ring', 36, -6, 40 + ring.w + 4, ring.h + 6);
+
+  // Five bits of program counter: 32 words, which is what this ROM is.
+  // The real chip has twelve, addressing 4K; the width is a demo limit
+  // rather than an architectural one, and nothing here depends on it.
+  const PCW = 5;
+  const pcEnable = c.net();
+  const pcTarget = [];
+  for (let i = 0; i < PCW; i++) pcTarget.push(c.net());
+  const pcLoadLine = c.net();
+  const pcBind = { clk: clkNet, nclk, en: pcEnable, rst, load: pcLoadLine };
+  for (let i = 0; i < PCW; i++) pcBind[`a${i}`] = pcTarget[i];
+  const PC = instantiate(c, programCounter(PCW), 40, ROW2, pcBind, { tag: 'pc' });
+  c.region('Program counter', 36, ROW2 - 6, 40 + PC.w + 4, ROW2 + PC.h + 6);
+
+  const xRom = 40 + PC.w + 30;
+  const Rom = romArray(program, 8, PCW);
+  const romAddr = [], finAddr = [];
+  for (let i = 0; i < PCW; i++) romAddr.push(c.net());
+  for (let i = 0; i < 4; i++) finAddr.push(c.net());
+  const romBind = {};
+  for (let i = 0; i < PCW; i++) romBind[`a${i}`] = romAddr[i];
+  const rom = instantiate(c, Rom, xRom, ROW2, romBind, { tag: 'rom' });
+
+  // The instruction register, loaded by the control unit rather than by
+  // the phase directly — FIN's second pass must not reload it, because the
+  // ROM is showing FIN's data byte then.
+  const irLoadLine = c.net(), nIrLoad = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: irLoadLine, y: nIrLoad },
+    { tag: 'irln' });
+
+  const xIr = xRom + rom.w + 30;
+  const ir = [];
+  for (let i = 0; i < 8; i++) {
+    ir.push(c.net());
+    const keep = c.net(), take = c.net(), d = c.net();
+    instantiate(c, And2, xIr, ROW2 + i * 26,
+      { a: rom.nets[`d${i}`], b: irLoadLine, y: take }, { tag: `irt${i}` });
+    instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
+      { a: ir[i], b: nIrLoad, y: keep }, { tag: `irk${i}` });
+    instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
+      { a: take, b: keep, y: d }, { tag: `irm${i}` });
+    instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
+      { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
+  }
+  c.region('Instruction register', xIr - 6, ROW2 - 6, xIr + 160,
+    ROW2 + 7 * 26 + 24);
+
+  // The operand register: the second byte of a two-byte instruction,
+  // captured during DECODE while the counter has already stepped past it.
+  const oprLoadLine = c.net();
+  const opr = instantiate(c, register(8), xIr, ROW2 + 250, {
+    clk: clkNet, nclk, load: oprLoadLine,
+    d0: rom.nets.d0, d1: rom.nets.d1, d2: rom.nets.d2, d3: rom.nets.d3,
+    d4: rom.nets.d4, d5: rom.nets.d5, d6: rom.nets.d6, d7: rom.nets.d7,
+  }, { tag: 'opr' });
+  c.region('Operand register', xIr - 6, ROW2 + 244, xIr + 160, ROW2 + 340);
+
+  const xDec = xIr + 190;
+  const dbind = {};
+  for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
+  const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind,
+    { tag: 'dec' });
+  c.region('Instruction decoder', xDec - 6, ROW2 - 6, xDec + dec.w + 4,
+    ROW2 + dec.h + 6);
+
+  // Four instructions share two opcodes, told apart by OPA bit 0:
+  //   0010 rrr 0  FIM    0010 rrr 1  SRC
+  //   0011 rrr 0  FIN    0011 rrr 1  JIN
+  const nir0 = c.net();
+  instantiate(c, Inverter, xDec + dec.w + 10, ROW2 - 80,
+    { a: ir[0], y: nir0 }, { tag: 'nir0' });
+  const opSRC = c.net(), opFIM = c.net(), opFIN = c.net(), opJIN = c.net();
+  const finCycle2 = c.net();
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 80,
+    { a: dec.nets.op2, b: ir[0], y: opSRC }, { tag: 'srcd' });
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 60,
+    { a: dec.nets.op2, b: nir0, y: opFIM }, { tag: 'fimd' });
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 40,
+    { a: dec.nets.op3, b: nir0, y: opFIN }, { tag: 'find' });
+  instantiate(c, And2, xDec + dec.w + 34, ROW2 - 20,
+    { a: dec.nets.op3, b: ir[0], y: opJIN }, { tag: 'jind' });
+
+  // FIN's cycle flag — the schematic's SINGLE CYCLE F/F. Globally clocked
+  // with reset in the data term, so it is a firm 0 before the first fetch
+  // rather than floating until the first EXEC edge.
+  {
+    const nrstF = c.net(), np4 = c.net(), q = c.net(), nq = c.net();
+    const hold = c.net(), setp = c.net(), sete = c.net();
+    const dsum = c.net(), d = c.net();
+    instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 130,
+      { a: rst, y: nrstF }, { tag: 'fc2r' });
+    instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 100,
+      { a: ring.nets.p4, y: np4 }, { tag: 'fc2p' });
+    instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 70,
+      { a: q, y: nq }, { tag: 'fc2q' });
+    instantiate(c, And2, xDec + dec.w + 86, ROW2 - 100,
+      { a: q, b: np4, y: hold }, { tag: 'fc2h' });
+    instantiate(c, And2, xDec + dec.w + 86, ROW2 - 70,
+      { a: opFIN, b: ring.nets.p4, y: setp }, { tag: 'fc2s' });
+    instantiate(c, And2, xDec + dec.w + 112, ROW2 - 70,
+      { a: setp, b: nq, y: sete }, { tag: 'fc2e' });
+    instantiate(c, Or2, xDec + dec.w + 112, ROW2 - 100,
+      { a: hold, b: sete, y: dsum }, { tag: 'fc2o' });
+    instantiate(c, And2, xDec + dec.w + 138, ROW2 - 100,
+      { a: dsum, b: nrstF, y: d }, { tag: 'fc2d' });
+    instantiate(c, DFlipFlop, xDec + dec.w + 164, ROW2 - 100,
+      { d, q, clk: clkNet, nclk }, { tag: 'fc2' });
+    const t = c.net();
+    instantiate(c, Inverter, xDec + dec.w + 212, ROW2 - 100,
+      { a: q, y: t }, { tag: 'fc2b' });
+    instantiate(c, Inverter, xDec + dec.w + 232, ROW2 - 100,
+      { a: t, y: finCycle2 }, { tag: 'fc2c' });
+  }
+
+  const ROW3 = ROW2 + 680;
+  const ROW4 = ROW3 + 560;
+  const accQ = [c.net(), c.net(), c.net(), c.net()];
+  const ramQ = [c.net(), c.net(), c.net(), c.net()];
+  const carryQ = c.net(), accZero = c.net();
+  const pairD = [c.net(), c.net(), c.net(), c.net()];
+
+  // ── the condition trees ────────────────────────────────────────────────
+  // JCN's, on the accumulator and the carry, and ISZ's, on the increment.
+  const xCond = xDec + dec.w + 300;
+  const cond = instantiate(c, ConditionTree, xCond, ROW2, {
+    m0: ir[0], m1: ir[1], m2: ir[2], m3: ir[3],
+    accZero, carry: carryQ, test,
+  }, { tag: 'cond' });
+  c.region('Condition tree', xCond - 6, ROW2 - 6,
+    xCond + cond.w + 6, ROW2 + cond.h + 6);
+
+  const memToAcc = c.net(), memWrite = c.net();
+  const opADM = c.net(), opSBM = c.net(), opDCL = c.net();
+  const iszTake = c.net();
+  const opXCHread = c.net();
+
+  // Which accumulator-group instructions actually write the accumulator.
+  // Ten of the fourteen do; CLC, CMC and STC define only the carry, and
+  // DCL only the bank select. Loading the accumulator for those would
+  // select no mux source, and a mux with nothing selected drives zero —
+  // so CLC would quietly clear the accumulator along with the carry.
+  const accToAcc = c.net();
+  {
+    const xA = xCond, yA = ROW2 + 300;
+    let i = 0;
+    const o = (a, b) => {
+      const n = c.net();
+      instantiate(c, Or2, xA + (i >> 2) * 34, yA + (i % 4) * 24,
+        { a, b, y: n }, { tag: `a2a${i++}` });
+      return n;
+    };
+    const t0 = o(dec.nets.acc0, dec.nets.acc2);     // CLB IAC
+    const t1 = o(dec.nets.acc4, dec.nets.acc5);     // CMA RAL
+    const t2 = o(dec.nets.acc6, dec.nets.acc7);     // RAR TCC
+    const t3 = o(dec.nets.acc8, dec.nets.acc9);     // DAC TCS
+    const t4 = o(dec.nets.acc11, dec.nets.acc12);   // DAA KBP
+    const u0 = o(t0, t1), u1 = o(t2, t3);
+    const v0 = o(u0, u1);
+    instantiate(c, Or2, xA + 102, yA,
+      { a: v0, b: t4, y: accToAcc }, { tag: 'a2aF' });
+    c.region('Group write decode', xA - 6, yA - 6,
+      xA + 140, yA + 4 * 24);
+  }
+
+  // The four that take the adder: IAC, DAC, TCS, DAA — the accumulator
+  // plus a constant. CMA, the rotates and KBP write it from elsewhere, so
+  // selecting the adder for them too would drive the mux from two sources.
+  const aluGroup = c.net();
+  {
+    const xB = xCond, yB = ROW2 + 420;
+    const t0 = c.net(), t1 = c.net();
+    instantiate(c, Or2, xB, yB,
+      { a: dec.nets.acc2, b: dec.nets.acc8, y: t0 }, { tag: 'alg0' });
+    instantiate(c, Or2, xB, yB + 24,
+      { a: dec.nets.acc9, b: dec.nets.acc11, y: t1 }, { tag: 'alg1' });
+    instantiate(c, Or2, xB + 34, yB,
+      { a: t0, b: t1, y: aluGroup }, { tag: 'alg2' });
+    c.region('Group adder decode', xB - 6, yB - 6, xB + 120, yB + 46);
+  }
+
+  const xCtrl = xCond + cond.w + 40;
+  const ctrl = instantiate(c, MemControl, xCtrl, ROW2, {
+    pFetch: ring.nets.p0, pDecode: ring.nets.p1,
+    pRead1: ring.nets.p2, pRead2: ring.nets.p3, pExec: ring.nets.p4,
+    opSRC, opLDM: dec.nets.op13, opXCH: dec.nets.op11,
+    memToAcc, memWrite, opADM, opSBM, opDCL,
+    opFIM, opFIN, opJIN, twoByte: dec.nets.twoByte, finCycle2,
+    irLoad: irLoadLine, oprLoad: oprLoadLine,
+    // the full instruction set
+    opJUN: dec.nets.op4, opJCN: dec.nets.op1,
+    opJMS: dec.nets.op5, opBBL: dec.nets.op12,
+    opINC: dec.nets.op6, opISZ: dec.nets.op7,
+    opADD: dec.nets.op8, opSUB: dec.nets.op9, opLD: dec.nets.op10,
+    condTake: cond.nets.take, iszTake,
+    accGroup: dec.nets.op15, accToAcc, aluGroup, opXCHread,
+  }, { tag: 'ctrl' });
+  c.region('Control unit', xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6,
+    ROW2 + ctrl.h + 6);
+
+  // XCH reads the register in the same instruction it writes it. Safe
+  // because the write is gated to the clock's low half and the
+  // accumulator samples the high half — the two-phase discipline the
+  // Subtract and Exchange machine established.
+  {
+    const t = c.net();
+    instantiate(c, Inverter, xCtrl - 60, ROW2 + 20,
+      { a: dec.nets.op11, y: t }, { tag: 'xrn' });
+    instantiate(c, Inverter, xCtrl - 40, ROW2 + 20,
+      { a: t, y: opXCHread }, { tag: 'xrb' });
+  }
+
+  const pcEnN = c.net();
+  instantiate(c, Inverter, xCtrl, ROW2 + ctrl.h + 8,
+    { a: ctrl.nets.pcInc, y: pcEnN }, { tag: 'pen' });
+  instantiate(c, Inverter, xCtrl + 20, ROW2 + ctrl.h + 8,
+    { a: pcEnN, y: pcEnable }, { tag: 'pen2' });
+
+  // ── the address stack ──────────────────────────────────────────────────
+  // Three registers on a cylinder, as the manual describes: a pointer
+  // rotates and the values stay where they are.
+  const xStk = xCtrl + ctrl.w + 40;
+  const stkBind = {
+    clk: clkNet, nclk, rst,
+    push: ctrl.nets.stackPush, pop: ctrl.nets.stackPop,
+  };
+  // The pushed value is the counter as it stands at EXEC — which is the
+  // return address precisely because it stepped over both bytes at fetch.
+  for (let i = 0; i < PCW; i++) stkBind[`d${i}`] = PC.nets[`q${i}`];
+  const stk = instantiate(c, addressStack(PCW), xStk, ROW2, stkBind,
+    { tag: 'stk' });
+  c.region('Address stack', xStk - 6, ROW2 - 6, xStk + stk.w + 6,
+    ROW2 + stk.h + 6);
+
+  // ── the register file ──────────────────────────────────────────────────
+  const xRf = 40;
+  const regWriteGated = c.net(), pairWr = c.net(), anyWr = c.net();
+  instantiate(c, Or2, xRf, ROW3 - 70,
+    { a: ctrl.nets.pairHi, b: ctrl.nets.pairLo, y: pairWr }, { tag: 'pwe' });
+  instantiate(c, Or2, xRf + 30, ROW3 - 70,
+    { a: ctrl.nets.regWrite, b: pairWr, y: anyWr }, { tag: 'awe' });
+  instantiate(c, And2, xRf, ROW3 - 40,
+    { a: anyWr, b: nclk, y: regWriteGated }, { tag: 'wegate' });
+
+  // Read address: pair 0 for FIN, the pair for SRC/FIM/JIN, OPA otherwise.
+  const ra = [c.net(), c.net(), c.net(), c.net()];
+  {
+    const t = c.net();
+    instantiate(c, Inverter, xDec, ROW3 - 90, { a: ring.nets.p3, y: t },
+      { tag: 'ra0n' });
+    instantiate(c, Inverter, xDec + 20, ROW3 - 90, { a: t, y: ra[0] },
+      { tag: 'ra0b' });
+    const nOpFIN = c.net();
+    instantiate(c, Inverter, xDec, ROW3 - 70, { a: opFIN, y: nOpFIN },
+      { tag: 'ranf' });
+    for (let i = 1; i < 4; i++) {
+      instantiate(c, And2, xDec + 24, ROW3 - 70 + i * 22,
+        { a: ir[i], b: nOpFIN, y: ra[i] }, { tag: `ras${i}` });
+    }
+  }
+
+  // ── the ADB register ───────────────────────────────────────────────────
+  // The accumulator's value, held on the adder's B side — a real block on
+  // sheet 3 of the schematic, and the thing that makes XCH work.
+  //
+  // It captures on the FALLING edge, half a cycle after the accumulator
+  // latches. So while the accumulator moves on to the register's old
+  // value, ADB still holds what the accumulator had when the instruction
+  // began — which is exactly what the register file must be written with.
+  // Two registers, two phases, no scratch location: the exchange happens
+  // in one instruction because the old value is still somewhere.
+  //
+  // Without it, XCH reads and writes the same live accumulator and the
+  // swap collapses to a one-way move — the machine keeps its accumulator
+  // and the register takes a copy, which is what this machine did before
+  // the oracle caught it.
+  const adb = instantiate(c, register(4), xDec, ROW3 - 190, {
+    clk: nclk, nclk: clkNet, load: VDD,
+    d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
+  }, { tag: 'adb' });
+  c.region('ADB register', xDec - 6, ROW3 - 196, xDec + 150, ROW3 - 106);
+
+  // Write data: ADB's held accumulator, a pair nibble, or the incrementer.
+  const incOut = [c.net(), c.net(), c.net(), c.net()];
+  const regD = [c.net(), c.net(), c.net(), c.net()];
+  for (let i = 0; i < 4; i++) {
+    const fa = c.net(), fp = c.net(), fi = c.net();
+    const np = c.net(), nInc = c.net(), notBoth = c.net();
+    instantiate(c, Inverter, xRf - 60, ROW3 + 40 + i * 26,
+      { a: pairWr, y: np }, { tag: `rdn${i}` });
+    instantiate(c, Inverter, xRf - 60, ROW3 + 52 + i * 26,
+      { a: ctrl.nets.regFromInc, y: nInc }, { tag: `rdi${i}` });
+    instantiate(c, And2, xRf - 82, ROW3 + 40 + i * 26,
+      { a: np, b: nInc, y: notBoth }, { tag: `rdb${i}` });
+    instantiate(c, And2, xRf - 34, ROW3 + 40 + i * 26,
+      { a: adb.nets[`q${i}`], b: notBoth, y: fa }, { tag: `rda${i}` });
+    instantiate(c, And2, xRf - 34, ROW3 + 52 + i * 26,
+      { a: pairD[i], b: pairWr, y: fp }, { tag: `rdp${i}` });
+    instantiate(c, And2, xRf - 34, ROW3 + 64 + i * 26,
+      { a: incOut[i], b: ctrl.nets.regFromInc, y: fi }, { tag: `rdc${i}` });
+    const o1 = c.net();
+    instantiate(c, Or2, xRf - 8, ROW3 + 40 + i * 26,
+      { a: fa, b: fp, y: o1 }, { tag: `rdo${i}` });
+    instantiate(c, Or2, xRf - 8, ROW3 + 52 + i * 26,
+      { a: o1, b: fi, y: regD[i] }, { tag: `rdq${i}` });
+  }
+
+  // Write address: OPA always for bits 1-3; bit 0 by phase for a pair.
+  const wa0 = c.net();
+  {
+    const buf = c.net(), np = c.net(), g1 = c.net(), g2 = c.net();
+    const t = c.net();
+    instantiate(c, Inverter, xRf - 146, ROW3 + 40,
+      { a: ring.nets.p3, y: t }, { tag: 'wa0n' });
+    instantiate(c, Inverter, xRf - 126, ROW3 + 40,
+      { a: t, y: buf }, { tag: 'wa0b' });
+    instantiate(c, Inverter, xRf - 146, ROW3 + 66,
+      { a: pairWr, y: np }, { tag: 'wa0m' });
+    instantiate(c, And2, xRf - 120, ROW3 + 40,
+      { a: buf, b: pairWr, y: g1 }, { tag: 'wa0p' });
+    instantiate(c, And2, xRf - 120, ROW3 + 66,
+      { a: ir[0], b: np, y: g2 }, { tag: 'wa0x' });
+    instantiate(c, Or2, xRf - 94, ROW3 + 40,
+      { a: g1, b: g2, y: wa0 }, { tag: 'wa0o' });
+  }
+
+  const rf = instantiate(c, RegFile16x4, xRf, ROW3, {
+    wa0, wa1: ir[1], wa2: ir[2], wa3: ir[3],
+    ra0: ra[0], ra1: ra[1], ra2: ra[2], ra3: ra[3],
+    d0: regD[0], d1: regD[1], d2: regD[2], d3: regD[3],
+    we: regWriteGated,
+  }, { tag: 'rf' });
+  c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4,
+    ROW3 + rf.h + 6, { side: 'left' });
+
+  // ── the incrementer ────────────────────────────────────────────────────
+  // Its own block on the real chip (sheet 1, beside the address register),
+  // not the adder: INC and ISZ must not disturb the carry flag.
+  const xInc = xRf + rf.w + 40;
+  const inc = instantiate(c, Incrementer4, xInc, ROW3, {
+    q0: rf.nets.q0, q1: rf.nets.q1, q2: rf.nets.q2, q3: rf.nets.q3,
+  }, { tag: 'inc' });
+  c.region('Incrementer', xInc - 6, ROW3 - 6, xInc + inc.w + 26,
+    ROW3 + inc.h + 6);
+  // Hold the incremented value: reading the register while writing it back
+  // is a combinational loop otherwise.
+  for (let i = 0; i < 4; i++) {
+    instantiate(c, register(1), xInc + inc.w + 20, ROW3 + i * 30, {
+      clk: clkNet, nclk, load: ring.nets.p3,
+      d0: inc.nets[`s${i}`], q0: incOut[i],
+    }, { tag: `ih${i}` });
+  }
+  c.region('Increment hold', xInc + inc.w + 40, ROW3 - 6,
+    xInc + inc.w + 136, ROW3 + 4 * 30);
+  // ISZ jumps while the incremented value is NOT zero.
+  {
+    const z = c.net(), nz = c.net();
+    const iz = instantiate(c, IsZero4, xInc + inc.w + 110, ROW3, {
+      a0: incOut[0], a1: incOut[1], a2: incOut[2], a3: incOut[3], z,
+    }, { tag: 'iszz' });
+    instantiate(c, Inverter, xInc + inc.w + 110 + iz.w + 10, ROW3,
+      { a: z, y: nz }, { tag: 'iszn' });
+    instantiate(c, Inverter, xInc + inc.w + 110 + iz.w + 30, ROW3,
+      { a: nz, y: iszTake }, { tag: 'iszb' });
+    c.region('ISZ condition', xInc + inc.w + 104, ROW3 - 6,
+      xInc + inc.w + 110 + iz.w + 50, ROW3 + iz.h + 6);
+  }
+
+  // ── the ROM address mux ────────────────────────────────────────────────
+  // The counter normally; r0:r1 during FIN's second cycle. The only time
+  // in the machine that something other than the PC addresses program
+  // memory, which is what makes FIN worth pointing at.
+  for (let i = 0; i < PCW; i++) {
+    const fp = c.net(), fc = c.net(), nf = c.net();
+    // Only the low four bits can come from the pair — it is eight bits on
+    // the real chip, and this ROM is 32 words, so the top bit stays with
+    // the counter.
+    const src = i < 4 ? finAddr[i] : VSS;
+    instantiate(c, Inverter, xRom - 90, ROW2 + 380 + i * 26,
+      { a: ctrl.nets.romFromPair, y: nf }, { tag: `ran${i}` });
+    instantiate(c, And2, xRom - 64, ROW2 + 380 + i * 26,
+      { a: src, b: ctrl.nets.romFromPair, y: fp }, { tag: `rap${i}` });
+    instantiate(c, And2, xRom - 64, ROW2 + 392 + i * 26,
+      { a: PC.nets[`q${i}`], b: nf, y: fc }, { tag: `rac${i}` });
+    instantiate(c, Or2, xRom - 34, ROW2 + 380 + i * 26,
+      { a: fp, b: fc, y: romAddr[i] }, { tag: `rao${i}` });
+  }
+  c.region('ROM address mux', xRom - 106, ROW2 + 374, xRom - 6,
+    ROW2 + 380 + PCW * 26);
+
+  // ── where a jump gets its target ───────────────────────────────────────
+  // Five instructions load the counter and they differ only here: JUN,
+  // JCN and ISZ take the operand byte, JMS takes it too, BBL takes the
+  // stack, and JIN takes the register pair it just read.
+  const jinTarget = [c.net(), c.net(), c.net(), c.net()];
+  for (let i = 0; i < 4; i++) {
+    instantiate(c, register(1), xRf + rf.w + 4, ROW3 + 300 + i * 30, {
+      clk: clkNet, nclk, load: ring.nets.p3,
+      d0: rf.nets[`q${i}`], q0: jinTarget[i],
+    }, { tag: `jt${i}` });
+  }
+  c.region('JIN target latch', xRf + rf.w - 2, ROW3 + 294,
+    xRf + rf.w + 108, ROW3 + 300 + 4 * 30);
+
+  {
+    const nJin = c.net(), nBbl = c.net();
+    instantiate(c, Inverter, xStk, ROW2 + stk.h + 30,
+      { a: opJIN, y: nJin }, { tag: 'jtn' });
+    instantiate(c, Inverter, xStk + 20, ROW2 + stk.h + 30,
+      { a: dec.nets.op12, y: nBbl }, { tag: 'btn' });
+    for (let i = 0; i < PCW; i++) {
+      const fj = c.net(), fb = c.net(), fo = c.net();
+      const t1 = c.net(), notJB = c.net();
+      // JIN's pair is four bits; the fifth stays with whatever the
+      // operand byte supplies.
+      const jsrc = i < 4 ? jinTarget[i] : VSS;
+      instantiate(c, And2, xStk, ROW2 + stk.h + 60 + i * 26,
+        { a: jsrc, b: opJIN, y: fj }, { tag: `jtj${i}` });
+      instantiate(c, And2, xStk, ROW2 + stk.h + 72 + i * 26,
+        { a: stk.nets[`q${i}`], b: dec.nets.op12, y: fb }, { tag: `jtb${i}` });
+      instantiate(c, And2, xStk + 26, ROW2 + stk.h + 60 + i * 26,
+        { a: nJin, b: nBbl, y: notJB }, { tag: `jtx${i}` });
+      instantiate(c, And2, xStk + 52, ROW2 + stk.h + 60 + i * 26,
+        { a: opr.nets[`q${i}`], b: notJB, y: fo }, { tag: `jto${i}` });
+      instantiate(c, Or2, xStk + 78, ROW2 + stk.h + 60 + i * 26,
+        { a: fj, b: fb, y: t1 }, { tag: `jt1${i}` });
+      instantiate(c, Or2, xStk + 104, ROW2 + stk.h + 60 + i * 26,
+        { a: t1, b: fo, y: pcTarget[i] }, { tag: `jt2${i}` });
+    }
+    c.region('Jump target mux', xStk - 6, ROW2 + stk.h + 54,
+      xStk + 150, ROW2 + stk.h + 60 + PCW * 26);
+  }
+  {
+    const jn = c.net();
+    instantiate(c, Inverter, 40, ROW2 + 620, { a: ctrl.nets.pcLoad, y: jn },
+      { tag: 'jln' });
+    instantiate(c, Inverter, 60, ROW2 + 620, { a: jn, y: pcLoadLine },
+      { tag: 'jlb' });
+  }
+
+  // FIN's address latch: r1 during READ2 of the first cycle. The address
+  // is latched rather than read live so FIN 0P can overwrite the very
+  // pair that supplied it.
+  for (let i = 0; i < 4; i++) {
+    instantiate(c, register(1), xRf + rf.w + 120, ROW3 + 300 + i * 30, {
+      clk: clkNet, nclk, load: ctrl.nets.finLoad,
+      d0: rf.nets[`q${i}`], q0: finAddr[i],
+    }, { tag: `fa${i}` });
+  }
+  c.region('FIN address latch', xRf + rf.w + 114, ROW3 + 294,
+    xRf + rf.w + 226, ROW3 + 300 + 4 * 30);
+
+  // Pair write data: the operand's nibbles for FIM, the ROM byte for FIN.
+  for (let i = 0; i < 4; i++) {
+    const fromOpr = c.net(), fromRom = c.net(), nf = c.net();
+    const hi = c.net(), lo = c.net(), nsel = c.net();
+    instantiate(c, Inverter, xRf + rf.w + 240, ROW3 + 300 + i * 30,
+      { a: opFIN, y: nf }, { tag: `pdn${i}` });
+    instantiate(c, And2, xRf + rf.w + 266, ROW3 + 300 + i * 30,
+      { a: opr.nets[`q${i + 4}`], b: nf, y: hi }, { tag: `pdh${i}` });
+    instantiate(c, And2, xRf + rf.w + 266, ROW3 + 312 + i * 30,
+      { a: rom.nets[`d${i + 4}`], b: opFIN, y: fromRom }, { tag: `pdr${i}` });
+    instantiate(c, Or2, xRf + rf.w + 296, ROW3 + 300 + i * 30,
+      { a: hi, b: fromRom, y: fromOpr }, { tag: `pdo${i}` });
+    const lh = c.net(), lr = c.net();
+    instantiate(c, And2, xRf + rf.w + 266, ROW3 + 324 + i * 30,
+      { a: opr.nets[`q${i}`], b: nf, y: lh }, { tag: `pll${i}` });
+    instantiate(c, And2, xRf + rf.w + 266, ROW3 + 336 + i * 30,
+      { a: rom.nets[`d${i}`], b: opFIN, y: lr }, { tag: `plr${i}` });
+    instantiate(c, Or2, xRf + rf.w + 296, ROW3 + 324 + i * 30,
+      { a: lh, b: lr, y: lo }, { tag: `plo${i}` });
+    instantiate(c, Inverter, xRf + rf.w + 326, ROW3 + 312 + i * 30,
+      { a: ring.nets.p3, y: nsel }, { tag: `psn${i}` });
+    const th = c.net(), tl = c.net();
+    instantiate(c, And2, xRf + rf.w + 352, ROW3 + 300 + i * 30,
+      { a: fromOpr, b: nsel, y: th }, { tag: `psh${i}` });
+    instantiate(c, And2, xRf + rf.w + 352, ROW3 + 312 + i * 30,
+      { a: lo, b: ring.nets.p3, y: tl }, { tag: `psl${i}` });
+    instantiate(c, Or2, xRf + rf.w + 382, ROW3 + 300 + i * 30,
+      { a: th, b: tl, y: pairD[i] }, { tag: `pso${i}` });
+  }
+  c.region('Pair write data', xRf + rf.w + 234, ROW3 + 294,
+    xRf + rf.w + 420, ROW3 + 300 + 4 * 30 + 40);
+
+  // ── the SRC address latch and the memory group ─────────────────────────
+  const xSrc = xRf + rf.w + 440;
+  const src = instantiate(c, SrcLatch, xSrc, ROW3, {
+    clk: clkNet, nclk,
+    loadHi: ctrl.nets.srcHi, loadLo: ctrl.nets.srcLo,
+    d0: rf.nets.q0, d1: rf.nets.q1, d2: rf.nets.q2, d3: rf.nets.q3,
+  }, { tag: 'src' });
+  c.region('SRC address latch', xSrc - 6, ROW3 - 6, xSrc + src.w + 10,
+    ROW3 + src.h + 10);
+
+  const xMem = xDec;
+  const memDec = instantiate(c, Decode16, xMem, ROW4, {
+    a0: ir[0], a1: ir[1], a2: ir[2], a3: ir[3],
+  }, { tag: 'mdec' });
+  const MEMOP = [];
+  for (let i = 0; i < 16; i++) {
+    const y = c.net();
+    instantiate(c, And2, xMem + 220, ROW4 + i * 22,
+      { a: memDec.nets[`y${i}`], b: dec.nets.op14, y }, { tag: `mo${i}` });
+    MEMOP.push(y);
+  }
+  c.region('Memory-group decode', xMem - 6, ROW4 - 6, xMem + 260,
+    ROW4 + 16 * 22);
+
+  const or = (a, b, x, y, tag) => {
+    const n = c.net();
+    instantiate(c, Or2, x, y, { a, b, y: n }, { tag });
+    return n;
+  };
+  {
+    const xr = xMem + 300, yr = ROW4;
+    const r1 = or(MEMOP[9], MEMOP[10], xr, yr, 'mr1');
+    const r2 = or(MEMOP[12], MEMOP[13], xr, yr + 30, 'mr2');
+    const r3 = or(MEMOP[14], MEMOP[15], xr, yr + 60, 'mr3');
+    const r5 = or(r1, r2, xr + 30, yr, 'mr5');
+    const r6 = or(r3, MEMOP[10], xr + 30, yr + 60, 'mr6');
+    instantiate(c, Or2, xr + 60, yr + 30, { a: r5, b: r6, y: memToAcc },
+      { tag: 'mrA' });
+    const w1 = or(MEMOP[0], MEMOP[1], xr, yr + 130, 'mw1');
+    const w2 = or(MEMOP[2], MEMOP[4], xr, yr + 160, 'mw2');
+    const w3 = or(MEMOP[5], MEMOP[6], xr, yr + 190, 'mw3');
+    const w4 = or(w1, w2, xr + 30, yr + 130, 'mw4');
+    const w5 = or(w3, MEMOP[7], xr + 30, yr + 190, 'mw5');
+    instantiate(c, Or2, xr + 60, yr + 160, { a: w4, b: w5, y: memWrite },
+      { tag: 'mwA' });
+  }
+  c.region('Memory access decode', xMem + 294, ROW4 - 6, xMem + 430,
+    ROW4 + 216);
+
+  {
+    const buf = (from, to, x, y, tag) => {
+      const t = c.net();
+      instantiate(c, Inverter, x, y, { a: from, y: t }, { tag: tag + 'n' });
+      instantiate(c, Inverter, x + 20, y, { a: t, y: to }, { tag });
+    };
+    buf(MEMOP[11], opADM, xMem + 460, ROW4, 'badm');
+    buf(MEMOP[8], opSBM, xMem + 460, ROW4 + 30, 'bsbm');
+    buf(dec.nets.acc13, opDCL, xMem + 460, ROW4 + 60, 'bdcl');
+  }
+
+  // ── the arithmetic ─────────────────────────────────────────────────────
+  // One adder for ADD, SUB, ADM, SBM, IAC, DAC, TCS and DAA. What differs
+  // is only what arrives on its B input and what conditions the carry —
+  // which is the 4004's economy in one sentence.
+  const xAcc0 = xMem + 560;
+
+  // The accumulator group's constants: IAC adds 1, DAC adds 15, TCS 9/10.
+  const accOp = instantiate(c, AccOperand, xAcc0, ROW4, {
+    opIAC: dec.nets.acc2, opDAC: dec.nets.acc8, opTCS: dec.nets.acc9,
+  }, { tag: 'accop' });
+  c.region('Adder operand', xAcc0 - 6, ROW4 - 6, xAcc0 + accOp.w + 20,
+    ROW4 + accOp.h + 10);
+
+  // DAA decides for itself whether to add 6, from the accumulator and the
+  // carry, so it supplies its own constant rather than another AccOperand
+  // line.
+  const xDaa = xAcc0;
+  const daa = instantiate(c, DecimalAdjust, xDaa, ROW4 + 190, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], carry: carryQ,
+  }, { tag: 'daa' });
+  c.region('Decimal adjust', xDaa - 6, ROW4 + 184, xDaa + daa.w + 20,
+    ROW4 + 190 + daa.h + 10);
+
+  // The register or memory operand, conditioned for SUB and SBM.
+  const xSub = xAcc0 + 260;
+  const regOrMem = [c.net(), c.net(), c.net(), c.net()];
+  for (let i = 0; i < 4; i++) {
+    const fr = c.net(), fm = c.net(), nm = c.net();
+    instantiate(c, Inverter, xSub - 120, ROW4 + i * 26,
+      { a: memToAcc, y: nm }, { tag: `rmn${i}` });
+    instantiate(c, And2, xSub - 94, ROW4 + i * 26,
+      { a: rf.nets[`q${i}`], b: nm, y: fr }, { tag: `rmr${i}` });
+    instantiate(c, And2, xSub - 94, ROW4 + 12 + i * 26,
+      { a: ramQ[i], b: memToAcc, y: fm }, { tag: `rmm${i}` });
+    instantiate(c, Or2, xSub - 68, ROW4 + i * 26,
+      { a: fr, b: fm, y: regOrMem[i] }, { tag: `rmo${i}` });
+  }
+  const subop = instantiate(c, SubOperand, xSub, ROW4, {
+    r0: regOrMem[0], r1: regOrMem[1], r2: regOrMem[2], r3: regOrMem[3],
+    carry: carryQ, sub: ctrl.nets.aluSub,
+  }, { tag: 'subop' });
+  c.region('SUB conditioning', xSub - 6, ROW4 - 6, xSub + subop.w + 46,
+    ROW4 + subop.h + 10);
+
+  // The adder's B input, three ways: the conditioned register/memory
+  // operand for the arithmetic instructions, DAA's 6, or the accumulator
+  // group's constant.
+  const bIn = [];
+  const anyRegArith = c.net();
+  {
+    const t1 = c.net(), t2 = c.net();
+    instantiate(c, Or2, xSub + subop.w + 20, ROW4 - 40,
+      { a: dec.nets.op8, b: dec.nets.op9, y: t1 }, { tag: 'ba1' });
+    instantiate(c, Or2, xSub + subop.w + 20, ROW4 - 20,
+      { a: opADM, b: opSBM, y: t2 }, { tag: 'ba2' });
+    instantiate(c, Or2, xSub + subop.w + 46, ROW4 - 30,
+      { a: t1, b: t2, y: anyRegArith }, { tag: 'ba3' });
+  }
+  for (let i = 0; i < 4; i++) {
+    const fs = c.net(), fd = c.net(), fa = c.net();
+    const nd = c.net(), na = c.net(), useAcc = c.net(), o1 = c.net();
+    const b = c.net();
+    instantiate(c, Inverter, xSub + subop.w + 20, ROW4 + i * 30,
+      { a: dec.nets.acc11, y: nd }, { tag: `bn${i}` });
+    instantiate(c, Inverter, xSub + subop.w + 20, ROW4 + 12 + i * 30,
+      { a: anyRegArith, y: na }, { tag: `bm${i}` });
+    instantiate(c, And2, xSub + subop.w + 46, ROW4 + i * 30,
+      { a: subop.nets[`b${i}`], b: anyRegArith, y: fs }, { tag: `bs${i}` });
+    instantiate(c, And2, xSub + subop.w + 46, ROW4 + 12 + i * 30,
+      { a: daa.nets[`b${i}`], b: dec.nets.acc11, y: fd }, { tag: `bd${i}` });
+    instantiate(c, And2, xSub + subop.w + 72, ROW4 + i * 30,
+      { a: nd, b: na, y: useAcc }, { tag: `bu${i}` });
+    instantiate(c, And2, xSub + subop.w + 98, ROW4 + i * 30,
+      { a: accOp.nets[`b${i}`], b: useAcc, y: fa }, { tag: `ba${i}` });
+    instantiate(c, Or2, xSub + subop.w + 124, ROW4 + i * 30,
+      { a: fs, b: fd, y: o1 }, { tag: `bo${i}` });
+    instantiate(c, Or2, xSub + subop.w + 150, ROW4 + i * 30,
+      { a: o1, b: fa, y: b }, { tag: `bp${i}` });
+    bIn.push(b);
+  }
+  c.region('Adder B mux', xSub + subop.w + 14, ROW4 - 6,
+    xSub + subop.w + 190, ROW4 + 4 * 30);
+
+  // The carry in: the conditioned carry for the arithmetic instructions,
+  // zero for the accumulator group's constants (IAC adds 1 as an operand,
+  // not as a carry).
+  const cIn = c.net();
+  instantiate(c, And2, xSub + subop.w + 150, ROW4 + 4 * 30 + 20,
+    { a: subop.nets.cin, b: anyRegArith, y: cIn }, { tag: 'cinG' });
+
+  const xAdd = xSub + subop.w + 220;
+  const adder = instantiate(c, rippleAdder(4), xAdd, ROW4, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+    b0: bIn[0], b1: bIn[1], b2: bIn[2], b3: bIn[3],
+    cin: cIn,
+  }, { tag: 'add' });
+  c.region('Adder', xAdd - 6, ROW4 - 6, xAdd + adder.w + 6,
+    ROW4 + adder.h + 6);
+
+  // KBP: a truth table rather than arithmetic, so its own block.
+  const kbp = instantiate(c, KeyboardProcess, xAdd, ROW4 + 200, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
+  }, { tag: 'kbp' });
+  c.region('Keyboard process', xAdd - 6, ROW4 + 194, xAdd + kbp.w + 10,
+    ROW4 + 200 + kbp.h + 10);
+
+  // ── the carry flag ─────────────────────────────────────────────────────
+  // Its own little instruction set — CLC, STC, CMC, TCC — plus the adder
+  // and the rotates. Reset forces it to zero: a flag that powers up
+  // floating feeds Z into the adder's carry-in.
+  const xCf = xAdd + adder.w + 40;
+  const carryLogic = instantiate(c, CarryLogic, xCf, ROW4, {
+    carry: carryQ,
+    opCLC: dec.nets.acc1, opSTC: dec.nets.acc10,
+    opCMC: dec.nets.acc3, opTCC: dec.nets.acc7,
+  }, { tag: 'cl' });
+  c.region('Carry logic', xCf - 6, ROW4 - 6, xCf + carryLogic.w + 6,
+    ROW4 + carryLogic.h + 6);
+
+  const carryD = c.net(), nrst = c.net();
+  {
+    // Which carry: the logic block's when it claims the line, the adder's
+    // otherwise, and a rotate's bit when a rotate is running.
+    const fromAdd = c.net(), fromLog = c.net(), fromRot = c.net();
+    const nsel = c.net(), rotAny = c.net(), nrot = c.net();
+    const notLog = c.net(), pick = c.net(), o1 = c.net(), raw = c.net();
+    instantiate(c, Or2, xCf, ROW4 + 120,
+      { a: dec.nets.acc5, b: dec.nets.acc6, y: rotAny }, { tag: 'rot1' });
+    instantiate(c, Inverter, xCf + 30, ROW4 + 120,
+      { a: rotAny, y: nrot }, { tag: 'rot2' });
+    instantiate(c, Inverter, xCf + 30, ROW4 + 140,
+      { a: carryLogic.nets.sel, y: nsel }, { tag: 'cs1' });
+    instantiate(c, And2, xCf + 56, ROW4 + 140,
+      { a: nsel, b: nrot, y: notLog }, { tag: 'cs2' });
+    // the rotate's carry: bit 3 out for RAL, bit 0 out for RAR
+    const rl = c.net(), rr = c.net();
+    instantiate(c, And2, xCf + 56, ROW4 + 160,
+      { a: accQ[3], b: dec.nets.acc5, y: rl }, { tag: 'cr1' });
+    instantiate(c, And2, xCf + 56, ROW4 + 180,
+      { a: accQ[0], b: dec.nets.acc6, y: rr }, { tag: 'cr2' });
+    instantiate(c, Or2, xCf + 82, ROW4 + 160, { a: rl, b: rr, y: fromRot },
+      { tag: 'cr3' });
+    instantiate(c, And2, xCf + 82, ROW4 + 100,
+      { a: carryLogic.nets.d, b: carryLogic.nets.sel, y: fromLog },
+      { tag: 'cs3' });
+    instantiate(c, And2, xCf + 82, ROW4 + 120,
+      { a: adder.nets.cout, b: notLog, y: fromAdd }, { tag: 'cs4' });
+    instantiate(c, And2, xCf + 108, ROW4 + 160,
+      { a: fromRot, b: rotAny, y: pick }, { tag: 'cs5' });
+    instantiate(c, Or2, xCf + 108, ROW4 + 100,
+      { a: fromLog, b: fromAdd, y: o1 }, { tag: 'cs6' });
+    instantiate(c, Or2, xCf + 134, ROW4 + 100, { a: o1, b: pick, y: raw },
+      { tag: 'cs7' });
+    instantiate(c, Inverter, xCf + 160, ROW4 + 140, { a: rst, y: nrst },
+      { tag: 'cfrn' });
+    instantiate(c, And2, xCf + 186, ROW4 + 100,
+      { a: raw, b: nrst, y: carryD }, { tag: 'cfr' });
+  }
+  const carryLd = c.net();
+  instantiate(c, Or2, xCf + 186, ROW4 + 130,
+    { a: ctrl.nets.carryWrite, b: rst, y: carryLd }, { tag: 'cfl' });
+  // On the same edge as the accumulator, not the opposite one. Both are
+  // computed from the state the instruction started with — the adder's
+  // sum and its carry-out are the same addition — so latching them half a
+  // cycle apart means the second one samples a datapath the first has
+  // already changed. SUB's carry-out vanished and RAR's came back wrong
+  // when these disagreed.
+  instantiate(c, register(1), xCf + 220, ROW4, {
+    clk: nclk, nclk: clkNet, load: carryLd, d0: carryD, q0: carryQ,
+  }, { tag: 'cf' });
+  c.region('Carry flag', xCf + 214, ROW4 - 6, xCf + 290, ROW4 + 60);
+
+  // ── DCL's bank register ────────────────────────────────────────────────
+  const bankD = [c.net(), c.net(), c.net()];
+  for (let i = 0; i < 3; i++) {
+    instantiate(c, And2, xCf + 320, ROW4 + 40 + i * 24,
+      { a: accQ[i], b: nrst, y: bankD[i] }, { tag: `bkr${i}` });
+  }
+  const bankLd = c.net();
+  instantiate(c, Or2, xCf + 320, ROW4 + 120,
+    { a: ctrl.nets.bankLoad, b: rst, y: bankLd }, { tag: 'bkl' });
+  const bank = instantiate(c, register(3), xCf + 350, ROW4, {
+    clk: clkNet, nclk, load: bankLd,
+    d0: bankD[0], d1: bankD[1], d2: bankD[2],
+  }, { tag: 'bank' });
+  c.region('Bank select', xCf + 344, ROW4 - 6, xCf + 470, ROW4 + 70);
+
+  // ── the RAM's four bus bits ────────────────────────────────────────────
+  // Driven by the 4002 model through switches, which is the honest way to
+  // model a chip on the far side of a bus: the value reaches the circuit
+  // the same way every other external input does.
+  const ramSw = [];
+  for (let i = 0; i < 4; i++) {
+    const sw = c.addSwitch(`RAM${i}`, ramQ[i], 'toggle', 4, 22 + i * 5,
+      { to: VSS });
+    sw.driven = true;
+    ramSw.push(sw);
+  }
+
+  // ── the accumulator's source mux ───────────────────────────────────────
+  // Eight sources, which is what the accumulator group costs. Most are
+  // wiring: CMA is four inverters, the rotates are a shifted tap, CLB is
+  // selecting nothing at all.
+  const ROW5 = ROW4 + 300;
+  const xMux = xAcc0;
+  const accD = [];
+  for (let i = 0; i < 4; i++) {
+    const y = ROW5 + i * 46;
+    const fi = c.net(), fr = c.net(), fm = c.net(), fa = c.net();
+    const fc = c.net(), fl = c.net(), fR = c.net(), fk = c.net();
+    const fb = c.net(), ft = c.net();
+    instantiate(c, And2, xMux, y,
+      { a: ir[i], b: ctrl.nets.accFromImm, y: fi }, { tag: `mxi${i}` });
+    instantiate(c, And2, xMux, y + 10,
+      { a: rf.nets[`q${i}`], b: ctrl.nets.accFromReg, y: fr },
+      { tag: `mxr${i}` });
+    instantiate(c, And2, xMux, y + 20,
+      { a: ramQ[i], b: ctrl.nets.accFromMem, y: fm }, { tag: `mxm${i}` });
+    instantiate(c, And2, xMux, y + 30,
+      { a: adder.nets[`s${i}`], b: ctrl.nets.accFromAlu, y: fa },
+      { tag: `mxa${i}` });
+    // CMA: the complement, four inverters
+    const cma = c.net();
+    instantiate(c, Inverter, xMux - 30, y,
+      { a: accQ[i], y: cma }, { tag: `mxcn${i}` });
+    instantiate(c, And2, xMux, y + 40,
+      { a: cma, b: dec.nets.acc4, y: fc }, { tag: `mxc${i}` });
+    // RAL: shift up, carry into bit 0. RAR: shift down, carry into bit 3.
+    const ralSrc = i === 0 ? carryQ : accQ[i - 1];
+    const rarSrc = i === 3 ? carryQ : accQ[i + 1];
+    instantiate(c, And2, xMux, y + 50,
+      { a: ralSrc, b: dec.nets.acc5, y: fl }, { tag: `mxl${i}` });
+    instantiate(c, And2, xMux, y + 60,
+      { a: rarSrc, b: dec.nets.acc6, y: fR }, { tag: `mxR${i}` });
+    // KBP's table
+    instantiate(c, And2, xMux, y + 70,
+      { a: kbp.nets[`y${i}`], b: dec.nets.acc12, y: fk }, { tag: `mxk${i}` });
+    // BBL's data field
+    instantiate(c, And2, xMux, y + 80,
+      { a: ir[i], b: ctrl.nets.accFromBbl, y: fb }, { tag: `mxb${i}` });
+    // TCC: the carry into bit 0, zero elsewhere
+    instantiate(c, And2, xMux, y + 90,
+      { a: i === 0 ? carryQ : VSS, b: dec.nets.acc7, y: ft },
+      { tag: `mxt${i}` });
+
+    const o1 = c.net(), o2 = c.net(), o3 = c.net(), o4 = c.net();
+    const o5 = c.net(), o6 = c.net(), o7 = c.net(), o8 = c.net();
+    const d = c.net();
+    instantiate(c, Or2, xMux + 40, y, { a: fi, b: fr, y: o1 }, { tag: `m1${i}` });
+    instantiate(c, Or2, xMux + 40, y + 20, { a: fm, b: fa, y: o2 }, { tag: `m2${i}` });
+    instantiate(c, Or2, xMux + 40, y + 40, { a: fc, b: fl, y: o3 }, { tag: `m3${i}` });
+    instantiate(c, Or2, xMux + 40, y + 60, { a: fR, b: fk, y: o4 }, { tag: `m4${i}` });
+    instantiate(c, Or2, xMux + 40, y + 80, { a: fb, b: ft, y: o5 }, { tag: `m5${i}` });
+    instantiate(c, Or2, xMux + 70, y, { a: o1, b: o2, y: o6 }, { tag: `m6${i}` });
+    instantiate(c, Or2, xMux + 70, y + 40, { a: o3, b: o4, y: o7 }, { tag: `m7${i}` });
+    instantiate(c, Or2, xMux + 100, y, { a: o6, b: o7, y: o8 }, { tag: `m8${i}` });
+    instantiate(c, Or2, xMux + 100, y + 40, { a: o8, b: o5, y: d }, { tag: `m9${i}` });
+    accD.push(d);
+  }
+  c.region('Accumulator source mux', xMux - 36, ROW5 - 8, xMux + 140,
+    ROW5 + 4 * 46 + 40);
+
+  const xAccR = xMux + 170;
+  // Sampled on the clock's HIGH half, while the register file's write is
+  // gated to the low half. That split is what lets XCH be a true exchange:
+  // the accumulator reads the register's old value before the register
+  // takes the accumulator's, so both cross on one instruction with no
+  // temporary anywhere. Clock them both on the same half and they move
+  // together — the accumulator keeps what it had and XCH degenerates into
+  // a one-way copy, which is exactly what the oracle caught here.
+  instantiate(c, register(4), xAccR, ROW5, {
+    clk: nclk, nclk: clkNet, load: ctrl.nets.accLoad,
+    d0: accD[0], d1: accD[1], d2: accD[2], d3: accD[3],
+    q0: accQ[0], q1: accQ[1], q2: accQ[2], q3: accQ[3],
+  }, { tag: 'acc' });
+  c.region('Accumulator', xAccR - 6, ROW5 - 6, xAccR + 140, ROW5 + 90);
+
+  const xZ = xAccR + 160;
+  instantiate(c, IsZero4, xZ, ROW5, {
+    a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], z: accZero,
+  }, { tag: 'zero' });
+  c.region('Zero detect', xZ - 6, ROW5 - 6, xZ + 90, ROW5 + 50);
+
+  // ── rails and lamps ────────────────────────────────────────────────────
+  const b = c.bounds();
+  const xEnd = b.x1 + 10;
+  const yTop = -16, yBot = b.y1 + 8;
+  w(c, VDD, [0, yTop], [xEnd, yTop]);
+  w(c, VSS, [0, yBot], [xEnd, yBot]);
+  c.label('+V', -1.6, yTop, 1.1, '#ffb340');
+  c.label('GND', -2.4, yBot, 1.1, '#7f8aa3');
+  for (const sw of c.switches) {
+    const t = switchSpdtT(sw);
+    w(c, VDD, [2.4, yTop], [2.4, t.hi.y], [t.hi.x, t.hi.y]);
+    w(c, VSS, [1.6, yBot], [1.6, t.lo.y], [t.lo.x, t.lo.y]);
+  }
+
+  for (let i = 0; i < 5; i++) {
+    c.addLamp(`P${i}`, ring.nets[`p${i}`], xEnd - 5, 4 + i * 4.5,
+      { short: `P${i}` });
+  }
+  for (let i = 0; i < PCW; i++) {
+    c.addLamp(`PC${i}`, PC.nets[`q${i}`], xEnd - 5, 30 + i * 4.5,
+      { short: `PC${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`IR${i}`, ir[i], xEnd - 5, 56 + i * 4.5, { short: `IR${i}` });
+  }
+  for (let i = 0; i < 8; i++) {
+    c.addLamp(`SRC${i}`, src.nets[`q${i}`], xEnd - 5, 96 + i * 4.5,
+      { short: `SRC${i}` });
+  }
+  for (let i = 0; i < 4; i++) {
+    c.addLamp(`ACC${i}`, accQ[i], xEnd - 5, 136 + i * 4.5,
+      { short: `ACC${i}` });
+  }
+  c.addLamp('CY', carryQ, xEnd - 5, 158, { short: 'CY' });
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`BANK${i}`, bank.nets[`q${i}`], xEnd - 5, 165 + i * 4.5,
+      { short: `BANK${i}` });
+  }
+  // Which of the three stack registers the pointer is on.
+  for (let i = 0; i < 3; i++) {
+    c.addLamp(`SP${i}`, stk.nets[`p${i}`], xEnd - 5, 182 + i * 4.5,
+      { short: `SP${i}` });
+  }
+  c.addLamp('XCY', finCycle2, xEnd - 5, 199, { short: 'XCY' });
+  c.addLamp('Z', accZero, xEnd - 5, 206, { short: 'Z' });
+
+  // ── block-level flow ───────────────────────────────────────────────────
+  c.flow('Program counter', 'ROM address mux', { label: 'address' });
+  c.flow('ROM address mux', 'ROM row decode');
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM buffers', { dir: 'v' });
+  c.flow('ROM buffers', 'Instruction register', { label: 'opcode' });
+  c.flow('ROM buffers', 'Operand register', { label: 'byte 2' });
+  c.flow('Instruction register', 'Instruction decoder');
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('Instruction decoder', 'Memory-group decode', { label: '1110' });
+  c.flow('Memory-group decode', 'Memory access decode');
+  c.flow('Register file', 'Incrementer', { label: 'INC / ISZ' });
+  c.flow('Incrementer', 'Increment hold');
+  c.flow('Increment hold', 'ISZ condition', { label: 'zero?' });
+  c.flow('Register file', 'SRC address latch', { label: 'pair' });
+  c.flow('Register file', 'FIN address latch', { label: 'r0:r1' });
+  c.flow('FIN address latch', 'ROM address mux', { label: 'FIN' });
+  c.flow('Pair write data', 'Register file', { label: 'FIM / FIN' });
+  c.flow('Register file', 'SUB conditioning', { label: 'operand' });
+  c.flow('SUB conditioning', 'Adder B mux');
+  c.flow('Adder operand', 'Adder B mux', { label: 'constant' });
+  c.flow('Decimal adjust', 'Adder B mux', { label: 'DAA’s 6' });
+  c.flow('Adder B mux', 'Adder');
+  c.flow('Adder', 'Accumulator source mux', { label: 'sum' });
+  c.flow('Keyboard process', 'Accumulator source mux', { label: 'KBP' });
+  c.flow('Accumulator source mux', 'Accumulator');
+  c.flow('Accumulator', 'Zero detect');
+  c.flow('Zero detect', 'Condition tree', { label: 'is zero' });
+  c.flow('Carry flag', 'Condition tree', { label: 'carry' });
+  c.flow('Condition tree', 'Control unit', { label: 'take?' });
+  c.flow('Carry logic', 'Carry flag');
+  c.flow('Program counter', 'Address stack', { label: 'return' });
+  c.flow('Address stack', 'Jump target mux', { label: 'BBL' });
+  c.flow('Operand register', 'Jump target mux', { label: 'JUN / JCN' });
+  c.flow('JIN target latch', 'Jump target mux', { label: 'JIN' });
+  c.flow('Jump target mux', 'Program counter', { label: 'jump' });
+  c.flow('Accumulator', 'Bank select', { label: 'DCL' });
+
+  // ── what the app and the tests read ────────────────────────────────────
+  c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
+  c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3,
+              ring.nets.p4];
+  c.cells = rf.stored;
+  c.control = {
+    pcInc: ctrl.nets.pcInc, irLoad: ctrl.nets.irLoad,
+    oprLoad: ctrl.nets.oprLoad, pcLoad: ctrl.nets.pcLoad,
+    srcHi: ctrl.nets.srcHi, srcLo: ctrl.nets.srcLo,
+    accLoad: ctrl.nets.accLoad, accFromImm: ctrl.nets.accFromImm,
+    accFromMem: ctrl.nets.accFromMem, accFromReg: ctrl.nets.accFromReg,
+    accFromAlu: ctrl.nets.accFromAlu, accFromBbl: ctrl.nets.accFromBbl,
+    aluSub: ctrl.nets.aluSub, regWrite: ctrl.nets.regWrite,
+    regFromInc: ctrl.nets.regFromInc, ramWrite: ctrl.nets.ramWrite,
+    carryWrite: ctrl.nets.carryWrite, bankLoad: ctrl.nets.bankLoad,
+    pairHi: ctrl.nets.pairHi, pairLo: ctrl.nets.pairLo,
+    romFromPair: ctrl.nets.romFromPair, finLoad: ctrl.nets.finLoad,
+    stackPush: ctrl.nets.stackPush, stackPop: ctrl.nets.stackPop,
+  };
+  c.bankNets = [bank.nets.q0, bank.nets.q1, bank.nets.q2];
+  c.stackNets = Array.from({ length: PCW }, (_, i) => stk.nets[`q${i}`]);
+  c.program = program;
+  c.ramQ = ramQ;
+  c.ramSw = ramSw;
+  c.memOp = MEMOP;
+  c.finCycle2 = finCycle2;
+  c.srcNets = Array.from({ length: 8 }, (_, i) => src.nets[`q${i}`]);
+  c.execAddr = () => {
+    let ir8 = 0;
+    for (let i = 0; i < 8; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `IR${i}`).net]
+          === 1) ir8 |= 1 << i;
+    }
+    // A program with repeated bytes cannot be disambiguated by contents
+    // alone, so prefer the address the counter just came from.
+    let pc = 0;
+    for (let i = 0; i < PCW; i++) {
+      if (c.value[c.lamps.find(l => (l.short ?? l.label) === `PC${i}`).net]
+          === 1) pc |= 1 << i;
+    }
+    for (const back of [1, 2, 0]) {
+      const a = (pc - back + c.program.length) % c.program.length;
+      if (c.program[a] === ir8) return a;
+    }
+    return c.program.indexOf(ir8);
+  };
+  return c;
+}
+
 
 // ── behaviour, keyed by circuit id ───────────────────────────────────────
 
@@ -3451,6 +4474,35 @@ export const cmos = {
       text: ch === ' ' ? '\u2423' : ch,
       mark: i === v.A ? 'read' : null,
     })),
+  },
+  // The complete 4004 reuses the memory machine's 4002 hook verbatim: the
+  // model reads c.memOp / c.srcNets / c.control, which both machines
+  // publish, so the peer on the far side of the bus does not care which
+  // CPU is driving it. That is the point of a package boundary.
+  cpu4004: {
+    build: buildCpu4004,
+    get step() { return cmos.memmachine.step; },
+    readout: v => {
+      const ph = PHASES5[[0, 1, 2, 3, 4].find(i => (v.P >> i) & 1)] ?? '—';
+      const { text } = disassemble(v.IR);
+      const a = v.SRC ?? 0;
+      return `${ph}  ·  PC ${v.PC}  ·  ${text}  ·  ACC ${v.ACC}`
+        + `${v.CY ? '  carry' : ''}${v.Z ? '  zero' : ''}`
+        + `  ·  SRC 0x${a.toString(16).toUpperCase().padStart(2, '0')}`
+        + `  ·  bank ${v.BANK ?? 0}`;
+    },
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES5.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   memmachine: {
     build: buildMemMachine,

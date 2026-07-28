@@ -35,16 +35,18 @@ way through the machine. Every wire is a light: amber means driven high.
   concept-by-technology matrix live in
   [docs/INVENTORY.md](docs/INVENTORY.md), which is generated rather than
   written, so it cannot drift.
-- **A CPU being built, one idea at a time** — eight machines under
+- **A CPU being built, one idea at a time** — nine machines under
   CMOS · Machines, each isolating exactly one thing: fetch, then phase
   sequencing, the 4004's real `ADD r` datapath, conditional jumps with the
   full condition mask, two-byte fetch with a subroutine stack, `SUB`
   sharing the adder with `ADD` alongside a genuine `XCH`, the
   thirteen-instruction accumulator group, and the memory machine talking
-  to a 4002 RAM across a bus. Give one a clock and it runs a program on
-  its own — the ROM is disassembled beside it with the executing
-  instruction highlighted. Every defined 4004 instruction but one now acts
-  on hardware; see [docs/4004.md](docs/4004.md) for what remains.
+  to a 4002 RAM across a bus — and finally the whole thing on one
+  machine, every defined instruction but `WPM`, checked against a
+  reference emulator after every instruction it executes. Give one a
+  clock and it runs a program on its own, with the ROM disassembled beside
+  it and the executing instruction highlighted. See
+  [docs/4004.md](docs/4004.md) for what remains.
 - **Guides for the big circuits** — a caption under every input explaining
   what it selects, a legend of function codes with the live one highlighted,
   a grid of internal state the outputs do not expose (all sixteen registers

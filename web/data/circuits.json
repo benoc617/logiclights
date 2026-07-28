@@ -1202,6 +1202,34 @@
       }
     },
     {
+      "id": "cpu4004",
+      "group": "CMOS · Machines",
+      "name": "Intel 4004",
+      "title": "the whole instruction set, on one machine",
+      "brief": "Every defined 4004 instruction but WPM, on a single machine built from transistors. The eight machines before this one each isolate one idea; this is all of them at once — the fetch loop, five phases, the register file, one adder shared by four instructions, the accumulator group, the memory group across a bus, the address stack, and FIN's two instruction cycles.",
+      "desc": "The point of the bring-up ladder is that this step is composition rather than new logic. Every block here is a module an earlier machine already proved: the phase ring and control unit from the Sequenced Machine, the ADD datapath from the Adding Machine, the condition tree from the Conditional Machine, the operand register and address stack from the Two-Byte Machine, the ADB register and two-phase write discipline from Subtract and Exchange, the escape decode from the Accumulator Group, and the whole memory group from the Memory Machine.\n\nWhat is new is only what happens when they coexist. One adder now serves ADD, SUB, ADM, SBM, IAC, DAC, TCS and DAA — what differs between them is which operand reaches its B input and how the carry is conditioned, which is the 4004's economy in one sentence. One control unit drives all of it, and five instructions load the program counter differing only in where the address comes from.\n\nThree things had to be got right that no single earlier machine could expose, and a reference emulator diffing against the hardware after every instruction found all three. The accumulator group splits three ways: every instruction in it defines the carry, ten of them write the accumulator, and only four take the adder — treat those as one group and CLC quietly clears the accumulator, because a mux with nothing selected drives zero. The accumulator samples on the clock's high half while the register file writes on the low half, which is what makes XCH a true exchange rather than a one-way copy. And the carry flag must latch on the same edge as the accumulator, since both are computed from the state the instruction began with.\n\nThe program touches every group and ends in the 4004's idiom for stopping: a jump to itself. There is no HLT.",
+      "hints": {
+        "CLK": "the clock — five phases per instruction",
+        "RST": "back to FETCH at address 0",
+        "TEST": "the TEST pin, which JCN can branch on",
+        "P": "the phase ring: FETCH, DECODE, READ1, READ2, EXEC",
+        "PC": "program counter — five bits here, twelve on the real chip",
+        "IR": "instruction register",
+        "SRC": "the address latch — chip, register, character",
+        "ACC": "the accumulator",
+        "CY": "the carry",
+        "BANK": "the RAM bank DCL selected",
+        "SP": "which of the three stack registers the pointer is on",
+        "XCY": "FIN's extra cycle — the only lamp that lights a second ring pass",
+        "Z": "the accumulator is zero"
+      },
+      "state": {
+        "title": "Phases and control lines",
+        "columns": 5,
+        "key": "amber = the active phase · blue = a control line firing"
+      }
+    },
+    {
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",

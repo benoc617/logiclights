@@ -13,7 +13,7 @@ import {
   InstructionDecoder, disassemble, disassembleProgram, isTwoByte,
 } from '../web/js/decode.js';
 import {
-  buildJcnMachine, buildSubMachine, buildMemMachine, cmos,
+  buildJcnMachine, buildSubMachine, buildMemMachine, buildCpu4004, cmos,
 } from '../web/js/behaviour/cmos.js';
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
 // The oracle. Deliberately not part of the app: it computes what a 4004
@@ -2853,6 +2853,76 @@ checkWalkthrough('memmachine');
   expect(ctx, 'reading a row does not write it', cell(2), before);
   expect(ctx, 'and the never-written row is still floating',
     /^Z+$/.test(cell(2)), true);
+}
+
+
+// ── the whole 4004 against the oracle ────────────────────────────────────
+// One machine running every group, checked instruction by instruction.
+// This is the test the bring-up ladder was for: eight machines each
+// proving one idea, then all of them at once with an independent
+// reference saying whether the combination still computes a 4004.
+//
+// It found three faults on its first run, none of which any single
+// earlier machine could have exposed:
+//
+//   the accumulator group splits three ways — every instruction in it
+//   defines the carry, ten write the accumulator, four take the adder.
+//   Treat them as one and CLC clears the accumulator, because a mux with
+//   nothing selected drives zero.
+//
+//   the accumulator must sample on the clock's high half while the
+//   register file writes on the low half, or XCH stops being an exchange
+//   and becomes a one-way copy.
+//
+//   the carry flag has to latch on the same edge as the accumulator: both
+//   come from the state the instruction began with, so half a cycle apart
+//   means the second samples a datapath the first already changed.
+{
+  const c = buildCpu4004();
+  const ctx = { name: '4004 vs oracle' };
+  const stepModel = cmos.cpu4004.step;
+  const settleAll = () => { settle(c); stepModel(c); c.solve(); };
+  const tick = () => { c.stepClock(); settleAll(); c.stepClock(); settleAll(); };
+  const lampNamed = n => c.lamps.find(m => (m.short ?? m.label) === n);
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (c.value[lampNamed(`${p}${i}`).net] === HI) v |= 1 << i;
+    return v;
+  };
+  const reg = i => {
+    const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+    return bits.every(b => b === '0' || b === '1')
+      ? parseInt(bits.slice().reverse().join(''), 2) : null;
+  };
+
+  sw(c, 'RST', true); settleAll(); tick();
+  sw(c, 'RST', false); settleAll();
+
+  const emu = new Emu4004(c.program);
+  const nph = c.phases.length;
+  // FIN spans two ring passes, so the oracle steps only when the hardware
+  // has finished an instruction rather than once per pass.
+  let pending = 0;
+  for (let k = 0; k < 20; k++) {
+    for (let p = 0; p < nph; p++) tick();
+    if (pending > 0) pending--;
+    else pending = emu.step() - 1;
+
+    expect(ctx, `pass ${k}: program counter agrees`, rd('PC', 5), emu.pc & 31);
+    expect(ctx, `pass ${k}: accumulator agrees`, rd('ACC', 4), emu.acc);
+    expect(ctx, `pass ${k}: carry agrees`,
+      c.value[lampNamed('CY').net] === HI ? 1 : 0, emu.carry);
+    for (let i = 0; i < 4; i++) {
+      const hw = reg(i);
+      if (hw === null) continue;
+      expect(ctx, `pass ${k}: r${i} agrees`, hw, emu.reg[i]);
+    }
+  }
+
+  // The program ends in the 4004's idiom for halting — a jump to itself —
+  // so the machine should be sitting on it rather than having run away.
+  expect(ctx, 'the machine reaches its spin and stays there', rd('PC', 5), 20);
+  expect(ctx, 'and the oracle agrees it halted', emu.halted, true);
 }
 
 // ── the 4002 RAM model ───────────────────────────────────────────────────
