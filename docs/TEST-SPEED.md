@@ -149,11 +149,33 @@ clock phase and about ten milliseconds. Not solver cost: scheduling cost,
 bought entirely with visual fidelity nobody can see once the stagger is
 quicker than a frame.
 
-So `Circuit.timeGrid` rounds delays onto a grid, and the app raises it as
-the speed slider goes up — off at slow speeds where the stagger is the
-point, coarse at fast ones where it is not. The slider's range was extended
-to match (its old floor of 30 ms sat above the engine's own 15 ms floor, so
-the fast half of it did nothing on a large machine).
+What costs the time is not the *size* of the spread but the number of
+**distinct** switching times in it, because the settle visits each one. So
+`Circuit.varianceSteps` quantises the spread into levels rather than
+scaling it: 64 is the full per-device stagger, 0 puts every device on one
+delay, and each halving roughly halves the events a rank of gates costs to
+settle. The app steps it down with the speed slider.
+
+Two earlier attempts got this wrong, and both are instructive:
+
+- **Rounding delays onto a grid** that switched on below a threshold. The
+  cost fell 48× between two *adjacent* slider positions — a control whose
+  middle does nothing and whose one notch changes everything.
+- **Scaling the spread toward the mean.** Smooth in principle, useless in
+  practice: compressing it leaves every device on its own slightly
+  different time, so the solve count barely moves until the spread
+  collapses entirely. Measured, the cost stayed flat through most of the
+  slider and then fell off the same cliff.
+
+Quantising is what makes the control proportional, because it acts on the
+quantity that actually costs. The slider's range was extended to match, its
+old floor of 30 ms having sat above the engine's own 15 ms floor — so the
+fast half of it did nothing on a large machine.
+
+The default setting keeps 33 distinct delays spread over about 14 ms, which
+still reads as a wavefront crossing a rank of gates. It is also about nine
+times faster than the full per-device spread was, on a machine where nobody
+could resolve the difference.
 
 ## Not worth doing
 

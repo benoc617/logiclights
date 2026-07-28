@@ -74,11 +74,10 @@ export class Circuit {
     // device in the machine.
     this._pending = [];
     this._prevValInit = false;
-    // How coarsely device delays are rounded, in ms. 0 keeps every
-    // device's own delay, which is the most faithful and the slowest;
-    // raising it lets devices share switching times and settle together.
-    // See `delayOf`.
-    this.timeGrid = 0;
+    // How finely the per-device delay spread is quantised. 0 makes every
+    // device switch in lockstep; higher values give a finer stagger and
+    // cost proportionally more events to settle. See `delayOf`.
+    this.varianceSteps = 64;
   }
 
   net() {
@@ -311,19 +310,30 @@ export class Circuit {
   // With identical delays the same devices coalesce into a few dozen
   // groups, and the same phase settles in tens of solves rather than
   // thousands. On the complete 4004 that is the difference between about
-  // a second per phase and about twenty milliseconds.
+  // a second per phase and about ten milliseconds.
   //
-  // So the variance is quantised rather than dropped. Delays are rounded
-  // to a grid, which keeps devices in step with their neighbours while
-  // preserving the spread across the machine; `timeGrid` sets how coarse.
-  // At 0 (the default) nothing is rounded and the behaviour is exactly as
-  // before. The app raises it as the speed slider goes up, because past a
-  // certain speed the per-device stagger is faster than a frame and
-  // nobody can see it anyway.
+  // What costs the time is not the size of the spread but the number of
+  // *distinct* switching times in it — the settle visits each one. So the
+  // spread is quantised into `varianceSteps` levels rather than merely
+  // scaled: at 0 every device shares one delay and a rank settles in a
+  // single event, and each step up doubles the events a rank costs while
+  // making the stagger finer.
+  //
+  // That distinction is worth stating because scaling alone does not
+  // work. Compressing the spread toward the mean leaves every device on
+  // its own slightly-different time, so the solve count barely moves
+  // until the spread collapses completely — measured, the cost stayed
+  // flat through most of the slider and then fell off a cliff at the end.
+  // Quantising is what makes the control proportional.
   delayOf(d) {
-    const raw = Math.max(15, this.baseDelay * d.delayFactor) * d.delayScale;
-    const g = this.timeGrid;
-    return g > 0 ? Math.max(g, Math.round(raw / g) * g) : raw;
+    const n = this.varianceSteps;
+    let spread = 1;
+    if (n > 0) {
+      // delayFactor is 0.92..1.08; map to 0..1, quantise, map back.
+      const u = (d.delayFactor - 0.92) / 0.16;
+      spread = 0.92 + (Math.round(u * n) / n) * 0.16;
+    }
+    return Math.max(15, this.baseDelay * spread) * d.delayScale;
   }
 
   // Build the static conduction tables. The topology never changes — only

@@ -157,12 +157,16 @@ generated, so this file does not repeat them.
       the reason it could not before is worth recording. Wall time on a
       large machine was never the solver: it was the per-device delay
       *variance*, which gives every device a distinct event time and so
-      forces one solve per device. `Circuit.timeGrid` rounds delays onto a
-      grid — off at slow speeds, where the stagger between neighbouring
-      gates is exactly what you are watching, and coarse at fast ones,
-      where it is quicker than a frame and invisible anyway. A clock phase
-      on the complete 4004 went from about a second to about ten
-      milliseconds with no change to what is drawn.
+      forces one solve per device. `Circuit.varianceSteps` quantises that
+      spread into levels — the full per-device stagger at slow speeds,
+      where the fan-out across a rank of gates is exactly what you are
+      watching, down to lockstep at the fast end, where it would be a
+      fraction of a frame. What matters is the count of distinct times,
+      not the size of the spread: see [TEST-SPEED.md](TEST-SPEED.md) for
+      the two ways of doing this that do not work. A clock phase on the
+      complete 4004 went from about a second to about six milliseconds at
+      the fast end, and is nine times quicker than it was even at the
+      default, with no change to what is drawn.
 
 ## Features
 

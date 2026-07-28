@@ -36,36 +36,42 @@ function currentDelay() {
   // is the point of the fast end.
   return Math.max(1, Math.round(1000 * Math.pow(1 / 1000, speed.value / 100)));
 }
-// How coarsely to round device delays, given the requested one.
+// How much per-device delay variance to keep, given the requested delay.
 //
-// At slow speeds every device keeps its own slightly different delay,
-// which is what stops a rank of gates switching in visible lockstep. That
-// costs one solve per device, and on a big machine it is most of the wall
-// time — a clock phase on the complete 4004 is thousands of sequential
-// transitions.
+// Every device gets a slightly different switching time, which is what
+// stops a rank of gates flipping in visible lockstep. It also gives every
+// device a *distinct* event time, and the settle advances event by event
+// — so the spread costs roughly one solve per device, and on a big
+// machine that is nearly all of the wall time.
 //
-// Past the point where the stagger is quicker than a frame nobody can see
-// it, so above that the delays are rounded onto a grid and devices settle
-// in groups. The visible propagation is unchanged; what goes is a
-// difference that was never on screen.
-function gridFor(delay) {
-  // Above this, every device keeps its own time and the stagger is
-  // visible. Below it, the grid has to be *coarser than the spread* to
-  // actually merge anything: the spread is the delay times the +/-8%
-  // variance, so a grid of roughly a third of the delay collapses each
-  // rank into one event. A fixed ladder does not work — at 63 ms the
-  // delays land 17.4 / 18.9 / 20.4 ms apart and a 4 ms grid leaves them
-  // on three separate times, which is three times the solves for no
-  // visible difference.
-  if (delay >= 120) return 0;
-  return Math.max(4, Math.round(delay / 2));
+// The spread is only worth paying for while it is slow enough to see. At
+// 300 ms a device the stagger between neighbours is tens of milliseconds
+// and reads as a wavefront; at 5 ms it is a fraction of a frame and
+// nothing is lost by making them identical. So it fades out with the
+// delay rather than switching off at a threshold — the fade is what keeps
+// the slider proportional instead of putting a 48x cost cliff between two
+// adjacent positions.
+function varianceFor(delay) {
+  // Halving the step count roughly halves the events a rank of gates
+  // costs to settle, so stepping it down in powers of two as the delay
+  // falls keeps the slider's effect on speed roughly even along its
+  // length. At the fast end it reaches 0 — every device identical, which
+  // is what "as fast as possible" should mean, and by then the stagger it
+  // gives up is a fraction of a frame.
+  if (delay >= 400) return 64;
+  if (delay >= 200) return 32;
+  if (delay >= 100) return 16;
+  if (delay >= 50) return 8;
+  if (delay >= 25) return 4;
+  if (delay >= 12) return 2;
+  return 0;
 }
 
 function applySpeed() {
   const d = currentDelay();
   if (circuit) {
     circuit.baseDelay = d;
-    circuit.timeGrid = gridFor(d);
+    circuit.varianceSteps = varianceFor(d);
   }
   speedLabel.textContent = `${d} ms`;
 }
@@ -154,7 +160,7 @@ function load(id) {
   if (sel.value !== id) sel.value = id;
   circuit = buildCircuit(id);
   circuit.baseDelay = currentDelay();
-  circuit.timeGrid = gridFor(circuit.baseDelay);
+  circuit.varianceSteps = varianceFor(circuit.baseDelay);
   circuit.step(performance.now());
   // The status row is one glanceable line: what this is, and what it cost
   // to build. Everything longer is behind "more info".
