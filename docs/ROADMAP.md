@@ -25,8 +25,10 @@ generated, so this file does not repeat them.
   so most rows can be read across.
 - The library is split into catalogue data (`web/data/circuits.json`) and
   per-circuit behaviour (`web/js/behaviour/`) — see [DATA.md](DATA.md).
-- **v4** is the 4004 arc: eight machines, and every defined instruction but
-  `WPM` acting on hardware. Circuit prose split by where the reader wants
+- **v4** is the 4004 arc: nine machines — eight isolating one idea each,
+  then the whole chip on one, with every defined instruction but `WPM`
+  acting on hardware and a reference emulator checking it after every
+  instruction. Circuit prose split by where the reader wants
   it — a subtitle in the status bar, then an info panel carrying the idea,
   a line-by-line walkthrough, and the engineering detail — with the
   walkthrough's quoted values verified against the running hardware by the
@@ -98,17 +100,19 @@ generated, so this file does not repeat them.
       phases, a hardwired control unit (phase AND decoded instruction), and
       the JCN condition tree. Three-phase and four-phase variants; the
       four-phase one honours two-byte instructions.
-- [ ] **Intel 4004** — in progress, and the bring-up ladder is complete.
-      Eight machines exist, each isolating one idea: fetch, phase
-      sequencing, the real ADD datapath, conditional jumps, two-byte
-      fetch, SUB and LD with the first register-to-accumulator path
-      (which also makes XCH a real exchange), and the accumulator group.
-      Two early ones — Accumulator Machine and Jump Machine — were
+- [x] **Intel 4004** — built. Nine machines: eight isolating one idea
+      each, and a ninth running the whole instruction set at once,
+      checked against a reference emulator after every instruction it
+      executes. The eight are fetch, phase sequencing, the real ADD
+      datapath, conditional jumps, two-byte fetch, SUB and LD with the
+      first register-to-accumulator path (which also makes XCH a real
+      exchange), the accumulator group, and the memory group across a
+      bus. Two early ones — Accumulator Machine and Jump Machine — were
       retired once later machines demonstrated their ideas better; their
       test coverage moved to the Adding Machine. Instruction coverage is
-      now complete but for one deliberate deferral: forty-five of the
-      real chip's 46 defined instructions act on hardware, including
-      FIN's two-instruction-cycle sequencing; WPM is the deferral, and
+      complete but for one deliberate deferral: forty-five of the real
+      chip's 46 defined instructions act on hardware, including FIN's
+      two-instruction-cycle sequencing; WPM is the deferral, and
       [4004.md](4004.md) explains it along with the full plan and
       program corpus.
 
