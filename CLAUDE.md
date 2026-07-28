@@ -95,6 +95,10 @@ web/
   js/main.js          canvas sizing, pointer input, the rAF loop
 test/sim-test.mjs     headless truth-table suite (no framework, plain node)
 test/run.mjs          shards the suite across cores; same checks, much faster
+test/emu4004.mjs      a reference 4004, as a test oracle — NOT part of the
+                      app. Written from the manual rather than from the
+                      hardware, so a disagreement between them means one is
+                      wrong and it is worth finding out which.
 tools/inventory.mjs   generates docs/INVENTORY.md; --check guards it
 docs/INVENTORY.md     GENERATED — every count and the technology matrix
 Dockerfile            nginx image serving /lights/ for the puzzleboss stack

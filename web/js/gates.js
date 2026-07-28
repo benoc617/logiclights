@@ -140,6 +140,53 @@ export const PassGate = defineModule('tg', {
   },
 });
 
+// A tri-state buffer: drives the bus when enabled, floats when not, and
+// never conducts backwards.
+//
+// That last property is why this exists separately from PassGate. A
+// transmission gate is two bare transistors between `a` and `y`, and
+// transistors do not care which way current flows — so a pass gate used to
+// read a storage cell onto a shared bus also lets whatever else is driving
+// that bus flow *back into the cell* and overwrite it. Reading corrupts.
+//
+// That was a real bug here, and an instructive one: it needed a driven bus
+// AND a selected row to show up, so the register file's own tests passed
+// (their bus was floating) and it only appeared once a whole machine put a
+// value on the bus while a different row was read-selected. A reference
+// emulator diffing against the hardware after every instruction is what
+// finally caught it.
+//
+// Two inverters make the path one-way — the cell drives the first
+// inverter's gate, which draws no current from the cell and cannot be
+// driven backwards through it — and the pass gate then makes the *output*
+// tri-state without putting the storage node at risk.
+//
+// The real 4004 could not have had this bug, and avoided it the same way.
+// Its index registers are *dynamic*: a bit is charge held on a gate, which
+// is why sheet 1 of the schematic puts a REFRESH COUNTER beside the index
+// register array and why the chip has a minimum clock frequency. Reading
+// such a cell means letting that charge drive a transistor's gate, and a
+// gate draws no current from the node driving it — so the read path is
+// one-way by construction, with no pass gate anywhere near the storage
+// node. This buffer is the static-CMOS equivalent of that arrangement.
+export const TriBuffer = defineModule('tri', {
+  ports: [
+    { name: 'a', x: -1.5, y: 0, side: 'in' },
+    { name: 'y', x: GATE_W * 3 + 4.5, y: 0, side: 'out' },
+    { name: 'en', x: GATE_W * 2 + 1.5, y: -2, side: 'top' },
+    { name: 'nen', x: GATE_W * 2 + 1.5, y: 4, side: 'bottom' },
+  ],
+  build(m) {
+    const t = m.net(), buf = m.net();
+    m.instantiate(Inverter, 0, 0, { a: m.port('a'), y: t });
+    m.instantiate(Inverter, GATE_W, 0, { a: t, y: buf });
+    m.instantiate(PassGate, GATE_W * 2, 0, {
+      a: buf, y: m.port('y'),
+      en: m.port('en'), nen: m.port('nen'),
+    });
+  },
+});
+
 // One bit of ripple-carry addition, built from gates rather than derived:
 // sum = a^b^cin, cout = majority(a, b, cin) = ab + cin(a^b).
 export const FullAdder = defineModule('fa', {

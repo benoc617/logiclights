@@ -86,18 +86,18 @@ circuit exists to explain.
 | Transmission Gate | Gates | · | 6 | · | · | 7 |
 | Tri-State Bus | Buses | · | 8 | · | · | 9 |
 | CMOS D Latch | Memory | · | 8 | · | · | 8 |
-| 16×4 Register File | Memory | · | 1488 | · | · | 635 |
+| 16×4 Register File | Memory | · | 1744 | · | · | 763 |
 | CMOS Program ROM | Memory | · | 189 | · | · | 89 |
 | 4-bit Counter | Sequential | · | 180 | · | · | 87 |
 | 12-bit Program Counter | Sequential | · | 532 | · | · | 247 |
 | Fetch Machine | Machines | · | 1226 | · | 8 | 582 |
 | Sequenced Machine | Machines | · | 1525 | · | 8 | 720 |
-| Adding Machine | Machines | · | 3538 | · | 8 | 1595 |
-| Conditional Machine | Machines | · | 3599 | · | 8 | 1628 |
-| Two-Byte Machine | Machines | · | 4945 | · | 8 | 2259 |
-| Subtract and Exchange | Machines | · | 4042 | · | 8 | 1844 |
+| Adding Machine | Machines | · | 3794 | · | 8 | 1723 |
+| Conditional Machine | Machines | · | 3855 | · | 8 | 1756 |
+| Two-Byte Machine | Machines | · | 5201 | · | 8 | 2387 |
+| Subtract and Exchange | Machines | · | 4298 | · | 8 | 1972 |
 | Accumulator Group | Machines | · | 2904 | · | 8 | 1415 |
-| Memory Machine | Machines | · | 6126 | · | 8 | 2823 |
+| Memory Machine | Machines | · | 6382 | · | 8 | 2951 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -125,7 +125,7 @@ circuit exists to explain.
 | Circuits | 58 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 31561 |
+| Transistors | 33097 |
 | Diodes | 4 |
 | Resistors | 320 |
 
@@ -133,15 +133,15 @@ circuit exists to explain.
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Memory Machine | 6134 | 2823 |
-| Two-Byte Machine | 4953 | 2259 |
-| Subtract and Exchange | 4050 | 1844 |
-| Conditional Machine | 3607 | 1628 |
-| Adding Machine | 3546 | 1595 |
+| Memory Machine | 6390 | 2951 |
+| Two-Byte Machine | 5209 | 2387 |
+| Subtract and Exchange | 4306 | 1972 |
+| Conditional Machine | 3863 | 1756 |
+| Adding Machine | 3802 | 1723 |
 
 ## Test suite
 
-`node test/sim-test.mjs` → **150737 checks, 0 failures**
+`node test/sim-test.mjs` → **150839 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

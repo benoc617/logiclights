@@ -4,7 +4,8 @@
 import { readFileSync } from 'node:fs';
 import { buildCircuit, CIRCUITS, GROUP_ORDER } from '../web/js/circuits.js';
 import { deriveBuses, busValue } from '../web/js/buses.js';
-import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR } from '../web/js/engine.js';
+import { Circuit, LO, HI, X, Z, STRONG, WEAK, CHARGE, VALUE_CHAR, VSS } from '../web/js/engine.js';
+import { RegFile16x4 } from '../web/js/regfile.js';
 import { instantiate } from '../web/js/module.js';
 import { Inverter, Nand2, Nor2, And2, Or2, Xor2, DLatch, register, rippleAdder } from '../web/js/gates.js';
 import { romArray } from '../web/js/rom.js';
@@ -15,6 +16,10 @@ import {
   buildJcnMachine, buildSubMachine, buildMemMachine, cmos,
 } from '../web/js/behaviour/cmos.js';
 import { RamBank, Ram4002 } from '../web/js/ram4002.js';
+// The oracle. Deliberately not part of the app: it computes what a 4004
+// should do, so that the transistors can be checked against something
+// derived independently of them.
+import { Emu4004 } from './emu4004.mjs';
 import {
   ringCounter, ConditionTree, IsZero4, SubOperand, KeyboardProcess,
   DecimalAdjust, addressStack,
@@ -2669,6 +2674,185 @@ checkWalkthrough('memmachine');
     expect(c, 'FIN 0P replaced its own address source: r0', reg(0), 9);
     expect(c, 'FIN 0P replaced its own address source: r1', reg(1), 10);
   }
+}
+
+// ── the reference emulator, as an oracle ─────────────────────────────────
+// Exhaustive sweeps die at CPU scale: you cannot enumerate a processor's
+// input space the way the 8-bit adder sweeps all 131,072 combinations. The
+// replacement docs/4004.md calls for is a reference 4004 written
+// independently, run alongside the device-level machine, and diffed *after
+// every instruction* — so a fault localises to one opcode instead of "the
+// program came out wrong at the end".
+//
+// It earned itself immediately. Diffing it against the memory machine found
+// a sneak path in the register file: the read port was a bare transmission
+// gate, which conducts both ways, so a driven bus flowed back into
+// whichever row was read-selected and overwrote it. Reading corrupted
+// storage. The register file's own tests could not see it — their bus was
+// never driven — and it took a whole machine putting a value on the bus
+// while a different row was selected.
+//
+// First the emulator has to be right, so it is pinned to the manual's own
+// worked examples rather than to the hardware it is checking.
+{
+  const ctx = { name: 'emulator' };
+
+  // Page 3-60: accumulator 10, memory character 7, carry 0 -> 1 and carry.
+  {
+    const e = new Emu4004([0x20, 0x15, 0x21, 0xD7, 0xE0, 0xDA, 0xEB]);
+    for (let i = 0; i < 7; i++) e.step();
+    expect(ctx, 'ADM: the manual’s worked example, accumulator', e.acc, 1);
+    expect(ctx, 'ADM: the manual’s worked example, carry', e.carry, 1);
+  }
+
+  // "FIM 2 254 leaves r2 = 15 and r3 = 14" — the manual's "2" is the
+  // register PAIR, so the byte is 0x22. Reading it as register 2 gives
+  // 0x24, which writes r4:r5 and silently demonstrates nothing.
+  {
+    const e = new Emu4004([0x22, 0xFE]);
+    e.step();
+    expect(ctx, 'FIM: even register takes the high nibble', e.reg[2], 15);
+    expect(ctx, 'FIM: odd register takes the low nibble', e.reg[3], 14);
+  }
+
+  // SUB's carry flips sense across the instruction: clear going in means
+  // "no borrow yet", set coming out means "did not borrow".
+  {
+    const e = new Emu4004([0xD9, 0xB0, 0xD4, 0xB1, 0xA0, 0xF1, 0x91]);
+    for (let i = 0; i < 7; i++) e.step();
+    expect(ctx, 'SUB: 9 - 4', e.acc, 5);
+    expect(ctx, 'SUB: carry out means no borrow', e.carry, 1);
+  }
+
+  // BBL loads its own data field, so a subroutine cannot return a value in
+  // the accumulator — it has to hand it back through a register.
+  {
+    const e = new Emu4004([0xD1, 0x50, 0x05, 0x40, 0x00, 0xD7, 0xC9]);
+    e.step(); e.step(); e.step();
+    expect(ctx, 'inside the subroutine the accumulator holds its work', e.acc, 7);
+    e.step();
+    expect(ctx, 'BBL overwrites the accumulator on the way out', e.acc, 9);
+    expect(ctx, 'BBL returns to the pushed address', e.pc, 3);
+  }
+
+  // The stack is three registers on a cylinder: a fourth call silently
+  // overwrites the oldest return address, with no trap, and a pop leaves
+  // what it read in place (the manual's figures 2-4 and 2-5).
+  {
+    const e = new Emu4004(new Array(32).fill(0));
+    e._push(0x111); e._push(0x222); e._push(0x333);
+    e._push(0x444);
+    expect(ctx, 'a fourth call overwrites the oldest return address',
+      Array.from(e.stack).includes(0x111), false);
+    expect(ctx, 'and the newest call is on the stack',
+      Array.from(e.stack).includes(0x444), true);
+    const first = e._pop();
+    expect(ctx, 'a pop reads without erasing',
+      Array.from(e.stack).includes(first), true);
+  }
+
+  // FIN is one byte but two instruction cycles, and its address always
+  // comes from r0:r1 whatever pair it writes.
+  {
+    const prog = new Array(16).fill(0);
+    prog[0] = 0x20; prog[1] = 0x0C;      // FIM 0P: r0 = 0, r1 = 12
+    prog[2] = 0x32;                       // FIN 1P -> r2:r3
+    prog[12] = 0x9A;
+    const e = new Emu4004(prog);
+    e.step();
+    const cycles = e.step();
+    expect(ctx, 'FIN takes two instruction cycles', cycles, 2);
+    expect(ctx, 'FIN read the byte r0:r1 pointed at, high nibble', e.reg[2], 9);
+    expect(ctx, 'FIN read the byte r0:r1 pointed at, low nibble', e.reg[3], 10);
+    expect(ctx, 'FIN left its address source alone', e.reg[0], 0);
+  }
+}
+
+// ── hardware against the oracle, instruction by instruction ──────────────
+{
+  const c = buildMemMachine();
+  const ctx = { name: 'memmachine vs oracle' };
+  const stepModel = cmos.memmachine.step;
+  const settleAll = () => { settle(c); stepModel(c); c.solve(); };
+  const tick = () => { c.stepClock(); settleAll(); c.stepClock(); settleAll(); };
+  const lampNamed = n => c.lamps.find(m => (m.short ?? m.label) === n);
+  const rd = (p, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) if (c.value[lampNamed(`${p}${i}`).net] === HI) v |= 1 << i;
+    return v;
+  };
+  const reg = i => {
+    const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+    return bits.every(b => b === '0' || b === '1')
+      ? parseInt(bits.slice().reverse().join(''), 2) : null;
+  };
+
+  sw(c, 'RST', true); settleAll(); tick();
+  sw(c, 'RST', false); settleAll();
+
+  const emu = new Emu4004(c.program);
+  const nph = c.phases.length;
+  // The hardware advances one ring pass at a time; the oracle advances one
+  // *instruction*. FIN spans two passes, so the oracle only steps when the
+  // hardware has actually finished an instruction.
+  let pending = 0;
+  for (let k = 0; k < 16; k++) {
+    for (let p = 0; p < nph; p++) tick();
+    if (pending > 0) pending--;
+    else pending = emu.step() - 1;
+
+    expect(ctx, `pass ${k}: program counter agrees`, rd('PC', 4), emu.pc & 15);
+    expect(ctx, `pass ${k}: accumulator agrees`, rd('ACC', 4), emu.acc);
+    expect(ctx, `pass ${k}: carry agrees`,
+      c.value[lampNamed('CY').net] === HI ? 1 : 0, emu.carry);
+    // Registers this program never writes read as floating on hardware and
+    // as zero in the oracle; compare only the ones holding a real value.
+    for (let i = 0; i < 4; i++) {
+      const hw = reg(i);
+      if (hw === null) continue;
+      expect(ctx, `pass ${k}: r${i} agrees`, hw, emu.reg[i]);
+    }
+  }
+}
+
+// ── a read must never disturb what it reads ──────────────────────────────
+// The register file's read port drives a bus shared by sixteen rows. If
+// that port conducts both ways — a bare transmission gate does — whatever
+// else drives the bus flows back into the selected row and overwrites it,
+// so reading a register corrupts it.
+//
+// Checked here with the bus deliberately driven, because the machine-level
+// symptom was baffling: a register changing during an instruction that
+// touches no registers, with every write-enable line reading zero.
+{
+  const c = new Circuit('read disturb'); c.implicitGround = false;
+  const ctx = { name: 'register file' };
+  const n = () => c.net();
+  const wa = [n(), n(), n(), n()], ra = [n(), n(), n(), n()];
+  const d = [n(), n(), n(), n()], we = n();
+  const rf = instantiate(c, RegFile16x4, 0, 0, {
+    wa0: wa[0], wa1: wa[1], wa2: wa[2], wa3: wa[3],
+    ra0: ra[0], ra1: ra[1], ra2: ra[2], ra3: ra[3],
+    d0: d[0], d1: d[1], d2: d[2], d3: d[3], we,
+  }, { tag: 'rf' });
+  // Something else on the bus, which is the whole point.
+  const driver = c.addSwitch('Q0', rf.nets.q0, 'toggle', 0, 0, { to: VSS });
+  const sws = {};
+  for (const [nm, net] of [['we', we],
+      ...wa.map((x, i) => [`wa${i}`, x]), ...ra.map((x, i) => [`ra${i}`, x]),
+      ...d.map((x, i) => [`d${i}`, x])]) {
+    sws[nm] = c.addSwitch(nm, net, 'toggle', 0, 0, { to: VSS });
+  }
+  const cell = i => rf.stored[i].map(x => VALUE_CHAR[c.value[x]]).join('');
+
+  settle(c);
+  const before = cell(2);
+  driver.on = true;          // drive the shared read bus
+  sws.ra1.on = true;         // select row 2 for reading — never written
+  settle(c);
+  expect(ctx, 'reading a row does not write it', cell(2), before);
+  expect(ctx, 'and the never-written row is still floating',
+    /^Z+$/.test(cell(2)), true);
 }
 
 // ── the 4002 RAM model ───────────────────────────────────────────────────

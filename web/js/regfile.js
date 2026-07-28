@@ -27,7 +27,7 @@
 import { VDD, VSS } from './engine.js';
 import { defineModule } from './module.js';
 import {
-  Inverter, And2, DLatch, PassGate, GATE_W, GATE_H,
+  Inverter, And2, DLatch, TriBuffer, GATE_W, GATE_H,
 } from './gates.js';
 
 export const REG_WORDS = 16;
@@ -101,8 +101,14 @@ const RegRow = defineModule('reg', {
         d: m.port(`d${b}`), q: stored,
         en: m.port('we'), nen: m.port('nwe'),
       });
-      // tri-state onto the shared bus: open only for the selected row
-      m.instantiate(PassGate, b * CELL_PITCH + GATE_W * 4, 14, {
+      // Tri-state onto the shared bus: open only for the selected row.
+      //
+      // A buffer rather than a bare pass gate, and the difference is not
+      // cosmetic. A transmission gate conducts both ways, so reading a row
+      // onto a bus that something else is driving lets that value flow
+      // back into `stored` and overwrite it — reading corrupts. See
+      // TriBuffer in gates.js for how that surfaced.
+      m.instantiate(TriBuffer, b * CELL_PITCH + GATE_W * 4, 14, {
         a: stored, y: m.port(`q${b}`),
         en: m.port('rd'), nen: m.port('nrd'),
       });
