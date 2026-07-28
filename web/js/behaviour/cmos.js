@@ -2571,8 +2571,10 @@ const PMEM_PROGRAM = [
   0xE2,   // 11  WRR        the ROM output port takes it
   0xEA,   // 12  RDR        and reads back
   0xE9,   // 13  RDM        main memory again
-  0x31,   // 14  JIN 0P     jump to r0:r1 = 0x15 → address 5 in this ROM
-  0x00,   // 15  NOP
+  0x32,   // 14  FIN 1P     r2:r3 ← ROM[r0:r1 = 0x15 → word 5] = 0xDA,
+          //               so r2 = 13, r3 = 10 — the address ALWAYS comes
+          //               from pair 0, whatever pair the result names
+  0x31,   // 15  JIN 0P     jump to r0:r1 = 0x15 → address 5 in this ROM
 ];
 
 export function buildMemMachine(program = PMEM_PROGRAM) {
@@ -2590,9 +2592,6 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
   c.region('Phase ring — FETCH / DECODE / READ1 / READ2 / EXEC',
     36, -6, 40 + ring.w + 4, ring.h + 6);
-
-  const nFetch = c.net();
-  instantiate(c, Inverter, 40, ROW2 - 40, { a: ring.nets.p0, y: nFetch });
 
   // JIN loads the program counter from a register pair. On the real chip
   // only the low eight bits are replaced and the page stays put; this
@@ -2626,15 +2625,26 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     { a0: romAddr[0], a1: romAddr[1], a2: romAddr[2], a3: romAddr[3] },
     { tag: 'rom' });
 
+  // The instruction register loads when the control unit says fetch —
+  // NOT simply "during phase 0". The difference is FIN: on its second
+  // pass through the ring the ROM is emitting the data byte FIN asked
+  // for, and an unconditional phase-0 load would replace the instruction
+  // with its own result. The control unit's irLoad line carries the
+  // fetch-suppressed-on-cycle-2 version; it is declared here because the
+  // register is built before the control unit is.
+  const irLoadLine = c.net(), nIrLoad = c.net();
+  instantiate(c, Inverter, 40, ROW2 - 40, { a: irLoadLine, y: nIrLoad },
+    { tag: 'irln' });
+
   const xIr = xRom + rom.w + 30;
   const ir = [];
   for (let i = 0; i < 8; i++) {
     ir.push(c.net());
     const keep = c.net(), take = c.net(), d = c.net();
     instantiate(c, And2, xIr, ROW2 + i * 26,
-      { a: rom.nets[`d${i}`], b: ring.nets.p0, y: take }, { tag: `irt${i}` });
+      { a: rom.nets[`d${i}`], b: irLoadLine, y: take }, { tag: `irt${i}` });
     instantiate(c, And2, xIr, ROW2 + i * 26 + 13,
-      { a: ir[i], b: nFetch, y: keep }, { tag: `irk${i}` });
+      { a: ir[i], b: nIrLoad, y: keep }, { tag: `irk${i}` });
     instantiate(c, Or2, xIr + 42, ROW2 + i * 26,
       { a: take, b: keep, y: d }, { tag: `irm${i}` });
     instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
@@ -2675,9 +2685,6 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   instantiate(c, Inverter, xDec + dec.w + 10, ROW2 - 80,
     { a: ir[0], y: nir0 }, { tag: 'nir0' });
   const opSRC = c.net(), opFIM = c.net(), opFIN = c.net(), opJIN = c.net();
-  // FIN's cycle flag: low on its first pass through the ring, high on the
-  // second. A single flip-flop that toggles while FIN is in the
-  // instruction register — which is all "two instruction cycles" means.
   const finCycle2 = c.net();
   instantiate(c, And2, xDec + dec.w + 34, ROW2 - 80,
     { a: dec.nets.op2, b: ir[0], y: opSRC }, { tag: 'srcd' });
@@ -2688,26 +2695,52 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   instantiate(c, And2, xDec + dec.w + 34, ROW2 - 20,
     { a: dec.nets.op3, b: ir[0], y: opJIN }, { tag: 'jind' });
 
-  // The FIN cycle flag. It flips at the end of every ring pass while FIN
-  // is decoded, so the first pass reads the address and the second writes
-  // the result. Held clear otherwise, so a FIN always starts on cycle 1.
+  // The FIN cycle flag — this machine's version of the SINGLE CYCLE
+  // flip-flop on sheet 2 of the 4004 schematic. Low through an
+  // instruction's first pass of the ring, high through FIN's second:
+  //
+  //   d = ¬rst · ( q·¬p4  +  ¬q·opFIN·p4 )
+  //
+  // Clocked by the GLOBAL clock, not by a phase line. The second term
+  // raises it at the edge that ends EXEC of a FIN's first cycle — the
+  // same edge that returns the ring to FETCH — and the first term holds
+  // it up until the edge that ends EXEC of the second, where both terms
+  // go dead and it falls. ¬q in the set term is what stops a held FIN
+  // opcode from stretching to a third cycle.
+  //
+  // Two lessons are baked into that equation. Clocking it from a phase
+  // line left it UNDRIVEN until the first p4 edge, and every control
+  // line that consults it answered X for the whole first instruction —
+  // a two-instruction program never got its second instruction executed.
+  // And it must be reset like the carry flag is: on the global clock
+  // with ¬rst in the data term, the reset tick drives it to a firm 0
+  // before the first fetch.
   {
-    const nf = c.net(), d = c.net(), q = c.net();
+    const nrstF = c.net(), np4 = c.net(), q = c.net(), nq = c.net();
+    const hold = c.net(), setp = c.net(), sete = c.net();
+    const dsum = c.net(), d = c.net();
+    instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 130,
+      { a: rst, y: nrstF }, { tag: 'fc2r' });
     instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 100,
-      { a: finCycle2, y: nf }, { tag: 'fc2n' });
+      { a: ring.nets.p4, y: np4 }, { tag: 'fc2p' });
+    instantiate(c, Inverter, xDec + dec.w + 60, ROW2 - 70,
+      { a: q, y: nq }, { tag: 'fc2q' });
     instantiate(c, And2, xDec + dec.w + 86, ROW2 - 100,
-      { a: nf, b: opFIN, y: d }, { tag: 'fc2d' });
-    // Clocked by the phase-0 line: one edge per pass of the ring, which
-    // is exactly "once per instruction cycle".
-    const np0 = c.net();
-    instantiate(c, Inverter, xDec + dec.w + 100, ROW2 - 130,
-      { a: ring.nets.p0, y: np0 }, { tag: 'fc2p' });
-    instantiate(c, DFlipFlop, xDec + dec.w + 112, ROW2 - 100,
-      { d, q, clk: ring.nets.p0, nclk: np0 }, { tag: 'fc2' });
+      { a: q, b: np4, y: hold }, { tag: 'fc2h' });
+    instantiate(c, And2, xDec + dec.w + 86, ROW2 - 70,
+      { a: opFIN, b: ring.nets.p4, y: setp }, { tag: 'fc2s' });
+    instantiate(c, And2, xDec + dec.w + 112, ROW2 - 70,
+      { a: setp, b: nq, y: sete }, { tag: 'fc2e' });
+    instantiate(c, Or2, xDec + dec.w + 112, ROW2 - 100,
+      { a: hold, b: sete, y: dsum }, { tag: 'fc2o' });
+    instantiate(c, And2, xDec + dec.w + 138, ROW2 - 100,
+      { a: dsum, b: nrstF, y: d }, { tag: 'fc2d' });
+    instantiate(c, DFlipFlop, xDec + dec.w + 164, ROW2 - 100,
+      { d, q, clk: clkNet, nclk }, { tag: 'fc2' });
     const t = c.net();
-    instantiate(c, Inverter, xDec + dec.w + 160, ROW2 - 100,
+    instantiate(c, Inverter, xDec + dec.w + 212, ROW2 - 100,
       { a: q, y: t }, { tag: 'fc2b' });
-    instantiate(c, Inverter, xDec + dec.w + 180, ROW2 - 100,
+    instantiate(c, Inverter, xDec + dec.w + 232, ROW2 - 100,
       { a: t, y: finCycle2 }, { tag: 'fc2c' });
   }
 
@@ -2729,18 +2762,16 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     pRead1: ring.nets.p2, pRead2: ring.nets.p3, pExec: ring.nets.p4,
     opSRC, opLDM: dec.nets.op13, opXCH: dec.nets.op11,
     memToAcc, memWrite, opADM, opSBM, opDCL,
-    opFIM, opJIN, twoByte: dec.nets.twoByte, finCycle2,
-    // FIN is decoded (see opFIN above) but held off here. It is the only
-    // instruction in the 4004 set that takes TWO instruction cycles —
-    // one byte, sixteen clock periods — because it must read a register
-    // pair, address the ROM with it, and write a register pair back, and
-    // that does not fit in one pass of a five-phase ring.
-    //
-    // The two-cycle sequencing is built (finCycle2 above) but not yet
-    // sequencing correctly, and a FIN that writes on the wrong cycle
-    // clobbers the very registers it is reading from. Off is honest;
-    // half-working is not.
-    opFIN: VSS,
+    // FIN is the only instruction in the 4004 set that takes TWO
+    // instruction cycles — one byte, sixteen clock periods — because it
+    // must read a register pair, address the ROM with it, and write a
+    // register pair back, and that does not fit in one pass of a
+    // five-phase ring. The finCycle2 flag above tells the control unit
+    // which pass this is; irLoad comes back out with the second pass's
+    // fetch suppressed, which is what keeps the FIN opcode in charge
+    // while its data byte is on the ROM's output.
+    opFIM, opFIN, opJIN, twoByte: dec.nets.twoByte, finCycle2,
+    irLoad: irLoadLine,
   }, { tag: 'ctrl' });
   c.region('Control unit — five phases',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
@@ -2763,38 +2794,30 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { tag: `ra0n` });
     instantiate(c, Inverter, xDec + 20, ROW3 - 90, { a: t, y: ra[0] },
       { tag: `ra0b` });
-    // bits 1-3: the pair number RRR, from OPA bits 1-3, for any of the
-    // pair instructions; otherwise the plain register number from OPA.
+    // bits 1-3: the register (or pair) number, straight from OPA — for
+    // everything except FIN.
     //
     // FIN is the exception, and the manual is specific: its *address*
     // always comes from registers 0 and 1 regardless of RP, while its
-    // *result* goes to the named pair. So during its read phases the
-    // address lines are forced to pair 0.
-    const anyPair = c.net(), pairNotFin = c.net();
-    {
-      const t1 = c.net(), t2 = c.net();
-      instantiate(c, Or2, xDec - 60, ROW3 - 120,
-        { a: opSRC, b: opFIM, y: t1 }, { tag: 'apr1' });
-      instantiate(c, Or2, xDec - 60, ROW3 - 100,
-        { a: opFIN, b: opJIN, y: t2 }, { tag: 'apr2' });
-      instantiate(c, Or2, xDec - 30, ROW3 - 120,
-        { a: t1, b: t2, y: anyPair }, { tag: 'apr3' });
-      const nf = c.net();
-      instantiate(c, Inverter, xDec - 60, ROW3 - 80,
-        { a: opFIN, y: nf }, { tag: 'apr4' });
-      instantiate(c, And2, xDec - 30, ROW3 - 80,
-        { a: anyPair, b: nf, y: pairNotFin }, { tag: 'apr5' });
-    }
+    // *result* goes to the pair RP names. So while a FIN is decoded, the
+    // read address is forced to pair 0. One AND per bit does it.
+    //
+    // The previous version of this block is a bug worth recording. It
+    // built a five-gate pair/non-pair classifier and fed it into a mux
+    // whose two legs both passed ir[i] — a selector between a signal and
+    // itself. The comment claimed FIN was forced to pair 0; the gates did
+    // nothing of the kind, so FIN read its own *destination* pair as the
+    // address source. FIN 1P fetched from whatever the destination
+    // happened to hold, and every test that "passed" had used 0P
+    // operands, where RRR = 000 makes the bug invisible. A mux between
+    // identical inputs cannot be caught by testing its output — only by
+    // reading it.
+    const nOpFIN = c.net();
+    instantiate(c, Inverter, xDec, ROW3 - 70,
+      { a: opFIN, y: nOpFIN }, { tag: 'ranf' });
     for (let i = 1; i < 4; i++) {
-      const fs = c.net(), fx = c.net(), ns = c.net();
-      instantiate(c, Inverter, xDec, ROW3 - 70 + i * 22,
-        { a: pairNotFin, y: ns }, { tag: `ran${i}` });
       instantiate(c, And2, xDec + 24, ROW3 - 70 + i * 22,
-        { a: ir[i], b: pairNotFin, y: fs }, { tag: `ras${i}` });
-      instantiate(c, And2, xDec + 24, ROW3 - 58 + i * 22,
-        { a: ir[i], b: ns, y: fx }, { tag: `rax${i}` });
-      instantiate(c, Or2, xDec + 54, ROW3 - 70 + i * 22,
-        { a: fs, b: fx, y: ra[i] }, { tag: `rao${i}` });
+        { a: ir[i], b: nOpFIN, y: ra[i] }, { tag: `ras${i}` });
     }
   }
 
@@ -2841,28 +2864,40 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { a: fa, b: fp, y: regD[i] }, { tag: `rdo${i}` });
   }
 
-  // Write address: OPA for XCH, and the pair-alternating address for FIM
-  // and FIN so a pair write lands on the even register then the odd.
+  // Write address: bits 1-3 come from OPA always — the destination
+  // register for XCH, the destination *pair* for FIM and FIN. Only bit 0
+  // differs by kind: the instruction's own bit for XCH, the phase for a
+  // pair write (even register in READ1, odd in READ2).
   //
-  // Routing XCH through the pair address is wrong and quiet: bit 0 comes
-  // from the phase rather than from the instruction, so XCH r1 writes r0.
-  // The register that should have changed keeps its old value and one
-  // that should not have changed takes the new one.
-  const wa = [c.net(), c.net(), c.net(), c.net()];
-  for (let i = 0; i < 4; i++) {
-    const fp = c.net(), fx = c.net(), np = c.net();
-    instantiate(c, Inverter, xRf - 120, ROW3 + 40 + i * 26,
-      { a: pairWr, y: np }, { tag: `wan${i}` });
-    instantiate(c, And2, xRf - 94, ROW3 + 40 + i * 26,
-      { a: ra[i], b: pairWr, y: fp }, { tag: `wap${i}` });
-    instantiate(c, And2, xRf - 94, ROW3 + 52 + i * 26,
-      { a: ir[i], b: np, y: fx }, { tag: `wax${i}` });
-    instantiate(c, Or2, xRf - 68, ROW3 + 40 + i * 26,
-      { a: fp, b: fx, y: wa[i] }, { tag: `wao${i}` });
+  // The write address must NOT reuse the read address. FIN is the reason:
+  // its two ports address different pairs in the same phase — the read
+  // sits on pair 0 (the address source, always r0:r1) while the write
+  // goes to the pair RP names. That is what a dual-ported register file
+  // is *for*, and the 4004 has one. An earlier version borrowed ra[] for
+  // pair writes, which sent FIN's result onto its own address source.
+  //
+  // (Bit 0 from the phase for XCH was an older bug of the same family:
+  // XCH r1 wrote r0, quietly.)
+  const wa0 = c.net();
+  {
+    const buf = c.net(), np = c.net(), g1 = c.net(), g2 = c.net();
+    const t = c.net();
+    instantiate(c, Inverter, xRf - 146, ROW3 + 40,
+      { a: ring.nets.p3, y: t }, { tag: 'wa0n' });
+    instantiate(c, Inverter, xRf - 126, ROW3 + 40,
+      { a: t, y: buf }, { tag: 'wa0b' });
+    instantiate(c, Inverter, xRf - 146, ROW3 + 66,
+      { a: pairWr, y: np }, { tag: 'wa0m' });
+    instantiate(c, And2, xRf - 120, ROW3 + 40,
+      { a: buf, b: pairWr, y: g1 }, { tag: 'wa0p' });
+    instantiate(c, And2, xRf - 120, ROW3 + 66,
+      { a: ir[0], b: np, y: g2 }, { tag: 'wa0x' });
+    instantiate(c, Or2, xRf - 94, ROW3 + 40,
+      { a: g1, b: g2, y: wa0 }, { tag: 'wa0o' });
   }
 
   const rf = instantiate(c, RegFile16x4, xRf, ROW3, {
-    wa0: wa[0], wa1: wa[1], wa2: wa[2], wa3: wa[3],
+    wa0, wa1: ir[1], wa2: ir[2], wa3: ir[3],
     ra0: ra[0], ra1: ra[1], ra2: ra[2], ra3: ra[3],
     d0: regD[0], d1: regD[1], d2: regD[2], d3: regD[3],
     we: regWriteGated,
@@ -2884,16 +2919,26 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   instantiate(c, Inverter, 60, ROW2 + 420, { a: jn, y: pcLoadLine },
     { tag: 'jlb' });
 
-  // FIN's address latch: r0 and r1 as they come off the read bus, one
-  // per phase. Separate from the SRC latch because FIN's address is
-  // consumed immediately rather than held for later instructions.
+  // FIN's address latch. On the real chip r0 and r1 concatenate into the
+  // low eight bits of a ROM address; this ROM is sixteen words, so only
+  // the LOW nibble of that address has anywhere to land — and the low
+  // nibble is the ODD register, on the read bus during READ2. Capturing
+  // in READ1 grabs r0, the high nibble, and a FIN pointed at 0x15 reads
+  // word 1 instead of word 5 — off by exactly "which register did you
+  // latch". Same one-page rule JIN's target uses above.
+  //
+  // finLoad is already gated to READ2 of the first cycle only, so the
+  // address holds while the second cycle consumes it — which is the
+  // reason the latch exists: FIN 0P overwrites r0:r1 with the fetched
+  // byte, and the address must survive its own destination being
+  // written.
   for (let i = 0; i < 4; i++) {
     instantiate(c, register(1), xRf + rf.w + 4, ROW3 + 300 + i * 30, {
-      clk: clkNet, nclk, load: ring.nets.p2,
+      clk: clkNet, nclk, load: ctrl.nets.finLoad,
       d0: rf.nets[`q${i}`], q0: finAddr[i],
     }, { tag: `fa${i}` });
   }
-  c.region('FIN address latch — r0, captured in READ1',
+  c.region('FIN address latch — r1, captured in READ2 of cycle 1',
     xRf + rf.w - 2, ROW3 + 294, xRf + rf.w + 90, ROW3 + 300 + 4 * 30);
 
   // Writing a register pair: the operand's high nibble to the even
@@ -3174,6 +3219,10 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     c.addLamp(`BANK${i}`, bank.nets[`q${i}`], xEnd - 5, 155 + i * 4.5,
       { short: `BANK${i}` });
   }
+  // FIN's extra cycle — the one lamp that ever lights two ring passes
+  // into the same instruction. Digit-free name on purpose: a trailing
+  // digit would make the I/O table read it as bit 2 of a bus called "C".
+  c.addLamp('XCY', finCycle2, xEnd - 5, 169, { short: 'XCY' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3,
@@ -3186,7 +3235,12 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     accFromAlu: ctrl.nets.accFromAlu, aluSub: ctrl.nets.aluSub,
     regWrite: ctrl.nets.regWrite, ramWrite: ctrl.nets.ramWrite,
     bankLoad: ctrl.nets.bankLoad,
+    pairHi: ctrl.nets.pairHi, pairLo: ctrl.nets.pairLo,
+    romFromPair: ctrl.nets.romFromPair, pcLoad: ctrl.nets.pcLoad,
+    finLoad: ctrl.nets.finLoad,
   };
+  c.finCycle2 = finCycle2;
+  c.finAddr = finAddr;
   c.bankNets = [bank.nets.q0, bank.nets.q1, bank.nets.q2];
   c.program = program;
   c.ramQ = ramQ;

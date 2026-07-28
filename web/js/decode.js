@@ -212,10 +212,12 @@ export function disassemble(byte, next) {
   const opr = (byte >> 4) & 15, opa = byte & 15;
   const two = isTwoByte(byte);
 
-  // Three codes in the escape groups are genuinely undefined on the chip:
-  // 0xE3, and 0xFE/0xFF. The real 4004 does not decode them to anything,
-  // so neither does this — showing an invented mnemonic would be worse
-  // than admitting the gap.
+  // 0xFE and 0xFF are genuinely undefined on the chip and show a dash.
+  // 0xE3 is NOT undefined — it is WPM, write program memory — but it is
+  // deliberately deferred here (it is INTELLEC-4 development-system
+  // support, not architecture; docs/4004.md tells that story), so its
+  // slot shows the same dash until it exists. A dash is honest either
+  // way; an invented mnemonic would not be.
   if (opr === 14) return { text: ESC_MEM[opa] ?? '—', twoByte: false };
   if (opr === 15) return { text: ESC_ACC[opa] ?? '—', twoByte: false };
 

@@ -2288,9 +2288,15 @@ function flipAndStep(c, label, on) {
   // clocking, and this is the most expensive machine in the suite — five
   // phases over a sixteen-word ROM. One trace, many assertions.
   //
-  // `at[k]` is the state after instruction k, and its `ir` is that
-  // instruction: they agree at this sampling point, which is what lets
-  // the assertions index by program position.
+  // `at[k]` is the state after ring pass k, and its `ir` is the
+  // instruction that pass executed: they agree at this sampling point,
+  // which is what lets the assertions index by program position — with
+  // one deliberate exception. FIN takes TWO passes of the ring, so it
+  // owns two consecutive entries with the same `ir`, and everything
+  // after it sits one entry later than its program position. That shift
+  // is not an artifact to normalise away; it IS the observable fact that
+  // FIN costs two instruction times, straight from the manual's "2
+  // instruction cycles".
   {
     const c = buildMemMachine();
     const stepModel = cmos.memmachine.step;
@@ -2370,13 +2376,33 @@ function flipAndStep(c, label, on) {
     expect(c, 'RDM read back what WRM wrote, long after the SRC',
       at[12].acc, 7);
 
+    // FIN — the only 4004 instruction that is one byte but two
+    // instruction cycles. Pass 13 is its first cycle (read r0:r1, latch
+    // the ROM address), pass 14 its second (fetch the byte, write the
+    // destination pair). Both entries show the FIN opcode because the
+    // instruction register is deliberately NOT loaded on the second
+    // pass — the ROM is emitting FIN's data byte then, and fetching it
+    // would replace the instruction with its own result.
+    expect(c, 'FIN cycle 1 holds the opcode', at[13].ir, 0x32);
+    expect(c, 'FIN cycle 2 still holds the opcode', at[14].ir, 0x32);
+    // One byte → the counter advances exactly once across both cycles.
+    expect(c, 'the PC stepped once in FIN cycle 1', at[13].pc, 15);
+    expect(c, 'the PC sat still through FIN cycle 2', at[14].pc, 15);
+    // The manual: the address ALWAYS comes from pair 0; the result goes
+    // to the pair RP names. FIN 1P here: r0:r1 = 0x15 → word 5 = 0xDA,
+    // high nibble to the even register — FIM's convention.
+    expect(c, 'FIN wrote the even register with the high nibble', reg(2), 13);
+    expect(c, 'FIN wrote the odd register with the low nibble', reg(3), 10);
+    expect(c, 'FIN left its address source r0 untouched', reg(0), 1);
+    expect(c, 'FIN left its address source r1 untouched', reg(1), 5);
+
     // JIN jumps to the address held in a register pair — its target is
     // not in the instruction at all, which is what makes it indirect.
     // r0:r1 hold 1 and 5, so the target is 0x15, truncated to address 5
     // in this sixteen-word ROM.
-    expect(c, 'JIN ran', at[13].ir, 0x31);
+    expect(c, 'JIN ran', at[15].ir, 0x31);
     expect(c, 'JIN jumped to the address in the register pair',
-      at[13].pc, 5);
+      at[15].pc, 5);
   }
 
   // Status characters are addressed by *which* status opcode ran, not by
@@ -2415,6 +2441,26 @@ function flipAndStep(c, label, on) {
   {
     const { c } = run(pad([0xD3, 0xFD]), 2);
     expect(c, 'DCL selected the bank named by the accumulator', c.bank, 3);
+  }
+
+  // FIN 0P overwrites the very pair that supplied its address — r0:r1
+  // names both the source and the destination. This only works because
+  // the address is latched during the first cycle, BEFORE the second
+  // cycle writes the pair; consume the registers directly and the write
+  // would corrupt the address mid-instruction. The latch is not an
+  // optimisation, it is what makes this program meaningful — which is
+  // why the case is worth a machine run of its own.
+  {
+    const p = pad([0x20, 0x0C, 0x30]);  // FIM 0P: r0 = 0, r1 = 12; FIN 0P
+    p[12] = 0x9A;                       // the byte FIN fetches
+    const { c } = run(p, 3);            // FIM + FIN's two cycles
+    const reg = i => {
+      const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+      return bits.every(b => b === '0' || b === '1')
+        ? parseInt(bits.slice().reverse().join(''), 2) : null;
+    };
+    expect(c, 'FIN 0P replaced its own address source: r0', reg(0), 9);
+    expect(c, 'FIN 0P replaced its own address source: r1', reg(1), 10);
   }
 }
 

@@ -1075,15 +1075,28 @@ export const MemControl = defineModule('memctrl', {
     { name: 'romFromPair', x: 320, y: 96, side: 'out' },
     // JIN loads the program counter from the pair it read
     { name: 'pcLoad', x: 320, y: 102, side: 'out' },
+    // FIN's address latch captures during READ2 of its first cycle
+    { name: 'finLoad', x: 320, y: 108, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pR1 = m.port('pRead1');
     const pR2 = m.port('pRead2'), pE = m.port('pExec');
 
-    // The opcode is captured during FETCH, and the PC steps then too.
-    const nF = m.net();
-    m.instantiate(Inverter, 0, 0, { a: pF, y: nF });
-    m.instantiate(Inverter, GATE_W * 2, 0, { a: nF, y: m.port('irLoad') });
+    // FIN's second cycle, inverted once here and used throughout: the
+    // real 4004 keeps a flip-flop in its timing logic (the schematic
+    // labels it SINGLE CYCLE F/F) for exactly this distinction, and its
+    // output conditions the same things this one does — whether the
+    // instruction register loads, whether the counter steps, and where
+    // the ROM address comes from.
+    const nf2 = m.net();
+    m.instantiate(Inverter, GATE_W * 6, GATE_H * 3,
+      { a: m.port('finCycle2'), y: nf2 });
+
+    // The opcode is captured during FETCH — except on FIN's second pass,
+    // when the ROM is emitting the *data* byte FIN asked for. Load then
+    // and the fetched data replaces the instruction that fetched it.
+    m.instantiate(And2, 0, 0,
+      { a: pF, b: nf2, y: m.port('irLoad') });
 
     // It steps a second time during DECODE for a two-byte instruction,
     // so the operand byte is not fetched as the next opcode.
@@ -1100,16 +1113,22 @@ export const MemControl = defineModule('memctrl', {
       { a: m.port('pDecode'), b: m.port('twoByte'), y: inc2 });
     m.instantiate(Or2, GATE_W * 3, GATE_H * 2,
       { a: pF, b: inc2, y: anyInc });
-    // …but not on FIN's first cycle. FIN re-fetches the same byte on its
-    // second pass, so the counter must sit still through the first — a
-    // one-byte instruction that occupies two cycles still advances the
-    // program by one.
+    // …and sits still through FIN's SECOND cycle, so a one-byte
+    // instruction that occupies two cycles still advances the program by
+    // exactly one.
+    //
+    // The hold has to be on the second cycle, and an earlier version of
+    // this block held the first — a polarity that cannot work, however
+    // reasonable "don't step until the instruction is done" sounds. At
+    // the first cycle's FETCH the increment decision is made while the
+    // instruction register still holds the *previous* instruction; FIN
+    // hasn't been decoded yet, so no gate can see it coming. The step at
+    // fetch happens for every byte, unconditionally. What the control
+    // unit CAN see is the second cycle, when the held opcode and the
+    // cycle flag are both stable — so that is when it declines to step.
     const finHold = m.net(), nHold = m.net();
-    const nf2 = m.net();
-    m.instantiate(Inverter, GATE_W * 6, GATE_H * 3,
-      { a: m.port('finCycle2'), y: nf2 });
     m.instantiate(And2, GATE_W * 8, GATE_H * 3,
-      { a: m.port('opFIN'), b: nf2, y: finHold });
+      { a: m.port('opFIN'), b: m.port('finCycle2'), y: finHold });
     m.instantiate(Inverter, GATE_W * 11, GATE_H * 3,
       { a: finHold, y: nHold });
     m.instantiate(And2, GATE_W * 13, GATE_H * 2,
@@ -1212,15 +1231,23 @@ export const MemControl = defineModule('memctrl', {
     m.instantiate(And2, GATE_W * 9, GATE_H * 26,
       { a: pR2, b: pairWrite, y: m.port('pairLo') });
 
+    // FIN's address latch fills during READ2 of the FIRST cycle — that is
+    // when the odd register of pair 0 is on the read bus.
+    const fl1 = m.net();
+    m.instantiate(And2, GATE_W * 5, GATE_H * 27,
+      { a: pR2, b: m.port('opFIN'), y: fl1 });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 27,
+      { a: fl1, b: nf2, y: m.port('finLoad') });
+
     // FIN reads program memory at r0:r1 rather than at the program
-    // counter. The ROM address multiplexes for one instruction, which is
-    // the only time in this machine that the program counter does not
-    // drive it.
-    const fn = m.net();
-    m.instantiate(Inverter, GATE_W * 5, GATE_H * 28,
-      { a: m.port('opFIN'), y: fn });
-    m.instantiate(Inverter, GATE_W * 7, GATE_H * 28,
-      { a: fn, y: m.port('romFromPair') });
+    // counter — but only on its SECOND cycle. The first cycle's fetch is
+    // an ordinary fetch (the PC still owns the ROM; that is how the FIN
+    // byte itself arrives), and the address latch has nothing in it until
+    // READ2 of that cycle anyway. Steering the ROM early hands it an
+    // address that does not exist yet.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 29,
+      { a: m.port('opFIN'), b: m.port('finCycle2'),
+        y: m.port('romFromPair') });
 
     // JIN loads the low eight bits of the program counter from the pair.
     m.instantiate(And2, GATE_W * 5, GATE_H * 30,

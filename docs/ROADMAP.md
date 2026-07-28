@@ -98,11 +98,12 @@ generated, so this file does not repeat them.
       (which also makes XCH a real exchange), and the accumulator group.
       Two early ones — Accumulator Machine and Jump Machine — were
       retired once later machines demonstrated their ideas better; their
-      test coverage moved to the Adding Machine. What remains is
-      instruction-set coverage rather than new structure — forty-three of
-      the 45 defined instructions now act on hardware. See the checklist
-      in [4004.md](4004.md), which has the full plan and program corpus
-      too.
+      test coverage moved to the Adding Machine. Instruction coverage is
+      now complete but for one deliberate deferral: forty-five of the
+      real chip's 46 defined instructions act on hardware, including
+      FIN's two-instruction-cycle sequencing; WPM is the deferral, and
+      [4004.md](4004.md) explains it along with the full plan and
+      program corpus.
 
 ## Engineering to unblock the big machines
 
