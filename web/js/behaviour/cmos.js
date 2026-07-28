@@ -3407,26 +3407,28 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
 //   row 3   the arithmetic: adder operands, adder, carry, accumulator
 //
 const PCPU_PROGRAM = [
-  // A program that touches every group and ends in the 4004's idiom for
-  // "stop": a jump to itself. There is no HLT.
-  0x20, 0x0A,   //  0  FIM 0P, 10   r0 = 0, r1 = 10 — an address for later
-  0xD5,         //  2  LDM 5        accumulator = 5
-  0xB2,         //  3  XCH r2       r2 = 5, accumulator = 0 (a real swap)
-  0xD3,         //  4  LDM 3        accumulator = 3
-  0x82,         //  5  ADD r2       3 + 5 = 8
-  0x62,         //  6  INC r2       r2 = 6
-  0xF1,         //  7  CLC          clear the carry before subtracting
-  0x92,         //  8  SUB r2       8 - 6 = 2, carry set (no borrow)
-  0xF2,         //  9  IAC          2 + 1 = 3
-  0x21,         // 10  SRC 0P       send r0:r1 = 0x0A to the memory bus
-  0xE0,         // 11  WRM          RAM[0][0][10] = 3
-  0xE9,         // 12  RDM          read it straight back
-  0x50, 0x11,   // 13  JMS 17       call the subroutine at 17
-  0x40, 0x14,   // 15  JUN 20       the return lands here, then to the spin
-  0xF5,         // 17  RAL          rotate left through carry
-  0xF6,         // 18  RAR          and back — the pair is the identity
-  0xC7,         // 19  BBL 7        return, loading 7 over the accumulator
-  0x40, 0x14,   // 20  JUN 20       spin: the 4004 has no HLT
+  // Multiply 3 x 4, by repeated addition.
+  //
+  // This is what the 4004 was built to do. Busicom commissioned it for a
+  // desktop calculator, and the chip has no multiply instruction — so
+  // multiplication *is* a loop of additions, which is exactly what runs
+  // here. Twelve bytes, twenty-four executed instructions, and it uses
+  // the register pair, the adder, the carry, a real exchange, and the
+  // increment-and-branch that makes the loop a loop.
+  //
+  // ISZ counts UP to zero rather than down, which is why the loop counter
+  // starts at 16 - 4 = 12. That is the instruction the 4004 has, and
+  // writing the program around it rather than against it is what the
+  // original code had to do too.
+  0x20, 0x3C,   //  0  FIM 0P, 0x3C   r0 = 3 (multiplicand), r1 = 12 (counter)
+  0xD0,         //  2  LDM 0
+  0xB2,         //  3  XCH r2         product = 0
+  0xF1,         //  4  CLC            ← loop: clear carry before adding
+  0xA2,         //  5  LD r2          accumulator = product
+  0x80,         //  6  ADD r0         + 3
+  0xB2,         //  7  XCH r2         product = accumulator
+  0x71, 0x04,   //  8  ISZ r1, 4      count up; loop while not zero
+  0x40, 0x0A,   // 10  JUN 10         spin — the 4004 has no HLT
 ];
 
 export function buildCpu4004(program = PCPU_PROGRAM) {
@@ -3797,16 +3799,24 @@ export function buildCpu4004(program = PCPU_PROGRAM) {
   }
   c.region('Increment hold', xInc + inc.w + 40, ROW3 - 6,
     xInc + inc.w + 136, ROW3 + 4 * 30);
-  // ISZ jumps while the incremented value is NOT zero.
+  // ISZ jumps while the incremented value is NOT zero — "increment and
+  // skip if zero" means the jump is what happens when it is *not* zero.
+  //
+  // ONE inverter, not two. An earlier version buffered `z` through a pair,
+  // which is the idiom used everywhere else here for driving a long line
+  // — but a pair of inverters is the identity, so `iszTake` came out equal
+  // to `z` instead of its complement, and the branch was exactly
+  // backwards. A countdown then ran its body once and fell through on the
+  // iteration it should have continued: the multiply demo returned 3
+  // instead of 3 x 4. Buffering is for driving a load, never for getting
+  // a polarity.
   {
-    const z = c.net(), nz = c.net();
+    const z = c.net();
     const iz = instantiate(c, IsZero4, xInc + inc.w + 110, ROW3, {
       a0: incOut[0], a1: incOut[1], a2: incOut[2], a3: incOut[3], z,
     }, { tag: 'iszz' });
     instantiate(c, Inverter, xInc + inc.w + 110 + iz.w + 10, ROW3,
-      { a: z, y: nz }, { tag: 'iszn' });
-    instantiate(c, Inverter, xInc + inc.w + 110 + iz.w + 30, ROW3,
-      { a: nz, y: iszTake }, { tag: 'iszb' });
+      { a: z, y: iszTake }, { tag: 'iszn' });
     c.region('ISZ condition', xInc + inc.w + 104, ROW3 - 6,
       xInc + inc.w + 110 + iz.w + 50, ROW3 + iz.h + 6);
   }

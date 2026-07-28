@@ -1206,10 +1206,10 @@
       "group": "CMOS · Machines",
       "name": "Intel 4004",
       "title": "the whole instruction set, on one machine",
-      "brief": "Every defined 4004 instruction but WPM, on a single machine built from transistors. The eight machines before this one each isolate one idea; this is all of them at once — the fetch loop, five phases, the register file, one adder shared by four instructions, the accumulator group, the memory group across a bus, the address stack, and FIN's two instruction cycles.",
+      "brief": "Every defined 4004 instruction but WPM, on a single machine built from transistors — and it multiplies 3 by 4 the way the chip was designed to, since Busicom commissioned it for a calculator and it has no multiply instruction. The eight machines before this one each isolate one idea; this is all of them at once: the fetch loop, five phases, the register file, one adder shared by four instructions, the accumulator group, the memory group across a bus, the address stack, and FIN's two instruction cycles.",
       "desc": "The point of the bring-up ladder is that this step is composition rather than new logic. Every block here is a module an earlier machine already proved: the phase ring and control unit from the Sequenced Machine, the ADD datapath from the Adding Machine, the condition tree from the Conditional Machine, the operand register and address stack from the Two-Byte Machine, the ADB register and two-phase write discipline from Subtract and Exchange, the escape decode from the Accumulator Group, and the whole memory group from the Memory Machine.\n\nWhat is new is only what happens when they coexist. One adder now serves ADD, SUB, ADM, SBM, IAC, DAC, TCS and DAA — what differs between them is which operand reaches its B input and how the carry is conditioned, which is the 4004's economy in one sentence. One control unit drives all of it, and five instructions load the program counter differing only in where the address comes from.\n\nThree things had to be got right that no single earlier machine could expose, and a reference emulator diffing against the hardware after every instruction found all three. The accumulator group splits three ways: every instruction in it defines the carry, ten of them write the accumulator, and only four take the adder — treat those as one group and CLC quietly clears the accumulator, because a mux with nothing selected drives zero. The accumulator samples on the clock's high half while the register file writes on the low half, which is what makes XCH a true exchange rather than a one-way copy. And the carry flag must latch on the same edge as the accumulator, since both are computed from the state the instruction began with.\n\nThe program touches every group and ends in the 4004's idiom for stopping: a jump to itself. There is no HLT.",
       "hints": {
-        "CLK": "the clock — five phases per instruction",
+        "CLK": "the clock — five phases per instruction; 🚀 runs it unbounded",
         "RST": "back to FETCH at address 0",
         "TEST": "the TEST pin, which JCN can branch on",
         "P": "the phase ring: FETCH, DECODE, READ1, READ2, EXEC",
@@ -1227,6 +1227,210 @@
         "title": "Phases and control lines",
         "columns": 5,
         "key": "amber = the active phase · blue = a control line firing"
+      },
+      "walkthrough": {
+        "intro": "Multiplying 3 by 4 the way the chip was designed to. Busicom commissioned the 4004 for a desktop calculator and it has no multiply instruction, so multiplication is a loop of additions — twelve bytes of program, twenty-four executed instructions, and every block on the machine has something to do.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "FIM 0P, 60",
+            "state": {
+              "r0": "3",
+              "r1": "12",
+              "PC": "2"
+            },
+            "text": "Load the register pair in one instruction: r0 takes the high nibble of the operand byte and r1 the low, so r0 = 3 (the number to multiply) and r1 = 12 (the loop counter). The counter starts at 12 rather than 4 because ISZ counts *up* to zero — 16 − 4 = 12. That is the instruction the chip has, and the original Busicom code had to be written around it the same way. The program counter is already at 2, having stepped over the operand byte during DECODE."
+          },
+          {
+            "at": 2,
+            "op": "LDM 0",
+            "state": {
+              "ACC": "0",
+              "PC": "3"
+            },
+            "text": "Zero into the accumulator, on its way to becoming the running product."
+          },
+          {
+            "at": 3,
+            "op": "XCH r2",
+            "state": {
+              "ACC": "3",
+              "r2": "0",
+              "PC": "4"
+            },
+            "text": "product = 0. Watch the accumulator: it does not just write r2, it takes r2's old contents in the same instruction — the 3 that happened to be sitting there. That is a true exchange, both values crossing on one clock edge with no temporary anywhere, and it only works because the accumulator samples on the clock's high half while the register file writes on the low half."
+          },
+          {
+            "at": 4,
+            "op": "CLC",
+            "state": {
+              "CY": "0",
+              "PC": "5"
+            },
+            "text": "Top of the loop. Clear the carry before adding, because ADD includes it — a stale carry from the previous iteration would silently add one."
+          },
+          {
+            "at": 5,
+            "op": "LD r2",
+            "state": {
+              "ACC": "0",
+              "PC": "6"
+            },
+            "text": "The running product into the accumulator. LD copies without disturbing the register, unlike the XCH above."
+          },
+          {
+            "at": 6,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "3",
+              "PC": "7"
+            },
+            "text": "0 + 3. This is the whole multiplication: the 4004 has no multiply instruction, so multiplying is adding in a loop. The register number comes from the instruction's own low nibble, which is what OPA means on the real encoding."
+          },
+          {
+            "at": 7,
+            "op": "XCH r2",
+            "state": {
+              "ACC": "0",
+              "r2": "3",
+              "PC": "8"
+            },
+            "text": "product = 3. The accumulator takes r2's old value back, which is why the next iteration starts by reloading it."
+          },
+          {
+            "at": 8,
+            "op": "ISZ r1, 4",
+            "state": {
+              "r1": "13",
+              "PC": "4"
+            },
+            "text": "Increment r1 and jump while it is *not* zero — 12 becomes 13, so back to address 4. This one instruction is the entire loop: the counter, the test and the branch. It uses the chip's separate incrementer rather than the adder, which is why it leaves the carry alone."
+          },
+          {
+            "at": 4,
+            "op": "CLC",
+            "state": {
+              "PC": "5"
+            },
+            "text": "Second pass."
+          },
+          {
+            "at": 5,
+            "op": "LD r2",
+            "state": {
+              "ACC": "3",
+              "PC": "6"
+            },
+            "text": "The product so far."
+          },
+          {
+            "at": 6,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "6",
+              "PC": "7"
+            },
+            "text": "3 + 3 = 6."
+          },
+          {
+            "at": 7,
+            "op": "XCH r2",
+            "state": {
+              "r2": "6",
+              "PC": "8"
+            },
+            "text": "product = 6."
+          },
+          {
+            "at": 8,
+            "op": "ISZ r1, 4",
+            "state": {
+              "r1": "14",
+              "PC": "4"
+            },
+            "text": "13 becomes 14. Still not zero, so round again."
+          },
+          {
+            "at": 4,
+            "op": "CLC",
+            "state": {
+              "PC": "5"
+            },
+            "text": "Third pass."
+          },
+          {
+            "at": 6,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "9",
+              "PC": "7"
+            },
+            "text": "6 + 3 = 9."
+          },
+          {
+            "at": 7,
+            "op": "XCH r2",
+            "state": {
+              "r2": "9",
+              "PC": "8"
+            },
+            "text": "product = 9."
+          },
+          {
+            "at": 8,
+            "op": "ISZ r1, 4",
+            "state": {
+              "r1": "15",
+              "PC": "4"
+            },
+            "text": "14 becomes 15 — one short of wrapping."
+          },
+          {
+            "at": 4,
+            "op": "CLC",
+            "state": {
+              "PC": "5"
+            },
+            "text": "Fourth and last pass."
+          },
+          {
+            "at": 6,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "12",
+              "PC": "7"
+            },
+            "text": "9 + 3 = 12. The answer, though the machine does not know it yet."
+          },
+          {
+            "at": 7,
+            "op": "XCH r2",
+            "state": {
+              "r2": "12",
+              "PC": "8"
+            },
+            "text": "product = 12."
+          },
+          {
+            "at": 8,
+            "op": "ISZ r1, 4",
+            "state": {
+              "r1": "0",
+              "PC": "10"
+            },
+            "text": "15 increments to 0, so the branch is NOT taken and control falls through to 10. Four passes, four additions — the counter reached zero by wrapping, which is exactly what starting it at 16 − 4 arranged."
+          },
+          {
+            "at": 10,
+            "op": "JUN 10",
+            "state": {
+              "PC": "10",
+              "r2": "12"
+            },
+            "text": "A jump to itself. The 4004 has no HLT instruction, so this is the idiom for stopping: the machine keeps running, fetching the same jump forever, with the answer standing in r2. **3 × 4 = 12.**"
+          }
+        ],
+        "outro": "The middle passes are folded together above; the loop body is identical each time round and only the numbers move. Watch the register file rather than the accumulator to see it working: r2 climbs 3, 6, 9, 12 while r1 climbs 12, 13, 14, 15, 0, and the whole computation is those two columns."
       }
     },
     {

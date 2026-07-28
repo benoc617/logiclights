@@ -2903,15 +2903,31 @@ checkWalkthrough('memmachine');
   // FIN spans two ring passes, so the oracle steps only when the hardware
   // has finished an instruction rather than once per pass.
   let pending = 0;
-  for (let k = 0; k < 20; k++) {
+  // XCH r2 at pass 2 reads r2 before anything has written it, and the
+  // value it took stays in the accumulator until LD r2 overwrites it at
+  // pass 4. From there on every value either side is holding came from
+  // the program.
+  const settled = 4;
+  for (let k = 0; k < 26; k++) {
     for (let p = 0; p < nph; p++) tick();
     if (pending > 0) pending--;
     else pending = emu.step() - 1;
 
     expect(ctx, `pass ${k}: program counter agrees`, rd('PC', 5), emu.pc & 31);
-    expect(ctx, `pass ${k}: accumulator agrees`, rd('ACC', 4), emu.acc);
     expect(ctx, `pass ${k}: carry agrees`,
       c.value[lampNamed('CY').net] === HI ? 1 : 0, emu.carry);
+
+    // The accumulator is only comparable once the program has written
+    // every register it reads. Real hardware powers up with arbitrary
+    // register contents and this machine leaves them floating; the oracle
+    // starts them at zero. An XCH against a register the program has not
+    // yet written legitimately differs, and demanding they match would be
+    // asserting a value the hardware never promised. `settled` is the
+    // first pass after which every register the program touches holds
+    // something it put there.
+    if (k >= settled) {
+      expect(ctx, `pass ${k}: accumulator agrees`, rd('ACC', 4), emu.acc);
+    }
     for (let i = 0; i < 4; i++) {
       const hw = reg(i);
       if (hw === null) continue;
@@ -2921,8 +2937,13 @@ checkWalkthrough('memmachine');
 
   // The program ends in the 4004's idiom for halting — a jump to itself —
   // so the machine should be sitting on it rather than having run away.
-  expect(ctx, 'the machine reaches its spin and stays there', rd('PC', 5), 20);
+  expect(ctx, 'the machine reaches its spin and stays there', rd('PC', 5), 10);
   expect(ctx, 'and the oracle agrees it halted', emu.halted, true);
+  // And the point of the whole program: 3 x 4, by repeated addition, on
+  // transistors. Worth asserting the answer itself and not just agreement
+  // — two implementations can agree on the wrong number.
+  expect(ctx, 'the machine multiplied 3 by 4', reg(2), 12);
+  expect(ctx, 'the loop counter reached zero by wrapping', reg(1), 0);
 }
 
 // ── the 4002 RAM model ───────────────────────────────────────────────────

@@ -45,8 +45,11 @@ way through the machine. Every wire is a light: amber means driven high.
   machine, every defined instruction but `WPM`, checked against a
   reference emulator after every instruction it executes. Give one a
   clock and it runs a program on its own, with the ROM disassembled beside
-  it and the executing instruction highlighted. See
-  [docs/4004.md](docs/4004.md) for what remains.
+  it and the executing instruction highlighted — the 4004 multiplies 3 by
+  4 by repeated addition, which is how the chip Busicom commissioned
+  actually did it. A 🚀 turbo mode drops the device delay and the clock
+  pacing entirely when you would rather see the answer than the
+  propagation. See [docs/4004.md](docs/4004.md) for what remains.
 - **Guides for the big circuits** — a caption under every input explaining
   what it selects, a legend of function codes with the live one highlighted,
   a grid of internal state the outputs do not expose (all sixteen registers

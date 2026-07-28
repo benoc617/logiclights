@@ -98,7 +98,7 @@ circuit exists to explain.
 | Subtract and Exchange | Machines | · | 4298 | · | 8 | 1972 |
 | Accumulator Group | Machines | · | 2904 | · | 8 | 1415 |
 | Memory Machine | Machines | · | 6542 | · | 8 | 3031 |
-| Intel 4004 | Machines | · | 9718 | · | 8 | 4506 |
+| Intel 4004 | Machines | · | 9755 | · | 8 | 4505 |
 | CMOS Full Adder | Arithmetic | · | 50 | · | · | 30 |
 | 4-bit ALU | Arithmetic | · | 538 | · | · | 262 |
 
@@ -126,7 +126,7 @@ circuit exists to explain.
 | Circuits | 59 |
 | Groups | 17 |
 | Relays | 91 |
-| Transistors | 42975 |
+| Transistors | 43012 |
 | Diodes | 4 |
 | Resistors | 328 |
 
@@ -134,7 +134,7 @@ circuit exists to explain.
 
 | Circuit | Devices | Nets |
 |---|--:|--:|
-| Intel 4004 | 9726 | 4506 |
+| Intel 4004 | 9763 | 4505 |
 | Memory Machine | 6550 | 3031 |
 | Two-Byte Machine | 5209 | 2387 |
 | Subtract and Exchange | 4306 | 1972 |
@@ -142,7 +142,7 @@ circuit exists to explain.
 
 ## Test suite
 
-`node test/sim-test.mjs` → **151010 checks, 0 failures**
+`node test/sim-test.mjs` → **151045 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

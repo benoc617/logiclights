@@ -69,6 +69,7 @@ function varianceFor(delay) {
 
 function applySpeed() {
   const d = currentDelay();
+  if (turbo) { turbo = false; applyTurbo(); }   // touching a slider leaves turbo
   if (circuit) {
     circuit.baseDelay = d;
     circuit.varianceSteps = varianceFor(d);
@@ -89,14 +90,55 @@ const clkRun = document.getElementById('clk-run');
 const clkStep = document.getElementById('clk-step');
 const clkRate = document.getElementById('clk-rate');
 const clkLabel = document.getElementById('clk-label');
+const turboBtn = document.getElementById('turbo');
 let clkWasStalled = false;
 
 function clockPeriod() {
   // slider 0..100 → 4 s .. 60 ms, log scale. Slow enough at the top to
-  // watch a carry propagate between edges.
+  // watch a carry propagate between edges. Turbo ignores this entirely.
   return Math.round(4000 * Math.pow(60 / 4000, clkRate.value / 100));
 }
+
+// Turbo: run the machine as fast as the host can, with no device delay and
+// no wall-clock pacing between edges.
+//
+// The two limits it removes are different things. Device delay is what
+// makes propagation *visible* — with it at zero a machine settles in one
+// pass instead of a wavefront, so there is nothing to watch mid-cycle.
+// Clock pacing is what spreads edges over wall time — normally one edge
+// per frame at most, so even a zero period tops out around 60 half-cycles
+// a second. Turbo drops both and instead runs edges until a millisecond
+// budget is spent, which keeps the frame responsive while getting through
+// as many as the machine allows.
+//
+// It stays a mode rather than the end of the slider because it gives up
+// the thing the rest of the app exists to show. The display still updates
+// once a frame, so the machine's state is live — you just cannot see how
+// it got there.
+let turbo = false;
+const TURBO_BUDGET_MS = 8;   // per frame, leaving room to draw
+// Turbo's own simulation clock. It has to advance monotonically and
+// independently of wall time — see the note in `frame`.
+let turboClock = 0;
+
+function applyTurbo() {
+  turboBtn.classList.toggle('on', turbo);
+  turboBtn.title = turbo
+    ? 'Turbo: no device delay, unbounded clock — click to return to normal'
+    : 'Turbo: run as fast as possible, with no visible propagation';
+  if (!circuit) return;
+  if (turbo) {
+    circuit.baseDelay = 0;
+    circuit.varianceSteps = 0;
+    turboClock = performance.now() + 1e6;   // clear of any scheduled event
+    if (circuit.clock) circuit.clock.period = 0;
+  } else {
+    applySpeed();
+    if (circuit.clock) applyClockRate();
+  }
+}
 function applyClockRate() {
+  if (turbo) return;      // turbo owns the period
   const p = clockPeriod();
   if (circuit && circuit.clock) circuit.clock.period = p;
   clkLabel.textContent = p >= 1000 ? `${(p / 1000).toFixed(1)} s` : `${p} ms`;
@@ -119,6 +161,7 @@ clkStep.addEventListener('click', () => {
   sound.ensure();
 });
 clkRate.addEventListener('input', applyClockRate);
+turboBtn.addEventListener('click', () => { turbo = !turbo; applyTurbo(); });
 
 // keyboard: space runs/pauses, right arrow steps — the controls you reach
 // for without looking when watching a machine
@@ -312,7 +355,36 @@ canvas.addEventListener('wheel', ev => {
 // ── main loop ────────────────────────────────────────────────────────────
 
 function frame(now) {
-  if (circuit.clock) {
+  if (circuit.clock && turbo && circuit.clock.running) {
+    // Spend a slice of the frame on edges rather than taking one.
+    //
+    // Simulation time has to move forward between edges, and that is the
+    // subtlety: the engine schedules a device transition at `now + delay`,
+    // so re-stepping at the same `now` for every edge leaves the events
+    // in the past and nothing ever fires. Turbo therefore runs its own
+    // clock, advancing far enough each time to drain the queue. Stepping
+    // repeatedly at the frame's `now` looks right and produces a machine
+    // whose ticks counter climbs into the hundreds of thousands while the
+    // program counter never leaves zero.
+    //
+    // Each edge still waits for the circuit to settle, so this is "as many
+    // whole cycles as fit in the budget" and never a shortcut past the
+    // settling rule.
+    const until = performance.now() + TURBO_BUDGET_MS;
+    let guard = 0;
+    do {
+      turboClock += 1000;
+      circuit.step(turboClock);
+      let ev = circuit.nextEventAt();
+      while (ev !== null && guard++ < 50000) {
+        turboClock = ev + 0.001;
+        circuit.step(turboClock);
+        ev = circuit.nextEventAt();
+      }
+      circuit.stepClock();
+    } while (performance.now() < until && guard++ < 50000);
+    circuit.solve();
+  } else if (circuit.clock) {
     circuit.tickClock(now);
     // Say so when the clock is waiting for the circuit rather than for the
     // slider. Otherwise a machine running slower than the period asks for

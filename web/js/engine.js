@@ -274,7 +274,10 @@ export class Circuit {
   tickClock(now) {
     const k = this.clock;
     if (!k || !k.running) return false;
-    if (now < k.nextAt) return false;
+    // A period of 0 is "unbounded": no wall-clock pacing, so the only
+    // thing still gating an edge is the circuit having settled. The app
+    // calls this repeatedly within a frame in that mode.
+    if (k.period > 0 && now < k.nextAt) return false;
     if (this.nextEventAt() !== null) {
       // still propagating — hold the edge and try again next frame
       k.stalled = true;
@@ -326,6 +329,12 @@ export class Circuit {
   // flat through most of the slider and then fell off a cliff at the end.
   // Quantising is what makes the control proportional.
   delayOf(d) {
+    // Turbo: no delay at all. Every device switches the instant its gate
+    // does, so a whole machine settles in one pass of the event queue
+    // rather than in a wavefront. Nothing is drawn mid-propagation
+    // because there is no mid-propagation — which is the trade, and why
+    // it is a mode rather than the bottom of the slider.
+    if (this.baseDelay <= 0) return 0;
     const n = this.varianceSteps;
     let spread = 1;
     if (n > 0) {
