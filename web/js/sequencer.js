@@ -1051,6 +1051,26 @@ export const MemControl = defineModule('memctrl', {
     // needs to read a register pair, address the ROM with it, and write
     // a register pair, which does not fit in one pass of the ring.
     { name: 'finCycle2', x: -1.5, y: 70, side: 'in' },
+    // The jump, call and increment group, which the full machine adds to
+    // the memory group above. Held low on machines that do not build them,
+    // so this one unit serves both.
+    { name: 'opJUN', x: -1.5, y: 74, side: 'in' },
+    { name: 'opJCN', x: -1.5, y: 78, side: 'in' },
+    { name: 'opJMS', x: -1.5, y: 82, side: 'in' },
+    { name: 'opBBL', x: -1.5, y: 86, side: 'in' },
+    { name: 'opINC', x: -1.5, y: 90, side: 'in' },
+    { name: 'opISZ', x: -1.5, y: 94, side: 'in' },
+    { name: 'opADD', x: -1.5, y: 98, side: 'in' },
+    { name: 'opSUB', x: -1.5, y: 102, side: 'in' },
+    { name: 'opLD', x: -1.5, y: 106, side: 'in' },
+    // Conditions, evaluated outside and consulted here.
+    { name: 'condTake', x: -1.5, y: 110, side: 'in' },
+    { name: 'iszTake', x: -1.5, y: 114, side: 'in' },
+    // The accumulator group's escape line: 1111 decoded a second time.
+    { name: 'accGroup', x: -1.5, y: 118, side: 'in' },
+    // XCH's read half — the register reaching the accumulator, which needs
+    // its own line because XCH writes in both directions at once.
+    { name: 'opXCHread', x: -1.5, y: 122, side: 'in' },
     // outputs
     { name: 'pcInc', x: 320, y: 0, side: 'out' },
     { name: 'irLoad', x: 320, y: 6, side: 'out' },
@@ -1077,10 +1097,26 @@ export const MemControl = defineModule('memctrl', {
     { name: 'pcLoad', x: 320, y: 102, side: 'out' },
     // FIN's address latch captures during READ2 of its first cycle
     { name: 'finLoad', x: 320, y: 108, side: 'out' },
+    // The operand register: the second byte of a two-byte instruction.
+    { name: 'oprLoad', x: 320, y: 114, side: 'out' },
+    // The address stack, for JMS and BBL.
+    { name: 'stackPush', x: 320, y: 120, side: 'out' },
+    { name: 'stackPop', x: 320, y: 126, side: 'out' },
+    // BBL loads its own data field into the accumulator on the way out.
+    { name: 'accFromBbl', x: 320, y: 132, side: 'out' },
+    // INC and ISZ write the incrementer's output back to the register.
+    { name: 'regFromInc', x: 320, y: 138, side: 'out' },
   ],
   build(m) {
     const pF = m.port('pFetch'), pR1 = m.port('pRead1');
     const pR2 = m.port('pRead2'), pE = m.port('pExec');
+
+    // INC and ISZ both drive the incrementer and write its result back, so
+    // the OR of them is wanted in two places — the register write enable
+    // here and the incrementer's own line further down. Built once.
+    const incOrIszEarly = m.net();
+    m.instantiate(Or2, GATE_W * 2, GATE_H * 43,
+      { a: m.port('opINC'), b: m.port('opISZ'), y: incOrIszEarly });
 
     // FIN's second cycle, inverted once here and used throughout: the
     // real 4004 keeps a flip-flop in its timing logic (the schematic
@@ -1155,34 +1191,55 @@ export const MemControl = defineModule('memctrl', {
     // mux drives zero when nothing selects it. The accumulator would be
     // wiped by every XCH — which is what happened, and is why the
     // omission is stated rather than left to be noticed.
-    const w0 = m.net(), wantAcc = m.net();
+    // Everything that ends with a value in the accumulator: the immediate,
+    // the memory reads, the arithmetic pair, the register-to-accumulator
+    // moves, BBL's data field, and the whole accumulator group.
+    const w0 = m.net(), w1 = m.net(), w2 = m.net(), wantAcc = m.net();
     m.instantiate(Or2, GATE_W * 8, GATE_H * 4,
       { a: m.port('opLDM'), b: m.port('memToAcc'), y: w0 });
     const arith0 = m.net();
     m.instantiate(Or2, GATE_W * 8, GATE_H * 5,
       { a: m.port('opADM'), b: m.port('opSBM'), y: arith0 });
     m.instantiate(Or2, GATE_W * 10, GATE_H * 4,
-      { a: w0, b: arith0, y: wantAcc });
-    m.instantiate(And2, GATE_W * 12, GATE_H * 4,
+      { a: w0, b: arith0, y: w1 });
+    // the full machine's additions
+    const reads = m.net(), grp = m.net();
+    m.instantiate(Or2, GATE_W * 8, GATE_H * 6,
+      { a: m.port('opLD'), b: m.port('opXCHread'), y: reads });
+    m.instantiate(Or2, GATE_W * 8, GATE_H * 7,
+      { a: m.port('accGroup'), b: m.port('opBBL'), y: grp });
+    m.instantiate(Or2, GATE_W * 10, GATE_H * 6, { a: reads, b: grp, y: w2 });
+    const alu2 = m.net();
+    m.instantiate(Or2, GATE_W * 10, GATE_H * 8,
+      { a: m.port('opADD'), b: m.port('opSUB'), y: alu2 });
+    const w3 = m.net();
+    m.instantiate(Or2, GATE_W * 12, GATE_H * 6, { a: w2, b: alu2, y: w3 });
+    m.instantiate(Or2, GATE_W * 12, GATE_H * 4, { a: w1, b: w3, y: wantAcc });
+    m.instantiate(And2, GATE_W * 15, GATE_H * 4,
       { a: pE, b: wantAcc, y: m.port('accLoad') });
 
-    // …and the three sources it picks between.
+    // …and the sources it picks between.
     m.instantiate(And2, GATE_W * 5, GATE_H * 6,
       { a: pE, b: m.port('opLDM'), y: m.port('accFromImm') });
     m.instantiate(And2, GATE_W * 5, GATE_H * 8,
       { a: pE, b: m.port('memToAcc'), y: m.port('accFromMem') });
-    // accFromReg is deliberately tied low: this machine uses XCH only to
-    // load the address pair, so it needs the write half. Turning the read
-    // half on without the two-phase split the Subtract and Exchange
-    // machine has would make the accumulator take the register in the
-    // same phase the register takes the accumulator, and both land on the
-    // register's old value — XCH r1 stores 1 instead of 5.
-    m.instantiate(Inverter, GATE_W * 5, GATE_H * 10,
-      { a: VDD, y: m.port('accFromReg') });
+    // The register-to-accumulator path: LD reads a register outright, and
+    // XCH reads one while writing the other way in the same instruction.
+    // That simultaneity is only safe because the write is gated to the
+    // clock's low half while the accumulator samples the high half — see
+    // the two-phase note on the register file's write enable.
+    const rd2acc = m.net();
+    m.instantiate(Or2, GATE_W * 5, GATE_H * 10,
+      { a: m.port('opLD'), b: m.port('opXCHread'), y: rd2acc });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 10,
+      { a: pE, b: rd2acc, y: m.port('accFromReg') });
 
-    // XCH writes a register; the memory-write group writes the 4002.
-    m.instantiate(And2, GATE_W * 5, GATE_H * 12,
-      { a: pE, b: m.port('opXCH'), y: m.port('regWrite') });
+    // XCH writes a register; so do INC and ISZ through the incrementer.
+    const regW = m.net();
+    m.instantiate(Or2, GATE_W * 5, GATE_H * 12,
+      { a: m.port('opXCH'), b: incOrIszEarly, y: regW });
+    m.instantiate(And2, GATE_W * 9, GATE_H * 12,
+      { a: pE, b: regW, y: m.port('regWrite') });
     m.instantiate(And2, GATE_W * 5, GATE_H * 14,
       { a: pE, b: m.port('memWrite'), y: m.port('ramWrite') });
 
@@ -1192,17 +1249,33 @@ export const MemControl = defineModule('memctrl', {
     // Both write the carry from the adder — ADM sets it on overflow, SBM
     // sets it when there was no borrow, which is the same carry-out bit
     // read two ways. So one control line covers both.
-    const arith = m.net();
+    //
+    // ADD and SUB are the same pair with a register as the operand, so all
+    // four share the adder and all four write the carry it produces.
+    const arith = m.net(), arithR = m.net(), anyArith = m.net();
     m.instantiate(Or2, GATE_W * 5, GATE_H * 16,
       { a: m.port('opADM'), b: m.port('opSBM'), y: arith });
-    m.instantiate(And2, GATE_W * 9, GATE_H * 16,
-      { a: pE, b: arith, y: m.port('accFromAlu') });
-    m.instantiate(And2, GATE_W * 9, GATE_H * 18,
-      { a: pE, b: arith, y: m.port('carryWrite') });
-    // SBM alone inverts the operand and the carry in.
-    const sn = m.net();
+    m.instantiate(Or2, GATE_W * 5, GATE_H * 17,
+      { a: m.port('opADD'), b: m.port('opSUB'), y: arithR });
+    m.instantiate(Or2, GATE_W * 7, GATE_H * 16,
+      { a: arith, b: arithR, y: anyArith });
+    m.instantiate(And2, GATE_W * 10, GATE_H * 16,
+      { a: pE, b: anyArith, y: m.port('accFromAlu') });
+    // The accumulator group also writes the carry — the rotates move a bit
+    // through it, and CLC/STC/CMC/TCC/TCS/DAA each define what it becomes.
+    // Its own logic decides the value; this line only says "now".
+    const cw = m.net();
+    m.instantiate(Or2, GATE_W * 10, GATE_H * 18,
+      { a: anyArith, b: m.port('accGroup'), y: cw });
+    m.instantiate(And2, GATE_W * 13, GATE_H * 18,
+      { a: pE, b: cw, y: m.port('carryWrite') });
+    // SBM and SUB invert the operand and the carry in — the same
+    // conditioning, differing only in where the operand came from.
+    const sub = m.net(), sn = m.net();
+    m.instantiate(Or2, GATE_W * 2, GATE_H * 20,
+      { a: m.port('opSBM'), b: m.port('opSUB'), y: sub });
     m.instantiate(Inverter, GATE_W * 5, GATE_H * 20,
-      { a: m.port('opSBM'), y: sn });
+      { a: sub, y: sn });
     m.instantiate(Inverter, GATE_W * 7, GATE_H * 20,
       { a: sn, y: m.port('aluSub') });
 
@@ -1249,9 +1322,70 @@ export const MemControl = defineModule('memctrl', {
       { a: m.port('opFIN'), b: m.port('finCycle2'),
         y: m.port('romFromPair') });
 
-    // JIN loads the low eight bits of the program counter from the pair.
-    m.instantiate(And2, GATE_W * 5, GATE_H * 30,
-      { a: pE, b: m.port('opJIN'), y: m.port('pcLoad') });
+    // ── the jump, call and increment group ──────────────────────────────
+    // Everything below is held low on the machines that do not build these
+    // blocks (their ports tie to VSS), so one control unit serves the
+    // memory machine and the complete 4004 alike.
+
+    // The operand register takes the second byte during DECODE. Only a
+    // two-byte instruction has one; loading it otherwise would capture
+    // whatever the ROM happened to be showing.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 31,
+      { a: m.port('pDecode'), b: m.port('twoByte'), y: m.port('oprLoad') });
+
+    // The program counter is loaded by five different instructions, and
+    // they differ only in where the address comes from — which is the
+    // datapath's problem, not this unit's. Here they are simply ORed.
+    //
+    //   JUN  unconditional, target in the operand byte
+    //   JCN  the same, if the condition tree says take
+    //   JMS  the same, after pushing the return address
+    //   BBL  the target is whatever the stack pops
+    //   JIN  the target is the register pair just read
+    const jcnTake = m.net(), iszTake = m.net();
+    m.instantiate(And2, GATE_W * 5, GATE_H * 33,
+      { a: m.port('opJCN'), b: m.port('condTake'), y: jcnTake });
+    // ISZ jumps while the incremented register is NOT zero — a different
+    // condition from JCN's, computed on the increment rather than the
+    // accumulator, which is why it arrives on its own line.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 35,
+      { a: m.port('opISZ'), b: m.port('iszTake'), y: iszTake });
+
+    const j1 = m.net(), j2 = m.net(), j3 = m.net(), j4 = m.net();
+    const anyJump = m.net();
+    m.instantiate(Or2, GATE_W * 9, GATE_H * 31,
+      { a: m.port('opJUN'), b: jcnTake, y: j1 });
+    m.instantiate(Or2, GATE_W * 9, GATE_H * 33,
+      { a: m.port('opJMS'), b: m.port('opBBL'), y: j2 });
+    m.instantiate(Or2, GATE_W * 9, GATE_H * 35,
+      { a: m.port('opJIN'), b: iszTake, y: j3 });
+    m.instantiate(Or2, GATE_W * 12, GATE_H * 31, { a: j1, b: j2, y: j4 });
+    m.instantiate(Or2, GATE_W * 12, GATE_H * 34, { a: j4, b: j3, y: anyJump });
+    m.instantiate(And2, GATE_W * 15, GATE_H * 32,
+      { a: pE, b: anyJump, y: m.port('pcLoad') });
+
+    // The stack, at EXEC. A push stores the address the counter has
+    // already advanced to, which is the return address precisely because
+    // the counter stepped over both bytes during fetch.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 37,
+      { a: pE, b: m.port('opJMS'), y: m.port('stackPush') });
+    // The pop happens at FETCH of the *next* pass rather than at EXEC:
+    // popping and loading the counter on the same edge races, and the
+    // counter wins about half the time. Reading the stack a phase early
+    // and letting the value sit on the load input is the fix.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 39,
+      { a: pF, b: m.port('opBBL'), y: m.port('stackPop') });
+
+    // BBL's data field reaches the accumulator on the way out. This is the
+    // reason a 4004 subroutine cannot return a value in the accumulator —
+    // the return instruction overwrites it, by design.
+    m.instantiate(And2, GATE_W * 5, GATE_H * 41,
+      { a: pE, b: m.port('opBBL'), y: m.port('accFromBbl') });
+
+    // INC and ISZ both write the incrementer's output back to the register
+    // they name. ISZ additionally jumps, which is handled above.
+    m.instantiate(And2, GATE_W * 9, GATE_H * 43,
+      { a: pE, b: incOrIszEarly, y: m.port('regFromInc') });
   },
 });
 

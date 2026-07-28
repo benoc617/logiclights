@@ -2859,6 +2859,14 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     // while its data byte is on the ROM's output.
     opFIM, opFIN, opJIN, twoByte: dec.nets.twoByte, finCycle2,
     irLoad: irLoadLine,
+    // The jump, call and increment group is not built on this machine —
+    // it is the memory group's demonstration, not the whole CPU. Tied low
+    // rather than left unbound: an unbound port floats, and Z into a
+    // control line is how three earlier bugs here started. The complete
+    // 4004 binds these for real.
+    opJUN: VSS, opJCN: VSS, opJMS: VSS, opBBL: VSS,
+    opINC: VSS, opISZ: VSS, opADD: VSS, opSUB: VSS, opLD: VSS,
+    condTake: VSS, iszTake: VSS, accGroup: VSS, opXCHread: VSS,
   }, { tag: 'ctrl' });
   c.region('Control unit',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
