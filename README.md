@@ -38,17 +38,25 @@ way through the machine. Every wire is a light: amber means driven high.
 - **A CPU being built, one idea at a time** — eight machines under
   CMOS · Machines, each isolating exactly one thing: fetch, then phase
   sequencing, the 4004's real `ADD r` datapath, conditional jumps with the
-  full condition mask, two-byte fetch, `SUB` sharing the adder with `ADD`
-  alongside a genuine `XCH`, and the thirteen-instruction accumulator
-  group. Give one a clock and it runs a program on its own — the ROM is
-  disassembled beside it with
-  the executing instruction highlighted. The long arc is a complete Intel
-  4004; see [docs/4004.md](docs/4004.md) for the plan and what remains.
+  full condition mask, two-byte fetch with a subroutine stack, `SUB`
+  sharing the adder with `ADD` alongside a genuine `XCH`, the
+  thirteen-instruction accumulator group, and the memory machine talking
+  to a 4002 RAM across a bus. Give one a clock and it runs a program on
+  its own — the ROM is disassembled beside it with the executing
+  instruction highlighted. Every defined 4004 instruction but one now acts
+  on hardware; see [docs/4004.md](docs/4004.md) for what remains.
 - **Guides for the big circuits** — a caption under every input explaining
   what it selects, a legend of function codes with the live one highlighted,
   a grid of internal state the outputs do not expose (all sixteen registers
   at once, or every function an ALU computed simultaneously), and labelled
-  boxes drawn on the canvas naming each block of a composed machine.
+  boxes on the canvas naming each block of a composed machine, with arrows
+  between them showing what feeds what.
+- **"More info" on every circuit** — a short subtitle in the status bar,
+  and behind it a panel carrying the idea in a sentence or two, a
+  line-by-line walkthrough of what the program does and why, and the
+  engineering detail underneath. Every value the walkthrough quotes is
+  re-checked against the running hardware by the test suite, so the prose
+  cannot drift from the circuit it describes.
 
 No frameworks, no build step: vanilla ES modules + canvas.
 

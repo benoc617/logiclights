@@ -86,10 +86,12 @@ web/
   js/sequencer.js     ring counter, control units, JCN condition tree
   js/ram4002.js       the 4002 RAM — modelled, not simulated (see rule 4)
   js/buses.js         groups switches/lamps into binary buses
-  js/render.js        canvas renderer (pan/zoom, glow, LOD, region boxes)
+  js/render.js        canvas renderer (pan/zoom, glow, LOD, region boxes
+                      and the block-level flow arrows between them)
   js/sound.js         WebAudio relay clicks + transistor "zzzt"
   js/picker.js        the nested circuit menu
   js/io-panel.js      binary I/O table: buses, hints, legends, live state
+  js/info-panel.js    the "more info" overlay: walkthrough + engineering
   js/main.js          canvas sizing, pointer input, the rAF loop
 test/sim-test.mjs     headless truth-table suite (no framework, plain node)
 test/run.mjs          shards the suite across cores; same checks, much faster

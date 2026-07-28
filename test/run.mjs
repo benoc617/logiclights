@@ -110,18 +110,40 @@ const last = blocks[blocks.length - 1];
 last.text = last.text.replace(TAIL, '\n');
 
 // ── deal blocks to shards ────────────────────────────────────────────────
-// Longest-first by line count, onto whichever shard has the least work so
-// far. The block sizes are a poor proxy for runtime — the machine tests are
-// slow because of clock ticks, not length — but it beats round-robin, and
-// the real fix for stragglers is that there are more blocks than shards.
+// Longest-first by estimated cost, onto whichever shard has the least work
+// so far.
+//
+// The estimate is measured runtime when we have it. Line count is a bad
+// proxy — the expensive blocks are expensive because of clock ticks, not
+// length, and a four-line block that walks the memory machine outweighs a
+// hundred lines of truth table. Balancing by length left two shards at
+// ~120s while five finished inside ten, which is most of the wall time
+// spent waiting on an unlucky deal rather than on work.
+//
+// So each run writes what every block actually cost to `.block-times.json`
+// beside this file, and the next run deals with those numbers. The first
+// run on a clean checkout (or after adding a block) falls back to line
+// count for anything it has not seen, then corrects itself.
+const TIMES = join(HERE, '.block-times.json');
+let known = {};
+try { known = JSON.parse(readFileSync(TIMES, 'utf8')); } catch { /* first run */ }
+// Unseen blocks get the median known cost rather than zero: a new block
+// assumed free lands on an already-loaded shard, which is the one case
+// where guessing wrong costs the most.
+const seen = Object.values(known).filter(n => typeof n === 'number');
+const fallback = seen.length
+  ? seen.slice().sort((a, b) => a - b)[Math.floor(seen.length / 2)]
+  : 0;
+const estimate = i => known[blocks[i].name] ?? (fallback || blocks[i].text.length);
+
 const shards = Array.from({ length: JOBS }, () => []);
 const cost = new Array(JOBS).fill(0);
 const order = blocks.map((b, i) => i)
-  .sort((a, b) => blocks[b].text.length - blocks[a].text.length);
+  .sort((a, b) => estimate(b) - estimate(a));
 for (const i of order) {
   const lightest = cost.indexOf(Math.min(...cost));
   shards[lightest].push(i);
-  cost[lightest] += blocks[i].text.length;
+  cost[lightest] += estimate(i);
 }
 // keep each shard's blocks in source order, so failure output reads sanely
 for (const s of shards) s.sort((a, b) => a - b);
@@ -167,7 +189,16 @@ function shardSource(indices) {
   return [
     preamble,
     ...missing,
-    ...indices.map(i => blocks[i].text),
+    // Each block is followed by a stamp of what it cost, so the parent can
+    // learn the real per-block times and deal better next run. The stamp
+    // is a bare statement between blocks, which is safe because every
+    // block is a self-contained `{ }` or a top-level call.
+    ...indices.flatMap(i => [
+      `\nglobalThis.__t = Date.now();`,
+      blocks[i].text,
+      `console.log("__TIME__ " + ${JSON.stringify(blocks[i].name)}`
+        + ` + " " + (Date.now() - globalThis.__t));`,
+    ]),
     // the parent reads this line; anything else on stdout is a failure
     // message and is passed straight through
     '\nconsole.log(`__SHARD__ ${checks} ${failures}`);\n',
@@ -177,15 +208,20 @@ function shardSource(indices) {
 function runOne(source, id) {
   const file = shardPath(id);
   writeFileSync(file, source);
+  const started = Date.now();
   return new Promise(resolve => {
     execFile('node', [file], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 },
       (err, stdout, stderr) => {
+        const ms = Date.now() - started;
         let checks = 0, failures = 0, sawSummary = false;
         const noise = [];
+        const times = {};
         for (const line of stdout.split('\n')) {
           const m = line.match(/^__SHARD__ (\d+) (\d+)$/);
-          if (m) { checks += +m[1]; failures += +m[2]; sawSummary = true; }
-          else if (line.trim()) noise.push(line);
+          if (m) { checks += +m[1]; failures += +m[2]; sawSummary = true; continue; }
+          const t = line.match(/^__TIME__ (.*) (\d+)$/);
+          if (t) { times[t[1]] = +t[2]; continue; }
+          if (line.trim()) noise.push(line);
         }
         // A shard that dies before printing its summary has failed in a way
         // the counters cannot express — a syntax error, a throw outside a
@@ -197,7 +233,7 @@ function runOne(source, id) {
           noise.push(`FAIL [runner] shard ${id} exited without a summary`
             + `${err ? ` (${err.message.split('\n')[0]})` : ''}`);
         }
-        resolve({ checks, failures, out: noise, err: stderr.trim() });
+        resolve({ checks, failures, out: noise, err: stderr.trim(), ms, times });
       });
   });
 }
@@ -220,7 +256,35 @@ for (let id = 0; id < active.length; id++) {
   rmSync(shardPath(id), { force: true });
 }
 
+// Record what each block cost, for the next run's deal. Only on a clean
+// run: a failing shard can die part-way and report times for a fraction of
+// its blocks, and writing those would teach the scheduler that an
+// expensive block is cheap. Best-effort — a read-only checkout should not
+// fail the suite over a cache file.
+if (!failures) {
+  const merged = { ...known };
+  for (const r of results) Object.assign(merged, r.times);
+  try { writeFileSync(TIMES, JSON.stringify(merged, null, 1) + '\n'); }
+  catch { /* not writable; the deal just stays as good as it was */ }
+}
+
 const secs = ((Date.now() - t0) / 1000).toFixed(1);
 console.log(`${checks} checks, ${failures} failures  `
   + `(${secs}s across ${active.length} ${active.length === 1 ? 'process' : 'processes'})`);
+
+// --shards prints how long each one took. Blocks are dealt by line count,
+// which is a poor proxy for runtime, so a straggler here is the thing to
+// look at before concluding the suite is uniformly slow — one shard
+// finishing far after the rest means the deal was unlucky, not that there
+// is more work to do. See docs/TEST-SPEED.md.
+if (args.includes('--shards')) {
+  const rows = results
+    .map((r, id) => ({ id, ms: r.ms, blocks: active[id].length }))
+    .sort((a, b) => b.ms - a.ms);
+  console.log('\nshard   seconds   blocks');
+  for (const r of rows) {
+    console.log(`  ${String(r.id).padStart(2)}  ${(r.ms / 1000).toFixed(1).padStart(8)}`
+      + `  ${String(r.blocks).padStart(6)}`);
+  }
+}
 process.exit(failures ? 1 : 0);

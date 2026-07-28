@@ -4,7 +4,7 @@ Working plan for Logic Lights. Checked items are done and verified; the
 rest is the queue, roughly in dependency order. Keep this file current —
 it is the handoff between sessions.
 
-## Status (2026-07-26)
+## Status (2026-07-28)
 
 The library builds the same logic in relays, CMOS and NMOS so the versions
 can be compared, and the comparison is now the organising idea rather than
@@ -25,6 +25,13 @@ generated, so this file does not repeat them.
   so most rows can be read across.
 - The library is split into catalogue data (`web/data/circuits.json`) and
   per-circuit behaviour (`web/js/behaviour/`) — see [DATA.md](DATA.md).
+- **v4** is the 4004 arc: eight machines, and every defined instruction but
+  `WPM` acting on hardware. Circuit prose split by where the reader wants
+  it — a subtitle in the status bar, then an info panel carrying the idea,
+  a line-by-line walkthrough, and the engineering detail — with the
+  walkthrough's quoted values verified against the running hardware by the
+  suite. The machines annotate themselves with labelled blocks and arrows
+  between them, and no two boxes may cross.
 
 ## Ship it
 
@@ -126,10 +133,13 @@ generated, so this file does not repeat them.
       its section markers and runs the pieces across cores, with no change
       to what is checked. Because it shards, the wall time is the cost of
       the slowest single block rather than the sum, so more cores stop
-      helping once one block dominates — which one, and the two follow-ups
-      worth doing, are in [TEST-SPEED.md](TEST-SPEED.md). That file
-      deliberately carries no timings: they drifted twice in one session
-      as the 4004 machines grew.
+      helping once one block dominates. The deal is now balanced on
+      *measured* block times, recorded each clean run — block length turned
+      out to be a poor proxy for runtime and most shards were sitting idle,
+      so learning the real costs roughly halved the wall time. What is left
+      and what to try next is in [TEST-SPEED.md](TEST-SPEED.md), which
+      deliberately carries no timings: they drifted twice in one session as
+      the 4004 machines grew.
 - [ ] **Renderer caching** — build a `Path2D` per net once and reuse it;
       currently every wire is re-pathed each frame, now once per logic value.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module

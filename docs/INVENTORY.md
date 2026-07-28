@@ -141,7 +141,7 @@ circuit exists to explain.
 
 ## Test suite
 
-`node test/sim-test.mjs` → **150729 checks, 0 failures**
+`node test/sim-test.mjs` → **150737 checks, 0 failures**
 
 Every circuit is built and checked for sane geometry and buses; most have a
 full truth-table sweep. Device circuits assert on drive *strength* as well

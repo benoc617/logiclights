@@ -1,2 +1,6 @@
 node_modules/
 .DS_Store
+
+# Per-block timings the test runner learns to balance its shards. Machine
+# specific and regenerated on every clean run, so it is not shared.
+test/.block-times.json

@@ -153,8 +153,9 @@ rectangle so the circuit is never hidden behind it.
 
 `test/run.mjs` is the runner to use day to day. It splits the suite at its
 `// ── ` section markers, runs the pieces across cores and sums the
-results — the same checks in roughly a quarter of the wall time. Two
-properties keep it honest and are worth not breaking:
+results — the same checks, several times faster. Numbers are deliberately
+not quoted here; [TEST-SPEED.md](TEST-SPEED.md) explains why, and how to
+measure. Three properties keep it honest and are worth not breaking:
 
 - **Blocks are independent.** Nothing carries state from one `// ── `
   section to the next except the `checks`/`failures`/`clock` counters, and
@@ -164,6 +165,12 @@ properties keep it honest and are worth not breaking:
 - **A dead shard is a failure, not zero checks.** If a shard exits without
   printing its summary the runner counts a failure, because "we lost some
   tests" must never be indistinguishable from "everything passed".
+- **The deal is learned, not guessed.** Each clean run records what every
+  block cost and the next run balances the shards with those numbers.
+  Block length is a bad proxy for runtime — clock ticks are the cost, not
+  lines — and balancing by length left most shards idle while two ran on.
+  Only clean runs are recorded, so a part-way failure cannot teach the
+  scheduler that an expensive block is cheap.
 
 Helpers declared at top level inside a block (`lampV`, `testAdder`, the
 `GATES` table) are hoisted into every shard, so the suite can keep
@@ -265,7 +272,38 @@ Two rendering choices differ from the device labels, on purpose:
   overflows its box points at the wrong devices. `side: 'inside'` tucks the
   label into the top-left corner for boxes packed too tightly for an
   outside caption — the sixteen register rows, the per-slice internals of
-  the ALU.
+  the ALU. `side: 'left'` runs it up the left edge instead, for a box that
+  *encloses* other labelled boxes: both captions would otherwise be drawn
+  at the same corner and the outer name would sit on the inner one.
+
+Because the caption is clipped, a region name has to be a **block name and
+not a description** — "Adder", not "Adder — accumulator + register +
+carry". A long one is truncated to an ellipsis, so the explanation is lost
+while still costing layout; that prose belongs in the circuit's `brief` or
+`desc`, which the info panel shows in full.
+
+Boxes may nest, and do — a register row inside its bank inside the file —
+but two boxes must never *partially* overlap. A box crossing another's edge
+means one block's caption is pointing at another block's devices, which is
+worse than no label at all. The test suite checks this, because it is
+invisible until you look at exactly the right zoom: thirty-four crossings
+had accumulated across the machines before anyone measured.
+
+## Flow arrows
+
+`c.flow(fromName, toName, { label })` draws a labelled arrow between two
+named regions — "Program counter" to "ROM row decode", labelled `address`.
+Also annotation: nets carry the electrical truth, but on a machine with
+thousands of devices a single signal is one thread among hundreds, and the
+block-level story of what feeds what is invisible without saying it.
+
+Endpoints are region *names* rather than coordinates, so an arrow follows
+its boxes when a block moves instead of having to be re-typed — and a name
+that matches no region throws rather than silently drawing nothing, since a
+diagram quietly losing half its arrows is the failure worth preventing.
+Routing is an elbow between the nearest facing edges, which keeps every
+arrow on one of two axes; `{ dir: 'v' }` forces a vertical departure where
+the automatic choice would cut back across the source box.
 
 ## The circuit picker
 
