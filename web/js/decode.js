@@ -50,13 +50,18 @@ export const OPR_NAMES = [
 // array (rows on a pitch, gated by an enable); this one is laid out for
 // reading instruction lines, so it stays separate rather than being bent
 // to serve both.
+const DEC_BANK = 8;                 // rows per bank
+const DEC_BANK_W = GATE_W * 9;      // horizontal pitch between the two banks
+const DEC_BUF_W = GATE_W * 5;       // pitch between the two banks of buffers
+
 export const Decode16 = defineModule('dec16', {
   ports: [
     ...Array.from({ length: 4 }, (_, i) => ({
       name: `a${i}`, x: -1.5, y: i * 4, side: 'in',
     })),
     ...Array.from({ length: 16 }, (_, i) => ({
-      name: `y${i}`, x: GATE_W * 10, y: i * 6, side: 'out',
+      name: `y${i}`, x: DEC_BANK_W * 2 + GATE_W, y: (i % DEC_BANK) * 6,
+      side: 'out',
     })),
   ],
   build(m) {
@@ -66,14 +71,22 @@ export const Decode16 = defineModule('dec16', {
       na.push(m.net());
       m.instantiate(Inverter, 0, i * (GATE_H + 2), { a: a[i], y: na[i] });
     }
+    // Two banks of eight rather than one column of sixteen — the same fold
+    // the register file uses, for the same reason. Sixteen stacked rows
+    // make a block over a thousand units tall beside a datapath a fifth of
+    // that, and everything else on the machine then has to be placed around
+    // a column of mostly empty space. The rows are independent, so this is
+    // pure placement and costs nothing electrically.
     for (let r = 0; r < 16; r++) {
       const p0 = m.net(), p1 = m.net();
-      const y = r * (GATE_H + 2);
-      m.instantiate(And2, GATE_W * 2, y,
+      const y = (r % DEC_BANK) * (GATE_H + 2);
+      const x = Math.floor(r / DEC_BANK) * DEC_BANK_W;
+      m.instantiate(And2, x + GATE_W * 2, y,
         { a: (r & 1) ? a[0] : na[0], b: (r & 2) ? a[1] : na[1], y: p0 });
-      m.instantiate(And2, GATE_W * 4, y,
+      m.instantiate(And2, x + GATE_W * 4, y,
         { a: (r & 4) ? a[2] : na[2], b: (r & 8) ? a[3] : na[3], y: p1 });
-      m.instantiate(And2, GATE_W * 6, y, { a: p0, b: p1, y: m.port(`y${r}`) });
+      m.instantiate(And2, x + GATE_W * 6, y,
+        { a: p0, b: p1, y: m.port(`y${r}`) });
     }
   },
 });
@@ -91,7 +104,7 @@ export const InstructionDecoder = defineModule('idec', {
     })),
     // one line per OPR value
     ...Array.from({ length: 16 }, (_, i) => ({
-      name: `op${i}`, x: 400, y: i * 6, side: 'out',
+      name: `op${i}`, x: 400, y: (i % DEC_BANK) * 6, side: 'out',
     })),
     // One line per accumulator-group instruction: OPR 1111 decoded again
     // through OPA. `acc0` is CLB, `acc2` is IAC, and so on down the table
@@ -99,7 +112,7 @@ export const InstructionDecoder = defineModule('idec', {
     // single opcode, and this second decode is how the chip tells them
     // apart — the same 4-to-16 tree, one level down.
     ...Array.from({ length: 16 }, (_, i) => ({
-      name: `acc${i}`, x: 400, y: 110 + i * 6, side: 'out',
+      name: `acc${i}`, x: 400, y: 70 + (i % DEC_BANK) * 6, side: 'out',
     })),
     // `twoByte` is high for the instructions that take an address byte
     // after them, which is what tells the sequencer to fetch again before
@@ -115,11 +128,15 @@ export const InstructionDecoder = defineModule('idec', {
     // the sequencer loading the tree. They are ports rather than internal
     // nets so a display can read every one, which is the point of watching
     // a decoder at all.
+    // The buffers follow the decoder's two-bank fold, so each pair sits
+    // beside the row it buffers rather than trailing off the bottom.
     for (let i = 0; i < 16; i++) {
       const t = m.net();
-      m.instantiate(Inverter, GATE_W * 11, i * (GATE_H + 2),
+      const y = (i % DEC_BANK) * (GATE_H + 2);
+      const x = Math.floor(i / DEC_BANK) * DEC_BUF_W;
+      m.instantiate(Inverter, x + GATE_W * 19, y,
         { a: dec.nets[`y${i}`], y: t });
-      m.instantiate(Inverter, GATE_W * 13, i * (GATE_H + 2),
+      m.instantiate(Inverter, x + GATE_W * 21, y,
         { a: t, y: m.port(`op${i}`) });
     }
 
@@ -131,11 +148,14 @@ export const InstructionDecoder = defineModule('idec', {
     // Note this is the *third* place the same decoder module appears —
     // ROM row select, register file, instruction decode — and now a
     // fourth. Address decoding is one operation wearing four hats.
-    const adec = m.instantiate(Decode16, 0, GATE_H * 40, {
+    const ACC_Y = GATE_H * 22;      // clear of the banked OPR decode above
+    const adec = m.instantiate(Decode16, 0, ACC_Y, {
       a0: m.port('i0'), a1: m.port('i1'), a2: m.port('i2'), a3: m.port('i3'),
     });
     for (let i = 0; i < 16; i++) {
-      m.instantiate(And2, GATE_W * 11, GATE_H * 40 + i * (GATE_H + 2),
+      const y = ACC_Y + (i % DEC_BANK) * (GATE_H + 2);
+      const x = Math.floor(i / DEC_BANK) * DEC_BUF_W;
+      m.instantiate(And2, x + GATE_W * 19, y,
         { a: adec.nets[`y${i}`], b: dec.nets.y15, y: m.port(`acc${i}`) });
     }
 

@@ -49,6 +49,7 @@ export class Circuit {
     this.wires = [];   // { net, pts: [[x,y], ...] }
     this.labels = [];  // { text, x, y, size, color, align }
     this.regions = []; // { text, x0, y0, x1, y1 } — annotation only
+    this.flows = [];   // { from, to, label } — block-level arrows, annotation
     this.clock = null; // set by addClock() for circuits that have one
     this.hot = [true, false];
     this.value = [HI, LO];
@@ -170,6 +171,32 @@ export class Circuit {
       color: opts.color || null,
       // where the caption sits: 'top' (default) or 'bottom'
       side: opts.side || 'top',
+    });
+  }
+
+  // A labelled arrow from one block to another — "the instruction register
+  // feeds the decoder". Nets already carry the electrical truth, but on a
+  // machine with thousands of devices a single signal is one thread among
+  // hundreds and the block-level story is invisible. These say what flows
+  // where at the scale a reader actually reads the diagram.
+  //
+  // Endpoints are named regions, not coordinates, so the arrows follow the
+  // boxes when a block moves rather than having to be re-typed. A flow
+  // naming a region that does not exist is a mistake worth failing on —
+  // silently drawing nothing is how a diagram quietly loses half its
+  // arrows — so the lookup happens once here.
+  flow(fromText, toText, opts = {}) {
+    const find = t => {
+      const r = this.regions.find(r => r.text === t);
+      if (!r) throw new Error(`${this.name}: flow names no region "${t}"`);
+      return r;
+    };
+    this.flows.push({
+      from: find(fromText), to: find(toText),
+      label: opts.label || null,
+      // 'auto' routes by the boxes' relative position; 'v' forces a
+      // vertical departure, for blocks that sit diagonally.
+      dir: opts.dir || 'auto',
     });
   }
 

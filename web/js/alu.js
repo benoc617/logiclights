@@ -151,7 +151,7 @@ export const Alu4 = defineModule('alu4', {
     const dec = m.instantiate(Decode3, 0, 0, {
       f0: m.port('f0'), f1: m.port('f1'), f2: m.port('f2'),
     });
-    m.region('Function decoder — F to one-hot', -3, -3, dec.w + 2, dec.h + 2);
+    m.region('Function decode', -3, -3, dec.w + 2, dec.h + 2);
     const NAMES = ['add', 'sub', 'and', 'or', 'xor', 'shl'];
     const sel = {}, nsel = {};
     NAMES.forEach((name, i) => {
@@ -173,7 +173,7 @@ export const Alu4 = defineModule('alu4', {
       });
       bxBottom = i * (GATE_H * 2 + 4) + inst.h;
     }
-    m.region('B inverter — two’s complement for SUB',
+    m.region('B inverter',
       GATE_W * 9.5 - 3, -3, GATE_W * 9.5 + 26, bxBottom + 2);
 
     let carry = sel.sub;   // Cin = 1 for two's-complement subtract

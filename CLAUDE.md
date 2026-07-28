@@ -176,6 +176,26 @@ is exactly when everything else stops being legible. Derive the box from the
 instance's measured extent (`inst.w` / `inst.h`) rather than typed
 coordinates, or it will drift the next time a pitch changes.
 
+Keep region names to a **block name, not a description** — "Adder", not
+"Adder — accumulator + register + carry". The caption is clipped to its
+box's width, so a long one is truncated to an ellipsis and the explanation
+is lost anyway; that belongs in the circuit's `brief` or `desc`. The test
+suite caps them and checks that no two boxes *partially* overlap. Nesting
+is fine and intended (a register row inside its bank inside the file), but
+two boxes crossing each other's edges means one block's caption is pointing
+at another block's devices. Where an outer box encloses labelled inner
+ones, give it `{ side: 'left' }` so its caption runs up the left edge
+instead of landing on top of its child's.
+
+**Say what feeds what with `c.flow()`.** Nets carry the electrical truth,
+but on a machine with thousands of devices one signal is a thread among
+hundreds and the block-level story is invisible. `c.flow('Program counter',
+'ROM row decode', { label: 'address' })` draws a labelled arrow between two
+named regions. Endpoints are region *names*, not coordinates, so arrows
+follow the boxes when a block moves — and an unknown name throws rather
+than silently drawing nothing. Pass `{ dir: 'v' }` to force a vertical
+departure where the automatic choice would cut back across the source box.
+
 **Wires are decorative.** `c.wire()` only stores geometry — conduction comes
 entirely from devices. Two wires of different nets sharing a segment is a
 lie the simulator will never catch, so route deliberately. Crossings are

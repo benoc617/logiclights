@@ -413,7 +413,7 @@ function buildFetch() {
   const bind = {};
   for (let i = 0; i < 8; i++) bind[`i${i}`] = ir[i];
   const dec = instantiate(c, InstructionDecoder, xDec, 0, bind, { tag: 'dec' });
-  c.region('Instruction decoder — one line per opcode',
+  c.region('Instruction decoder',
     xDec - 6, -6, xDec + dec.w + 4, dec.h + 6);
 
   const b = c.bounds();
@@ -436,6 +436,14 @@ function buildFetch() {
     c.addLamp(`IR${i}`, ir[i], xEnd - 5, 22 + i * 4.5, { short: `IR${i}` });
   }
   c.addLamp('2BYTE', dec.nets.twoByte, xEnd - 5, 62, { short: 'TWO' });
+
+  // The fetch loop, said at block level: the counter picks a word, the
+  // array hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.program = P0_PROGRAM;
@@ -516,7 +524,7 @@ function buildSequenced() {
   // ── row 1: the control path ────────────────────────────────────────────
   const ring = instantiate(c, ringCounter(3), 40, 0,
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
-  c.region('Phase ring — FETCH / DECODE / EXEC',
+  c.region('Phase ring',
     36, -6, 40 + ring.w + 4, ring.h + 6);
 
   // ── row 2: the datapath ────────────────────────────────────────────────
@@ -557,7 +565,7 @@ function buildSequenced() {
     instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
       { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
   }
-  c.region('Instruction register — loads only during FETCH',
+  c.region('Instruction register',
     xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
 
   // ── decode and control, to the right of the register ───────────────────
@@ -568,7 +576,7 @@ function buildSequenced() {
   const dbind = {};
   for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
   const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
-  c.region('Instruction decoder — one line per opcode',
+  c.region('Instruction decoder',
     xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
 
   const ROW3 = ROW2;
@@ -584,7 +592,7 @@ function buildSequenced() {
     // ignore. The test suite catches it, which is how this was found.
     opADD: VSS, opJCN: VSS, condTake: VSS,
   }, { tag: 'ctrl' });
-  c.region('Control unit — phase AND instruction',
+  c.region('Control unit',
     xCtrl - 6, ROW3 - 6, xCtrl + ctrl.w + 6, ROW3 + ctrl.h + 6);
 
   const b = c.bounds();
@@ -610,6 +618,19 @@ function buildSequenced() {
     c.addLamp(`IR${i}`, ir[i], xEnd - 5, 36 + i * 4.5, { short: `IR${i}` });
   }
   c.addLamp('JUMP', ctrl.nets.pcLoad, xEnd - 5, 76, { short: 'JMP' });
+
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // …and what the sequenced machine adds: a phase ring, and a control
+  // unit that ANDs a phase with a decoded instruction.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('Control unit', 'Program counter', { label: 'jump' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
@@ -694,7 +715,7 @@ function buildAddMachine() {
   const ROW2 = 150;
   const ring = instantiate(c, ringCounter(3), 40, 0,
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
-  c.region('Phase ring — FETCH / DECODE / EXEC',
+  c.region('Phase ring',
     36, -6, 40 + ring.w + 4, ring.h + 6);
 
   const nFetch = c.net();
@@ -727,7 +748,7 @@ function buildAddMachine() {
     instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
       { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
   }
-  c.region('Instruction register — loads only during FETCH',
+  c.region('Instruction register',
     xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
 
   const xDec = xIr + 190;
@@ -763,7 +784,7 @@ function buildAddMachine() {
   }
 
   // ── the datapath ───────────────────────────────────────────────────────
-  const ROW3 = ROW2 + 380;
+  const ROW3 = ROW2 + 680;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
 
   // The register file, addressed by the instruction's low nibble — which is
@@ -775,8 +796,8 @@ function buildAddMachine() {
     d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
     we: ctrl.nets.regWrite,
   }, { tag: 'rf' });
-  c.region('Register file — OPA names the register, exactly as the real encoding does',
-    36, ROW3 - 6, 40 + rf.w + 4, ROW3 + rf.h + 6);
+  c.region('Register file',
+    36, ROW3 - 6, 40 + rf.w + 4, ROW3 + rf.h + 6, { side: 'left' });
 
   // The carry flag: one bit, written by ADD, read by the adder. The 4004
   // has exactly this, and ADD both consumes and produces it — which is why
@@ -788,7 +809,7 @@ function buildAddMachine() {
     b0: rf.nets.q0, b1: rf.nets.q1, b2: rf.nets.q2, b3: rf.nets.q3,
     cin: carryQ,
   }, { tag: 'add' });
-  c.region('Adder — accumulator + register + carry',
+  c.region('Adder',
     xAdd - 6, ROW3 - 6, xAdd + adder.w + 6, ROW3 + adder.h + 6);
 
   const xCf = xAdd + adder.w + 40;
@@ -818,7 +839,7 @@ function buildAddMachine() {
       { a: fromAlu, b: fromImm, y: d }, { tag: `mxo${i}` });
     accD.push(d);
   }
-  c.region('Source mux — immediate for LDM, the sum for ADD',
+  c.region('Accumulator source mux',
     xMux - 6, ROW3 - 6, xMux + 90, ROW3 + 4 * 40);
 
   const xAcc = xMux + 110;
@@ -858,6 +879,26 @@ function buildAddMachine() {
     c.addLamp(`R${i}`, rf.nets[`q${i}`], xEnd - 5, 98 + i * 4.5, { short: `R${i}` });
   }
   c.addLamp('CARRY', cf.nets.q0, xEnd - 5, 120, { short: 'CY' });
+
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // Control, then the ADD datapath: OPA names a register, the file reads
+  // it, the adder sums it with the accumulator and the carry, and the mux
+  // steers the result back.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('Instruction register', 'Read decode', { label: 'OPA' });
+  c.flow('Register file', 'Adder', { label: 'operand' });
+  c.flow('Carry flag', 'Adder', { label: 'carry in' });
+  c.flow('Adder', 'Carry flag', { label: 'carry out' });
+  c.flow('Adder', 'Accumulator source mux', { label: 'sum' });
+  c.flow('Accumulator source mux', 'Accumulator');
+  c.flow('Accumulator', 'Adder', { label: 'accumulator' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
@@ -1020,7 +1061,7 @@ export function buildJcnMachine(program = P3_PROGRAM) {
   c.region('Instruction decoder', xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
 
   // ── the datapath ───────────────────────────────────────────────────────
-  const ROW3 = ROW2 + 380;
+  const ROW3 = ROW2 + 680;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
   const accZero = c.net(), carryQ = c.net();
 
@@ -1033,7 +1074,7 @@ export function buildJcnMachine(program = P3_PROGRAM) {
     m0: ir[0], m1: ir[1], m2: ir[2], m3: ir[3],
     accZero, carry: carryQ, test, take: condTake,
   }, { tag: 'cond' });
-  c.region('Condition tree — does this jump take?',
+  c.region('Condition tree',
     xCond - 6, ROW3 - 6, xCond + 180, ROW3 + 70);
 
   const xCtrl = xDec + dec.w + 40;
@@ -1066,7 +1107,8 @@ export function buildJcnMachine(program = P3_PROGRAM) {
     d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
     we: ctrl.nets.regWrite,
   }, { tag: 'rf' });
-  c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+  c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6,
+    { side: 'left' });
 
   const xAdd = xRf + rf.w + 50;
   const adder = instantiate(c, rippleAdder(4), xAdd, ROW3, {
@@ -1149,6 +1191,27 @@ export function buildJcnMachine(program = P3_PROGRAM) {
   c.addLamp('ZERO', accZero, xEnd - 5, 98, { short: 'Z' });
   c.addLamp('CARRY', carryQ, xEnd - 5, 103, { short: 'CY' });
   c.addLamp('TAKE', condTake, xEnd - 5, 108, { short: 'TK' });
+
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // The conditional machine's addition is the loop back through the
+  // condition tree: the accumulator's state decides whether the jump is
+  // taken, and the control unit loads the counter when it is.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('Register file', 'Adder', { label: 'operand' });
+  c.flow('Adder', 'Source mux', { label: 'sum' });
+  c.flow('Source mux', 'Accumulator');
+  c.flow('Accumulator', 'Zero detect');
+  c.flow('Zero detect', 'Condition tree', { label: 'is zero' });
+  c.flow('Carry flag', 'Condition tree', { label: 'carry' });
+  c.flow('Condition tree', 'Control unit', { label: 'take?' });
+  c.flow('Control unit', 'Program counter', { label: 'jump' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
@@ -1302,7 +1365,7 @@ function buildTwoByteMachine() {
   // four phases now, not three
   const ring = instantiate(c, ringCounter(4), 40, 0,
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
-  c.region('Phase ring — FETCH / DECODE / FETCH2 / EXEC',
+  c.region('Phase ring',
     36, -6, 40 + ring.w + 4, ring.h + 6);
 
   const nFetch = c.net();
@@ -1343,7 +1406,7 @@ function buildTwoByteMachine() {
     instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
       { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
   }
-  c.region('Instruction register — the opcode',
+  c.region('Instruction register',
     xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
 
   const xDec = xIr + 190;
@@ -1352,7 +1415,7 @@ function buildTwoByteMachine() {
   const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
   c.region('Instruction decoder', xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
 
-  const ROW3 = ROW2 + 380;
+  const ROW3 = ROW2 + 680;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
   const accZero = c.net(), carryQ = c.net();
   const condTake = c.net();
@@ -1377,7 +1440,7 @@ function buildTwoByteMachine() {
     opISZ: dec.nets.op7, iszTake,
     opJMS: dec.nets.op5, opBBL: dec.nets.op12,
   }, { tag: 'ctrl' });
-  c.region('Control unit — four phases',
+  c.region('Control unit',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
 
   // The PC's enable comes from the control unit: it advances on FETCH, and
@@ -1399,7 +1462,7 @@ function buildTwoByteMachine() {
     clk: clkNet, nclk, load: ctrl.nets.oprLoad,
     d0: rom.nets.d0, d1: rom.nets.d1, d2: rom.nets.d2, d3: rom.nets.d3,
   }, { tag: 'opr' });
-  c.region('Operand register — the second byte',
+  c.region('Operand register',
     xOpr - 6, ROW2 - 6, xOpr + 150, ROW2 + 90);
 
   // The address stack — three registers on a cylinder, per section 2.4 of
@@ -1411,7 +1474,7 @@ function buildTwoByteMachine() {
     push: ctrl.nets.stackPush, pop: ctrl.nets.stackPop,
     d0: PC.nets.q0, d1: PC.nets.q1, d2: PC.nets.q2,
   }, { tag: 'stk' });
-  c.region('Address stack — three registers on a cylinder, pointer rotates',
+  c.region('Address stack',
     xStk - 6, ROW2 - 266, xStk + stack.w + 10, ROW2 - 260 + stack.h + 10);
 
   // the jump target now comes from the operand, not the opcode
@@ -1456,7 +1519,8 @@ function buildTwoByteMachine() {
     // in a single instruction.
     we: regWriteGated,
   }, { tag: 'rf' });
-  c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+  c.region('Register file', xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6,
+    { side: 'left' });
 
   // The incrementer: its own block, as on the chip. Sheet 1 of Intel's
   // schematic is titled "ADDRESS REGISTER, INCREMENTER AND INDEX" and
@@ -1481,14 +1545,14 @@ function buildTwoByteMachine() {
     clk: nclk, nclk: clkNet, load: VDD,
     d0: rf.nets.q0, d1: rf.nets.q1, d2: rf.nets.q2, d3: rf.nets.q3,
   }, { tag: 'ihold' });
-  c.region('Increment hold — breaks the read/write loop',
+  c.region('Increment hold',
     xInc - 6, ROW3 - 306, xInc + 140, ROW3 - 220);
 
   const inc = instantiate(c, Incrementer4, xInc, ROW3 - 210, {
     q0: incHold.nets.q0, q1: incHold.nets.q1,
     q2: incHold.nets.q2, q3: incHold.nets.q3,
   }, { tag: 'inc' });
-  c.region('Incrementer — INC and ISZ, a half-adder chain',
+  c.region('Incrementer',
     xInc - 6, ROW3 - 216, xInc + inc.w + 10, ROW3 - 210 + inc.h + 10);
 
   // Write-data mux: incremented register, or the accumulator.
@@ -1504,7 +1568,7 @@ function buildTwoByteMachine() {
     instantiate(c, Or2, xInc + 175, ROW3 - 200 + i * 30,
       { a: fi, b: fa, y: regD[i] }, { tag: `rdo${i}` });
   }
-  c.region('Register write mux — incremented value, or the accumulator',
+  c.region('Register write mux',
     xInc + 114, ROW3 - 206, xInc + 215, ROW3 - 200 + 4 * 30);
 
   // ISZ jumps when the incremented value is NOT zero — the name describes
@@ -1517,7 +1581,7 @@ function buildTwoByteMachine() {
   }, { tag: 'incz' });
   instantiate(c, Inverter, xInc + 330, ROW3 - 200,
     { a: incZero, y: iszTake }, { tag: 'iszt' });
-  c.region('ISZ condition — jump while the register is not yet zero',
+  c.region('ISZ condition',
     xInc + 234, ROW3 - 206, xInc + 350, ROW3 - 150);
 
   const xAdd = xRf + rf.w + 50;
@@ -1609,6 +1673,28 @@ function buildTwoByteMachine() {
   c.addLamp('TAKE', condTake, xEnd - 5, 131, { short: 'TK' });
 
   c.cells = rf.stored;
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // Two bytes and a stack. The operand register holds the second byte, the
+  // incrementer serves INC and ISZ, and the address stack remembers where
+  // a JMS came from.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('ROM output buffers', 'Operand register', { label: 'byte 2' });
+  c.flow('Register file', 'Incrementer', { label: 'register' });
+  c.flow('Incrementer', 'Register write mux');
+  c.flow('Register write mux', 'Register file', { label: 'write back' });
+  c.flow('Incrementer', 'ISZ condition', { label: 'result' });
+  c.flow('ISZ condition', 'Control unit', { label: 'not zero?' });
+  c.flow('Program counter', 'Address stack', { label: 'return addr' });
+  c.flow('Address stack', 'Program counter', { label: 'pop' });
+  c.flow('Operand register', 'Program counter', { label: 'target' });
+
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3];
   c.control = {
@@ -1710,7 +1796,7 @@ function buildAccGroupMachine() {
   const ROW2 = 150;
   const ring = instantiate(c, ringCounter(4), 40, 0,
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
-  c.region('Phase ring — FETCH / DECODE / FETCH2 / EXEC',
+  c.region('Phase ring',
     36, -6, 40 + ring.w + 4, ring.h + 6);
 
   const nFetch = c.net();
@@ -1742,14 +1828,14 @@ function buildAccGroupMachine() {
     instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
       { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
   }
-  c.region('Instruction register — the opcode',
+  c.region('Instruction register',
     xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
 
   const xDec = xIr + 190;
   const dbind = {};
   for (let i = 0; i < 8; i++) dbind[`i${i}`] = ir[i];
   const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
-  c.region('Instruction decoder — OPR, then OPA for the 1111 group',
+  c.region('Instruction decoder',
     xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
 
   // The thirteen accumulator lines, named. Reading `dec.nets.acc2` at every
@@ -1761,7 +1847,7 @@ function buildAccGroupMachine() {
   const STC = dec.nets.acc10, TCS = dec.nets.acc9;
   const DAA = dec.nets.acc11, KBP = dec.nets.acc12;
 
-  const ROW3 = ROW2 + 380;
+  const ROW3 = ROW2 + 680;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
   const accZero = c.net(), carryQ = c.net();
 
@@ -1808,7 +1894,7 @@ function buildAccGroupMachine() {
     opLDM: dec.nets.op13,
     condTake: VSS, accGroup,
   }, { tag: 'ctrl' });
-  c.region('Control unit — four phases',
+  c.region('Control unit',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
 
   const pcEnN = c.net();
@@ -1825,7 +1911,7 @@ function buildAccGroupMachine() {
   const accOp = instantiate(c, AccOperand, xOp, ROW3, {
     opIAC: IAC, opDAC: DAC, opTCS: VSS,
   }, { tag: 'accop' });
-  c.region('Adder operand — which constant this instruction adds',
+  c.region('Adder operand',
     xOp - 6, ROW3 - 6, xOp + accOp.w + 20, ROW3 + accOp.h + 10);
 
   // DAA decides for itself whether to add 6, from the accumulator and the
@@ -1836,7 +1922,7 @@ function buildAccGroupMachine() {
   const daa = instantiate(c, DecimalAdjust, xDaa, ROW3 + 130, {
     a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3], carry: carryQ,
   }, { tag: 'daa' });
-  c.region('Decimal adjust — add 6 when the digit is illegal or carried',
+  c.region('Decimal adjust',
     xDaa - 6, ROW3 + 124, xDaa + daa.w + 20, ROW3 + 130 + daa.h + 10);
 
   // The adder's B input: DAA's 6 when DAA is executing, otherwise the
@@ -1854,7 +1940,7 @@ function buildAccGroupMachine() {
       { a: fd, b: fa, y: b }, { tag: `bo${i}` });
     bIn.push(b);
   }
-  c.region('Adder B mux — DAA\u2019s 6, or the accumulator group\u2019s constant',
+  c.region('Adder B mux',
     xOp + 114, ROW3 + 244, xOp + 215, ROW3 + 250 + 4 * 30);
 
   const xAdd = xOp + accOp.w + 60;
@@ -1885,7 +1971,7 @@ function buildAccGroupMachine() {
   const kbp = instantiate(c, KeyboardProcess, xAdd + 260, ROW3 + 200, {
     a0: accQ[0], a1: accQ[1], a2: accQ[2], a3: accQ[3],
   }, { tag: 'kbp' });
-  c.region('Keyboard process — 1-of-n to binary, 1111 if more than one key',
+  c.region('Keyboard process',
     xAdd + 254, ROW3 + 194, xAdd + 260 + kbp.w + 10, ROW3 + 200 + kbp.h + 10);
 
   // TCS writes a literal 9 (1001) or 10 (1010) depending on the carry —
@@ -1901,7 +1987,11 @@ function buildAccGroupMachine() {
   // the same shape as the two-source mux before it, just wider. CLB needs
   // no term at all: selecting nothing drives zero, which is what CLB
   // means, and TCC's zeroing of bits 1-3 works the same way.
-  const ROW4 = ROW3 + 260;
+  //
+  // This row sits clear of everything hanging below ROW3 — the B mux
+  // reaches 520 units past it and the decimal adjust 470, so the old 260
+  // gap ran this row straight through both of them.
+  const ROW4 = ROW3 + 560;
   const xMux = 40;
   const accD = [];
   for (let i = 0; i < 4; i++) {
@@ -1972,7 +2062,7 @@ function buildAccGroupMachine() {
       { tag: `mo7${i}` });
     accD.push(d);
   }
-  c.region('Accumulator source mux — adder / immediate / CMA / RAL / RAR',
+  c.region('Accumulator source mux',
     xMux - 30, ROW4 - 8, xMux + 140, ROW4 + 4 * 46);
 
   const xAcc = xMux + 170;
@@ -2001,7 +2091,7 @@ function buildAccGroupMachine() {
   const carry = instantiate(c, CarryLogic, xCar, ROW4, {
     carry: carryQ, opCLC: CLC, opSTC: STC, opCMC: CMC, opTCC: tccOrTcs,
   }, { tag: 'carry' });
-  c.region('Carry logic — CLC / STC / CMC / TCC',
+  c.region('Carry logic',
     xCar - 6, ROW4 - 6, xCar + carry.w + 10, ROW4 + carry.h + 10);
 
   // What the carry loads, and when. A rotate writes the bit that fell off
@@ -2099,6 +2189,28 @@ function buildAccGroupMachine() {
   c.addLamp('CY', carryQ, xEnd - 5, 104, { short: 'CY' });
   c.addLamp('ZERO', accZero, xEnd - 5, 109, { short: 'Z' });
 
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // Thirteen instructions behind one opcode, all of them steering the
+  // accumulator's source mux rather than adding new arithmetic.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('Adder operand', 'Adder B mux', { label: 'constant' });
+  c.flow('Decimal adjust', 'Adder B mux', { label: 'DAA’s 6' });
+  c.flow('Adder B mux', 'Adder');
+  c.flow('Adder', 'Accumulator source mux', { label: 'sum' });
+  c.flow('Keyboard process', 'Accumulator source mux', { label: 'KBP' });
+  c.flow('Accumulator source mux', 'Accumulator');
+  c.flow('Accumulator', 'Adder', { label: 'accumulator' });
+  c.flow('Accumulator', 'Decimal adjust');
+  c.flow('Accumulator', 'Keyboard process');
+  c.flow('Carry logic', 'Carry flag');
+
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.accLines = Array.from({ length: 16 }, (_, i) => dec.nets[`acc${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3];
@@ -2136,7 +2248,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
   const ROW2 = 150;
   const ring = instantiate(c, ringCounter(4), 40, 0,
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
-  c.region('Phase ring — FETCH / DECODE / FETCH2 / EXEC',
+  c.region('Phase ring',
     36, -6, 40 + ring.w + 4, ring.h + 6);
 
   const nFetch = c.net();
@@ -2168,7 +2280,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     instantiate(c, DFlipFlop, xIr + 90, ROW2 + i * 26,
       { d, q: ir[i], clk: clkNet, nclk }, { tag: `ir${i}` });
   }
-  c.region('Instruction register — the opcode',
+  c.region('Instruction register',
     xIr - 6, ROW2 - 6, xIr + 160, ROW2 + 7 * 26 + 24);
 
   const xDec = xIr + 190;
@@ -2177,7 +2289,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
   const dec = instantiate(c, InstructionDecoder, xDec, ROW2, dbind, { tag: 'dec' });
   c.region('Instruction decoder', xDec - 6, ROW2 - 6, xDec + dec.w + 4, ROW2 + dec.h + 6);
 
-  const ROW3 = ROW2 + 380;
+  const ROW3 = ROW2 + 680;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
   const accZero = c.net(), carryQ = c.net();
 
@@ -2203,7 +2315,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     opXCHread: dec.nets.op11,
     accGroup: VSS,
   }, { tag: 'ctrl' });
-  c.region('Control unit — four phases',
+  c.region('Control unit',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
 
   const pcEnN = c.net();
@@ -2253,10 +2365,13 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
   // What is built so far is the clock and the φ2-gated write. The φ1 read
   // path into the accumulator is not wired yet, which is why XCH is still
   // one-way on this machine — see opXCHread above.
-  const phi = instantiate(c, TwoPhaseClock, 20, 70, { clk: clkNet },
+  // In the gap between the phase ring above and the program counter row
+  // below. It sat at y=70 tucked under the ring, inside the ring's own
+  // box, so the ring's caption pointed at the clock's transistors.
+  const phi = instantiate(c, TwoPhaseClock, 20, 250, { clk: clkNet },
     { tag: 'phi' });
-  c.region('Two-phase clock — φ2 gates the register write',
-    14, 64, 20 + phi.w + 10, 70 + phi.h + 10);
+  c.region('Two-phase clock',
+    14, 244, 20 + phi.w + 10, 250 + phi.h + 10);
 
   // The ADB register: the accumulator's value, held on the adder's second
   // input.
@@ -2288,7 +2403,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     clk: nclk, nclk: clkNet, load: VDD,
     d0: accQ[0], d1: accQ[1], d2: accQ[2], d3: accQ[3],
   }, { tag: 'adb' });
-  c.region('ADB register — the accumulator, held for the adder and for XCH',
+  c.region('ADB register',
     xDec - 6, ROW3 - 156, xDec + 150, ROW3 - 66);
 
   const regWriteGated = c.net();
@@ -2304,8 +2419,8 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     d0: adb.nets.q0, d1: adb.nets.q1, d2: adb.nets.q2, d3: adb.nets.q3,
     we: regWriteGated,
   }, { tag: 'rf' });
-  c.region('Register file — LD and SUB read it, XCH writes it',
-    xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+  c.region('Register file',
+    xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6, { side: 'left' });
 
   // SUB conditioning: complement the register and the carry, or pass both
   // through for ADD.
@@ -2314,7 +2429,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     r0: rf.nets.q0, r1: rf.nets.q1, r2: rf.nets.q2, r3: rf.nets.q3,
     carry: carryQ, sub: ctrl.nets.aluSub,
   }, { tag: 'subop' });
-  c.region('SUB conditioning — invert the operand and the carry',
+  c.region('SUB conditioning',
     xSub - 6, ROW3 - 6, xSub + subop.w + 20, ROW3 + subop.h + 10);
 
   const xAdd = xSub + subop.w + 60;
@@ -2324,7 +2439,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
     b2: subop.nets.b2, b3: subop.nets.b3,
     cin: subop.nets.cin,
   }, { tag: 'add' });
-  c.region('Adder — shared by ADD and SUB',
+  c.region('Adder',
     xAdd - 6, ROW3 - 6, xAdd + adder.w + 6, ROW3 + adder.h + 6);
 
   // The accumulator's source mux: adder, immediate, or the register file.
@@ -2349,7 +2464,7 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
       { tag: `mo2${i}` });
     accD.push(d);
   }
-  c.region('Accumulator source mux — adder / immediate / register',
+  c.region('Accumulator source mux',
     xMux - 6, ROW4 - 8, xMux + 110, ROW4 + 4 * 40);
 
   const xAcc = xMux + 140;
@@ -2447,6 +2562,27 @@ export function buildSubMachine(program = PSUB_PROGRAM) {
   c.addLamp('CY', carryQ, xEnd - 5, 126, { short: 'CY' });
   c.addLamp('ZERO', accZero, xEnd - 5, 131, { short: 'Z' });
 
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // The read path back from the registers is what this machine adds, and
+  // the two-phase clock is what makes XCH a true exchange.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('Register file', 'SUB conditioning', { label: 'operand' });
+  c.flow('SUB conditioning', 'Adder');
+  c.flow('ADB register', 'Adder', { label: 'accumulator' });
+  c.flow('Adder', 'Accumulator source mux', { label: 'sum' });
+  c.flow('Accumulator source mux', 'Accumulator');
+  c.flow('Accumulator', 'ADB register');
+  c.flow('Accumulator', 'Register file', { label: 'XCH' });
+  c.flow('Two-phase clock', 'Register file', { label: 'φ2' });
+  c.flow('Carry logic', 'Carry flag');
+
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3];
   c.cells = rf.stored;
@@ -2530,10 +2666,14 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   c.addClock(clkSw, { period: 1200 });
   instantiate(c, Inverter, 20, 44, { a: clkNet, y: nclk });
 
-  const ROW2 = 150;
+  // A five-phase ring is taller than the four-phase ones every other
+  // machine uses, so this row starts lower — at 150 its box overlapped the
+  // ring's by two units, which is invisible on screen and still means one
+  // caption sits over the other block's devices.
+  const ROW2 = 170;
   const ring = instantiate(c, ringCounter(5), 40, 0,
     { clk: clkNet, nclk, rst }, { tag: 'ring' });
-  c.region('Phase ring — FETCH / DECODE / READ1 / READ2 / EXEC',
+  c.region('Phase ring',
     36, -6, 40 + ring.w + 4, ring.h + 6);
 
   // JIN loads the program counter from a register pair. On the real chip
@@ -2600,14 +2740,18 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   // DECODE — this machine has no FETCH2, so the byte after the opcode is
   // read while the decoder settles, which works because the program
   // counter has already stepped past the opcode by then.
-  const xOpr = xIr + 160;
-  const opr = instantiate(c, register(8), xOpr, ROW2 + 240, {
+  // Directly under the instruction register, sharing its column: the two
+  // hold the two bytes of one instruction, so reading them stacked is the
+  // arrangement that says so. Placed at xIr rather than xIr + 160, which
+  // put it in the decoder's column.
+  const xOpr = xIr;
+  const opr = instantiate(c, register(8), xOpr, ROW2 + 250, {
     clk: clkNet, nclk, load: ring.nets.p1,
     d0: rom.nets.d0, d1: rom.nets.d1, d2: rom.nets.d2, d3: rom.nets.d3,
     d4: rom.nets.d4, d5: rom.nets.d5, d6: rom.nets.d6, d7: rom.nets.d7,
   }, { tag: 'opr' });
-  c.region('Operand register — FIM\u2019s second byte',
-    xOpr - 6, ROW2 + 234, xOpr + 150, ROW2 + 330);
+  c.region('Operand register',
+    xOpr - 6, ROW2 + 244, xOpr + 160, ROW2 + 340);
 
   const xDec = xIr + 190;
   const dbind = {};
@@ -2687,7 +2831,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { a: t, y: finCycle2 }, { tag: 'fc2c' });
   }
 
-  const ROW3 = ROW2 + 380;
+  const ROW3 = ROW2 + 680;
   const accQ = [c.net(), c.net(), c.net(), c.net()];
   // The RAM's four output bits and the carry flag, declared before the
   // blocks that read them — nets are only wiring, so order is free.
@@ -2716,7 +2860,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     opFIM, opFIN, opJIN, twoByte: dec.nets.twoByte, finCycle2,
     irLoad: irLoadLine,
   }, { tag: 'ctrl' });
-  c.region('Control unit — five phases',
+  c.region('Control unit',
     xCtrl - 6, ROW2 - 6, xCtrl + ctrl.w + 6, ROW2 + ctrl.h + 6);
 
   const pcEnN = c.net();
@@ -2779,7 +2923,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     instantiate(c, Or2, xRom - 34, ROW2 + 260 + i * 26,
       { a: fp, b: fc, y: romAddr[i] }, { tag: `rao${i}` });
   }
-  c.region('ROM address mux — the program counter, or r0:r1 for FIN',
+  c.region('ROM address mux',
     xRom - 96, ROW2 + 254, xRom - 20, ROW2 + 260 + 4 * 26);
 
   const xRf = 40;
@@ -2845,8 +2989,8 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     d0: regD[0], d1: regD[1], d2: regD[2], d3: regD[3],
     we: regWriteGated,
   }, { tag: 'rf' });
-  c.region('Register file — read as a pair during SRC',
-    xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6);
+  c.region('Register file',
+    xRf - 6, ROW3 - 6, xRf + rf.w + 4, ROW3 + rf.h + 6, { side: 'left' });
 
   // JIN's target is the pair it read, captured the same way FIN's
   // address is — the low nibble in READ2, the high in READ1.
@@ -2881,7 +3025,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       d0: rf.nets[`q${i}`], q0: finAddr[i],
     }, { tag: `fa${i}` });
   }
-  c.region('FIN address latch — r1, captured in READ2 of cycle 1',
+  c.region('FIN address latch',
     xRf + rf.w - 2, ROW3 + 294, xRf + rf.w + 90, ROW3 + 300 + 4 * 30);
 
   // Writing a register pair: the operand's high nibble to the even
@@ -2920,7 +3064,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     instantiate(c, Or2, xRf + rf.w + 262, ROW3 + 300 + i * 30,
       { a: th, b: tl, y: pairD[i] }, { tag: `pso${i}` });
   }
-  c.region('Pair write data — even register takes the high nibble',
+  c.region('Pair write data',
     xRf + rf.w + 114, ROW3 + 294, xRf + rf.w + 300, ROW3 + 300 + 4 * 30 + 40);
 
   // The SRC address latch: eight bits, filled a nibble per phase, held
@@ -2931,7 +3075,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     loadHi: ctrl.nets.srcHi, loadLo: ctrl.nets.srcLo,
     d0: rf.nets.q0, d1: rf.nets.q1, d2: rf.nets.q2, d3: rf.nets.q3,
   }, { tag: 'src' });
-  c.region('SRC address latch — chip and register, then character',
+  c.region('SRC address latch',
     xSrc - 6, ROW3 - 6, xSrc + src.w + 10, ROW3 + src.h + 10);
 
   // The memory group lives in the 1110 escape. The decoder already
@@ -2951,7 +3095,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { a: memDec.nets[`y${i}`], b: dec.nets.op14, y }, { tag: `mo${i}` });
     MEMOP.push(y);
   }
-  c.region('Memory-group decode — the 1110 escape, second level',
+  c.region('Memory-group decode',
     xMem - 6, ROW3 + 254, xMem + 260, ROW3 + 260 + 16 * 22);
 
   // Reads: RDM, RDR, RD0-3, and the arithmetic pair ADM/SBM all put
@@ -2985,7 +3129,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     instantiate(c, Or2, xr + 60, yr + 160, { a: w4, b: w5, y: memWrite },
       { tag: 'mwA' });
   }
-  c.region('Memory access decode — which way the data moves',
+  c.region('Memory access decode',
     xMem + 294, ROW3 + 254, xMem + 400, ROW3 + 470);
 
   // ADM, SBM and DCL, named from the memory-group decode below. Driven
@@ -3008,7 +3152,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     r0: ramQ[0], r1: ramQ[1], r2: ramQ[2], r3: ramQ[3],
     carry: carryQ, sub: ctrl.nets.aluSub,
   }, { tag: 'subop' });
-  c.region('SBM conditioning — invert the RAM operand and the carry',
+  c.region('SBM conditioning',
     xSub - 6, ROW3 + 254, xSub + subop.w + 20, ROW3 + 260 + subop.h + 10);
 
   const xAdd = xSub + subop.w + 60;
@@ -3018,7 +3162,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     b2: subop.nets.b2, b3: subop.nets.b3,
     cin: subop.nets.cin,
   }, { tag: 'add' });
-  c.region('Adder — ADM and SBM share it, as ADD and SUB do',
+  c.region('Adder',
     xAdd - 6, ROW3 + 254, xAdd + adder.w + 6, ROW3 + 260 + adder.h + 6);
 
   // The carry flag. ADM sets it on overflow; SBM sets it when there was
@@ -3060,7 +3204,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     clk: clkNet, nclk, load: bankLd,
     d0: bankD[0], d1: bankD[1], d2: bankD[2],
   }, { tag: 'bank' });
-  c.region('Bank select — DCL, three bits, held until the next DCL',
+  c.region('Bank select',
     xAdd + adder.w + 144, ROW3 + 254, xAdd + adder.w + 280, ROW3 + 330);
 
   // The accumulator's source mux: an immediate, the register file, or
@@ -3082,8 +3226,12 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
     sw.driven = true;
     ramSw.push(sw);
   }
-  const ROW4 = ROW3 + 260;
-  const xMux = xSrc + 200;
+  // Clear of the blocks hanging below ROW3 — the pair-write data and the
+  // memory-group decode both reach well past a 260 gap. The row also
+  // starts to the right of the memory-group decode, which is the tallest
+  // thing on the machine and would otherwise swallow the accumulator.
+  const ROW4 = ROW3 + 420;
+  const xMux = xMem + 560;
   const accD = [];
   for (let i = 0; i < 4; i++) {
     const y = ROW4 + i * 40;
@@ -3108,7 +3256,7 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
       { tag: `mo3${i}` });
     accD.push(d);
   }
-  c.region('Accumulator source mux — immediate / register / memory / adder',
+  c.region('Accumulator source mux',
     xMux - 6, ROW4 - 8, xMux + 110, ROW4 + 4 * 40);
 
   const xAcc = xMux + 140;
@@ -3166,6 +3314,31 @@ export function buildMemMachine(program = PMEM_PROGRAM) {
   // into the same instruction. Digit-free name on purpose: a trailing
   // digit would make the I/O table read it as bit 2 of a bus called "C".
   c.addLamp('XCY', finCycle2, xEnd - 5, 169, { short: 'XCY' });
+
+  // The fetch loop, at block level: the counter picks a word, the array
+  // hands back a byte, the register holds it, the decoder reads it.
+  c.flow('Program counter', 'ROM row decode', { label: 'address' });
+  c.flow('ROM row decode', 'ROM array');
+  c.flow('ROM array', 'ROM output buffers', { dir: 'v' });
+  c.flow('ROM output buffers', 'Instruction register', { label: 'byte' });
+  c.flow('Instruction register', 'Instruction decoder', { label: 'opcode' });
+  // The memory group: a register pair becomes an address, the address
+  // reaches the 4002 over a bus, and FIN steers the ROM from the same pair.
+  c.flow('Instruction decoder', 'Control unit', { label: 'which' });
+  c.flow('Phase ring', 'Control unit', { label: 'when' });
+  c.flow('ROM output buffers', 'Operand register', { label: 'byte 2' });
+  c.flow('Register file', 'SRC address latch', { label: 'pair' });
+  c.flow('Register file', 'FIN address latch', { label: 'r0:r1' });
+  c.flow('FIN address latch', 'ROM address mux', { label: 'FIN' });
+  c.flow('Program counter', 'ROM address mux');
+  c.flow('Instruction decoder', 'Memory-group decode', { label: '1110' });
+  c.flow('Memory-group decode', 'Memory access decode');
+  c.flow('Operand register', 'Pair write data');
+  c.flow('Pair write data', 'Register file', { label: 'FIM / FIN' });
+  c.flow('SBM conditioning', 'Adder');
+  c.flow('Adder', 'Accumulator source mux', { label: 'sum' });
+  c.flow('Accumulator source mux', 'Accumulator');
+  c.flow('Accumulator', 'Bank select', { label: 'DCL' });
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2, ring.nets.p3,

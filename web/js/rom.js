@@ -144,7 +144,7 @@ export function romArray(words, width, addrBits, opts = {}) {
       const bind = {};
       for (let i = 0; i < addrBits; i++) bind[`a${i}`] = m.port(`a${i}`);
       const dec = m.instantiate(Dec, 0, 0, bind);
-      m.region('Row decoder — one line high per address',
+      m.region('ROM row decode',
         -3, -3, dec.w + 2, dec.h + 2);
 
       const xArray = GATE_W * (8 + addrBits * 2);
@@ -220,9 +220,9 @@ export function romArray(words, width, addrBits, opts = {}) {
       // buffers below. The array box is the one that matters — the ragged
       // pattern of transistors inside it *is* the stored program.
       const xLast = xArray + (width - 1) * COL_PITCH;
-      m.region('Storage array — a transistor stores 0, an empty site stores 1',
+      m.region('ROM array',
         xArray - 6, -4, xLast + 4, (rows - 1) * ROW_PITCH + 4);
-      m.region('Output buffers — restore full drive',
+      m.region('ROM output buffers',
         xArray - 6, rows * ROW_PITCH + 1,
         xLast + 4, rows * ROW_PITCH + GATE_H * 2 + 6, { side: 'bottom' });
     },

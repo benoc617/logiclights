@@ -28,6 +28,11 @@ const NAME_MAX = 6;
 const REGION_EDGE = 'rgba(120, 136, 178, 0.34)';
 const REGION_FILL = 'rgba(86, 100, 140, 0.07)';
 const REGION_TEXT = '#7f8ba8';
+// Block-level flow arrows: the same family as the region boxes but a shade
+// warmer and solid, so they read as "annotation about structure" rather
+// than as wires — a reader must never take one for a conductor.
+const FLOW_EDGE = 'rgba(150, 164, 205, 0.5)';
+const FLOW_TEXT = '#93a0bd';
 
 const WIRE_COL = [WIRE_OFF, WIRE_HOT, WIRE_X, WIRE_Z];
 const DOT_COL = ['#59637e', WIRE_HOT, WIRE_X, '#4a5470'];
@@ -90,6 +95,7 @@ export class Renderer {
     // texture — so unlike device labels they are drawn at every LOD, with
     // the caption held at a readable pixel size instead of scaling away.
     if (c.regions && c.regions.length) this.drawRegions(ctx, c, lod);
+    if (c.flows && c.flows.length) this.drawFlows(ctx, c, lod);
 
     // wires: glow pass for driven-high and contended nets, then core strokes
     // in one pass per logic value so the whole net reads at a glance
@@ -173,6 +179,25 @@ export class Renderer {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     for (const r of c.regions) {
+      // 'left' runs the caption up the box's left edge, rotated. It exists
+      // for a box that *encloses* other labelled boxes: both captions would
+      // otherwise be drawn at the same top-left corner, and the outer name
+      // would sit on top of the inner one. Turning the outer through 90°
+      // puts it on an edge nothing else uses.
+      if (r.side === 'left') {
+        ctx.save();
+        ctx.translate(r.x0 - fontPx * px * 0.9, r.y1);
+        ctx.rotate(-Math.PI / 2);
+        const tw = ctx.measureText(r.text).width;
+        ctx.fillStyle = BG;
+        ctx.globalAlpha = 0.82;
+        ctx.fillRect(-px * 2, -fontPx * px * 0.62, tw + px * 5, fontPx * px * 1.24);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = r.color || REGION_TEXT;
+        ctx.fillText(r.text, px * 1.5, 0);
+        ctx.restore();
+        continue;
+      }
       // 'inside' tucks the caption into the top-left corner of the box,
       // for boxes packed tightly enough that an outside caption would
       // land on the neighbour above.
@@ -199,6 +224,90 @@ export class Renderer {
       ctx.globalAlpha = 1;
       ctx.fillStyle = r.color || REGION_TEXT;
       ctx.fillText(text, r.x0 + px * 1.5, y);
+    }
+    ctx.restore();
+  }
+
+  // Block-level arrows between named regions: "the instruction register
+  // feeds the decoder". Drawn behind the devices, in the same muted palette
+  // as the region boxes, because they are annotation rather than circuit —
+  // a reader must never mistake one of these for a wire that conducts.
+  //
+  // The route is an elbow between the nearest facing edges: out of one
+  // box's side, across, into the other's. That keeps every arrow on one of
+  // two axes, which is what makes a dozen of them legible at once.
+  drawFlows(ctx, c, lod) {
+    const px = 1 / lod;
+    const cx = r => (r.x0 + r.x1) / 2, cy = r => (r.y0 + r.y1) / 2;
+    ctx.save();
+    ctx.lineWidth = Math.max(0.055, px * 1.4);
+    ctx.strokeStyle = FLOW_EDGE;
+    ctx.fillStyle = FLOW_EDGE;
+
+    const routes = [];
+    for (const f of c.flows) {
+      const a = f.from, b = f.to;
+      const dx = cx(b) - cx(a), dy = cy(b) - cy(a);
+      // Leave by the side that actually faces the target. `dir: 'v'` forces
+      // a vertical departure for blocks stacked diagonally, where the
+      // horizontal choice would cut back across the source box.
+      const horiz = f.dir === 'v' ? false
+                  : f.dir === 'h' ? true
+                  : Math.abs(dx) >= Math.abs(dy);
+      let p0, p1;
+      if (horiz) {
+        p0 = { x: dx >= 0 ? a.x1 : a.x0, y: cy(a) };
+        p1 = { x: dx >= 0 ? b.x0 : b.x1, y: cy(b) };
+      } else {
+        p0 = { x: cx(a), y: dy >= 0 ? a.y1 : a.y0 };
+        p1 = { x: cx(b), y: dy >= 0 ? b.y0 : b.y1 };
+      }
+      // One elbow, turning at the midpoint of the departure axis.
+      const mid = horiz ? (p0.x + p1.x) / 2 : (p0.y + p1.y) / 2;
+      const pts = horiz
+        ? [p0, { x: mid, y: p0.y }, { x: mid, y: p1.y }, p1]
+        : [p0, { x: p0.x, y: mid }, { x: p1.x, y: mid }, p1];
+      routes.push({ f, pts, p1, horiz, dx, dy });
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    }
+
+    // Arrowheads, sized in pixels so they stay visible at every zoom.
+    const head = Math.max(2.2, px * 7);
+    for (const { pts, p1 } of routes) {
+      const prev = pts[pts.length - 2];
+      const ang = Math.atan2(p1.y - prev.y, p1.x - prev.x);
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p1.x - head * Math.cos(ang - 0.42),
+                 p1.y - head * Math.sin(ang - 0.42));
+      ctx.lineTo(p1.x - head * Math.cos(ang + 0.42),
+                 p1.y - head * Math.sin(ang + 0.42));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Labels last, on a slab, so a bus name stays readable where an arrow
+    // crosses dense wiring.
+    const fontPx = Math.min(13, Math.max(8, lod * 0.95));
+    ctx.font = `600 ${fontPx * px}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    for (const { f, pts } of routes) {
+      if (!f.label) continue;
+      const m0 = pts[1], m1 = pts[2];
+      const x = (m0.x + m1.x) / 2, y = (m0.y + m1.y) / 2;
+      const tw = ctx.measureText(f.label).width;
+      ctx.fillStyle = BG;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(x - tw / 2 - px * 3, y - fontPx * px * 0.62,
+        tw + px * 6, fontPx * px * 1.24);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = FLOW_TEXT;
+      ctx.fillText(f.label, x, y);
     }
     ctx.restore();
   }

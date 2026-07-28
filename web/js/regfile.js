@@ -141,7 +141,7 @@ export const RegFile16x4 = defineModule('regfile', {
     // Boxes are derived from the instances' measured extents rather than
     // hand-typed coordinates, so they follow the layout instead of drifting
     // from it the next time a pitch changes.
-    m.region('Write decoder — WA selects one of 16 rows',
+    m.region('Write decode',
       -3, -3, wdec.w + 2, wdec.h + 2);
 
     // read decoder, always enabled — reading is combinational
@@ -149,7 +149,7 @@ export const RegFile16x4 = defineModule('regfile', {
     for (let i = 0; i < REG_ADDR; i++) rBind[`a${i}`] = m.port(`ra${i}`);
     // clear of the write decoder, which is now two banks wide
     const rdec = m.instantiate(Decode4, GATE_W * 21, 0, rBind, { tag: 'rdec' });
-    m.region('Read decoder — RA selects one of 16 rows',
+    m.region('Read decode',
       GATE_W * 21 - 2, -2, GATE_W * 21 + rdec.w + 2, rdec.h + 2);
 
     // Sixteen rows stacked is a tall thin block; the library is drawn wide
@@ -160,6 +160,10 @@ export const RegFile16x4 = defineModule('regfile', {
     const BANK = 8;
     const bankW = CELL_PITCH * REG_WIDTH + GATE_W * 8;
     const xRows0 = GATE_W * 47;   // clear of both decoders, with room for boxes
+    // One right edge for both the per-row boxes and the bank box around
+    // them, measured from the row's own width. Two separate formulas for
+    // the same edge is how the rows ended up hanging out of their bank.
+    const rowRight = xRows => xRows + CELL_PITCH * (REG_WIDTH - 1) + GATE_W * 4;
     for (let r = 0; r < REG_WORDS; r++) {
       const bank = Math.floor(r / BANK);
       const xRows = xRows0 + bank * bankW;
@@ -188,19 +192,22 @@ export const RegFile16x4 = defineModule('regfile', {
       // caption inside the box: the rows are pitched too tightly for an
       // outside label, which would land on the row above
       m.region(`r${r}`, xRows - GATE_W * 4, y - 2,
-        xRows + row.w + 1, y + ROW_PITCH - 6, { side: 'inside' });
+        rowRight(xRows), y + ROW_PITCH - 6, { side: 'inside' });
     }
 
-    // and a box around each bank, naming the whole array
+    // and a box around each bank, naming the whole array.
+    //
+    // The right edge must not reach past the last device in the bank. A
+    // module's width is measured from its devices, so a box drawn wider
+    // than they are hangs outside the module — and every enclosing box a
+    // machine draws around this one then clips it, which read as the
+    // register file being mysteriously too narrow on five machines.
     const bankH = BANK * ROW_PITCH;
     for (let bank = 0; bank < REG_WORDS / BANK; bank++) {
       const x = xRows0 + bank * bankW;
       m.region(
-        bank === 0
-          ? 'Registers r0–r7 — four static latches each'
-          : 'Registers r8–r15 — tri-stated onto one shared read bus',
-        x - GATE_W * 5, -6,
-        x + CELL_PITCH * (REG_WIDTH - 1) + GATE_W * 6, bankH - 4,
+        bank === 0 ? 'Registers r0–r7' : 'Registers r8–r15',
+        x - GATE_W * 5, -6, rowRight(x) + 1, bankH - 4,
         { side: 'bottom' });
     }
   },

@@ -1027,6 +1027,66 @@ function flipAndStep(c, label, on) {
   expect({ name: 'nmosring' }, 'NMOS handover never shorts the rails', seen.nmosring, false);
 }
 
+// ── region layout: labelled boxes must not cross ─────────────────────────
+// The machines annotate themselves with labelled boxes — "this patch is the
+// register file". Boxes may NEST (each register sits inside its bank, which
+// sits inside the file) but must never PARTIALLY overlap: a box crossing
+// another's edge means one block's label is pointing at another block's
+// devices, which is worse than no label at all.
+//
+// This is checked rather than eyeballed because it is invisible until you
+// look at exactly the right zoom. Thirty-four crossings had accumulated
+// across the machines before anyone measured, including a register-file box
+// drawn six units too narrow to contain its own second bank.
+{
+  const ctx = { name: 'region layout' };
+  const MACHINES = ['fetch', 'sequenced', 'addmachine', 'jcnmachine',
+                    'twobyte', 'submachine', 'accgroup', 'memmachine'];
+  const inside = (a, b) =>
+    a.x0 >= b.x0 - 0.01 && a.x1 <= b.x1 + 0.01 &&
+    a.y0 >= b.y0 - 0.01 && a.y1 <= b.y1 + 0.01;
+
+  for (const id of MACHINES) {
+    const c = buildCircuit(id);
+    const rs = c.regions ?? [];
+    const crossings = [];
+    for (let i = 0; i < rs.length; i++) {
+      for (let j = i + 1; j < rs.length; j++) {
+        const a = rs[i], b = rs[j];
+        // Touching edges are fine; only a real 2-D intersection counts.
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        if (w <= 0.01 || h <= 0.01) continue;
+        if (inside(a, b) || inside(b, a)) continue;
+        crossings.push(`"${a.text}" x "${b.text}"`);
+      }
+    }
+    expect(c, `${id}: no region crosses another`, crossings.join('; '), '');
+
+    // A caption is drawn at its box's top-left and clipped to the box's
+    // width, so a label far longer than its box is silently truncated to an
+    // ellipsis. Keep them short enough to survive.
+    for (const r of rs) {
+      expect(ctx, `${id}: region label "${r.text}" is brief`,
+        r.text.length <= 34, true);
+    }
+
+    // Block-level arrows point at regions by name. `flow()` throws on an
+    // unknown name so a renamed block cannot silently drop its arrow, but
+    // a machine that grew a datapath and never described it is a quieter
+    // gap — every machine past the fetch loop should say what feeds what.
+    const flows = c.flows ?? [];
+    expect(c, `${id}: describes its block-level flow`, flows.length > 0, true);
+    for (const f of flows) {
+      expect(c, `${id}: flow source is a live region`,
+        rs.includes(f.from), true);
+      expect(c, `${id}: flow target is a live region`,
+        rs.includes(f.to), true);
+      expect(c, `${id}: flow does not point at itself`, f.from !== f.to, true);
+    }
+  }
+}
+
 // ── composed CMOS gates as library circuits ──────────────────────────────
 // The module-level gate tests exercise And2/Or2/Xor2 directly. These build
 // the *library circuits* wrapped around them, which is a different wiring
