@@ -24,12 +24,49 @@ const setInfoCircuit = initInfoPanel();
 const speed = document.getElementById('speed');
 const speedLabel = document.getElementById('speed-label');
 function currentDelay() {
-  // slider 0..100 -> 1000ms .. 30ms, log scale
-  return Math.round(1000 * Math.pow(30 / 1000, speed.value / 100));
+  // slider 0..100 -> 1000ms .. 1ms, log scale.
+  //
+  // The bottom of the range used to be 30 ms, which the engine's own 15 ms
+  // floor then swallowed — so the fast half of the slider did nothing on a
+  // big machine. It matters most exactly there: a clock phase on the
+  // complete 4004 is thousands of sequential device transitions, so the
+  // per-device delay, not the solver, is what sets the wall time. At 1 ms
+  // a phase takes tens of milliseconds instead of a second, and the
+  // propagation is still drawn — just faster than the eye follows, which
+  // is the point of the fast end.
+  return Math.max(1, Math.round(1000 * Math.pow(1 / 1000, speed.value / 100)));
 }
+// How coarsely to round device delays, given the requested one.
+//
+// At slow speeds every device keeps its own slightly different delay,
+// which is what stops a rank of gates switching in visible lockstep. That
+// costs one solve per device, and on a big machine it is most of the wall
+// time — a clock phase on the complete 4004 is thousands of sequential
+// transitions.
+//
+// Past the point where the stagger is quicker than a frame nobody can see
+// it, so above that the delays are rounded onto a grid and devices settle
+// in groups. The visible propagation is unchanged; what goes is a
+// difference that was never on screen.
+function gridFor(delay) {
+  // Above this, every device keeps its own time and the stagger is
+  // visible. Below it, the grid has to be *coarser than the spread* to
+  // actually merge anything: the spread is the delay times the +/-8%
+  // variance, so a grid of roughly a third of the delay collapses each
+  // rank into one event. A fixed ladder does not work — at 63 ms the
+  // delays land 17.4 / 18.9 / 20.4 ms apart and a 4 ms grid leaves them
+  // on three separate times, which is three times the solves for no
+  // visible difference.
+  if (delay >= 120) return 0;
+  return Math.max(4, Math.round(delay / 2));
+}
+
 function applySpeed() {
   const d = currentDelay();
-  if (circuit) circuit.baseDelay = d;
+  if (circuit) {
+    circuit.baseDelay = d;
+    circuit.timeGrid = gridFor(d);
+  }
   speedLabel.textContent = `${d} ms`;
 }
 speed.addEventListener('input', applySpeed);
@@ -117,6 +154,7 @@ function load(id) {
   if (sel.value !== id) sel.value = id;
   circuit = buildCircuit(id);
   circuit.baseDelay = currentDelay();
+  circuit.timeGrid = gridFor(circuit.baseDelay);
   circuit.step(performance.now());
   // The status row is one glanceable line: what this is, and what it cost
   // to build. Everything longer is behind "more info".

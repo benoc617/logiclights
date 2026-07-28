@@ -127,8 +127,12 @@ generated, so this file does not repeat them.
       generation-stamped so nothing is cleared per pass. Every real
       circuit got faster, most by a small multiple; tiny circuits pay a
       little more for the per-device flag loop, which is the right trade.
-      Per-tick cost has since grown faster than the machines have, which
-      is the open question [TEST-SPEED.md](TEST-SPEED.md) records.
+      Per-tick cost then grew faster than the machines did, and that has
+      since been fixed: the settle loop no longer rescans every device on
+      every pass, which was 24 million pointless comparisons per clock
+      phase on the complete 4004 to find the ~1 device that had anything
+      to do. See [TEST-SPEED.md](TEST-SPEED.md) for what worked, what did
+      not, and what is left.
 - [x] **Test suite wall time** — `test/run.mjs` shards `sim-test.mjs` at
       its section markers and runs the pieces across cores, with no change
       to what is checked. Because it shards, the wall time is the cost of
@@ -145,9 +149,16 @@ generated, so this file does not repeat them.
 - [ ] **Block-diagram LOD tier** above the current one: a whole module
       collapses to a labelled box showing its live bus value, click to zoom
       in. The existing px-per-world-unit ladder extends naturally.
-- [ ] **Time control** — turbo mode that runs event-to-event decoupled from
-      rAF, since an instruction is seconds of wall clock even at minimum
-      delay.
+- [x] **Time control** — the speed slider now reaches genuinely fast, and
+      the reason it could not before is worth recording. Wall time on a
+      large machine was never the solver: it was the per-device delay
+      *variance*, which gives every device a distinct event time and so
+      forces one solve per device. `Circuit.timeGrid` rounds delays onto a
+      grid — off at slow speeds, where the stagger between neighbouring
+      gates is exactly what you are watching, and coarse at fast ones,
+      where it is quicker than a frame and invisible anyway. A clock phase
+      on the complete 4004 went from about a second to about ten
+      milliseconds with no change to what is drawn.
 
 ## Features
 

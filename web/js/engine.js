@@ -63,6 +63,22 @@ export class Circuit {
     this.implicitGround = true;
     this._seq = 0;     // device sequence, for deterministic delay variance
     this._built = false;
+    // The earliest pending device transition, maintained by `_advance` so
+    // `nextEventAt` is a field read rather than a scan of every device.
+    // `_nextStale` says the hint may be too early — the device that owned
+    // it has fired or cancelled — and the next read must rescan once.
+    this._nextAt = null;
+    this._nextStale = true;
+    // Devices holding a scheduled transition, as ids: transistor index, or
+    // ~index for a relay. The settle loop walks this instead of every
+    // device in the machine.
+    this._pending = [];
+    this._prevValInit = false;
+    // How coarsely device delays are rounded, in ms. 0 keeps every
+    // device's own delay, which is the most faithful and the slowest;
+    // raising it lets devices share switching times and settle together.
+    // See `delayOf`.
+    this.timeGrid = 0;
   }
 
   net() {
@@ -284,8 +300,30 @@ export class Circuit {
 
   // Switching time of one device, in ms. Shared with the renderer so the
   // animated travel matches the scheduled event exactly.
+  //
+  // The per-device variance is the expensive part of this simulation, and
+  // the reason is not obvious. Giving every device a slightly different
+  // delay is what stops a rank of gates switching in visible lockstep —
+  // it looks right, and it is honest about real parts differing. But it
+  // also gives every device a *distinct* switching time, and the settle
+  // loop advances event by event: two thousand devices with two thousand
+  // different times means two thousand solves to settle one clock phase.
+  // With identical delays the same devices coalesce into a few dozen
+  // groups, and the same phase settles in tens of solves rather than
+  // thousands. On the complete 4004 that is the difference between about
+  // a second per phase and about twenty milliseconds.
+  //
+  // So the variance is quantised rather than dropped. Delays are rounded
+  // to a grid, which keeps devices in step with their neighbours while
+  // preserving the spread across the machine; `timeGrid` sets how coarse.
+  // At 0 (the default) nothing is rounded and the behaviour is exactly as
+  // before. The app raises it as the speed slider goes up, because past a
+  // certain speed the per-device stagger is faster than a frame and
+  // nobody can see it anyway.
   delayOf(d) {
-    return Math.max(15, this.baseDelay * d.delayFactor) * d.delayScale;
+    const raw = Math.max(15, this.baseDelay * d.delayFactor) * d.delayScale;
+    const g = this.timeGrid;
+    return g > 0 ? Math.max(g, Math.round(raw / g) * g) : raw;
   }
 
   // Build the static conduction tables. The topology never changes — only
@@ -302,6 +340,68 @@ export class Circuit {
   // direction and never in the other.
   _buildStatic() {
     const n = this.netCount;
+
+    // What each device's edge flags were last set to, so a solve only
+    // touches the ones that moved. Filled with -1: no device state matches
+    // it, so the first solve after a build writes every flag exactly once.
+    this._lastOn = {
+      sw: new Int8Array(this.switches.length).fill(-1),
+      rl: new Int8Array(this.relays.length).fill(-1),
+      tr: new Int8Array(this.transistors.length).fill(-1),
+    };
+
+    // Each transistor's gate net, and the value on it that closes the
+    // channel. Flattened out of the device objects because `step` reads
+    // them for every transistor on every pass of the settle loop, and a
+    // typed-array read beats a property chain plus a string compare.
+    this._tGate = new Int32Array(this.transistors.length);
+    this._tOnAt = new Int8Array(this.transistors.length);
+    for (let i = 0; i < this.transistors.length; i++) {
+      const t = this.transistors[i];
+      this._tGate[i] = t.gate;
+      this._tOnAt[i] = t.kind === 'nmos' ? HI : LO;
+    }
+
+    // Which devices watch each net, as a CSR index: `_wStart[net]` to
+    // `_wStart[net + 1]` is a run of entries in `_wDev`. A relay is stored
+    // as `~relayIndex` so one array can hold both kinds without a second
+    // lookup — relays are rare and the bit test is free.
+    //
+    // This is what lets the settle loop visit only the devices whose gate
+    // net actually moved. Rescanning every device on every pass was 24
+    // million pointless comparisons per clock phase on the complete 4004,
+    // to find the one device that had something to do: measured at 1.01
+    // devices firing per pass, against 9,718 scanned.
+    {
+      const nets = n;
+      const count = new Int32Array(nets + 1);
+      for (let i = 0; i < this.transistors.length; i++) count[this._tGate[i]]++;
+      for (let i = 0; i < this.relays.length; i++) count[this.relays[i].coil]++;
+      const start = new Int32Array(nets + 1);
+      let acc = 0;
+      for (let i = 0; i < nets; i++) { start[i] = acc; acc += count[i]; }
+      start[nets] = acc;
+      const dev = new Int32Array(acc);
+      const fill = start.slice();
+      for (let i = 0; i < this.transistors.length; i++) {
+        dev[fill[this._tGate[i]]++] = i;
+      }
+      for (let i = 0; i < this.relays.length; i++) {
+        dev[fill[this.relays[i].coil]++] = ~i;
+      }
+      this._wStart = start;
+      this._wDev = dev;
+    }
+
+    // Scratch for the settle loop: which nets changed value on the last
+    // solve, and a stamp array so a net is queued at most once per pass.
+    this._dirty = new Int32Array(n);
+    this._dirtyLen = 0;
+    this._queued = new Int32Array(n);
+    this._qgen = 0;
+    this._prevVal = new Int8Array(n).fill(-1);
+    this._pending = [];
+    this._prevValInit = false;
 
     // Count the half-edges first so the arrays are allocated exactly once.
     let m = 0;
@@ -453,8 +553,33 @@ export class Circuit {
 
     // Select conduction by flipping edge flags — the edges themselves and
     // their adjacency were laid out once in _buildStatic().
-    for (const s of this.switches) {
-      const closed = s.kind === 'push-nc' ? !s.on : s.on;
+    //
+    // Only devices whose state actually CHANGED are touched. Rewriting
+    // every flag on every solve is what made this quadratic: solves per
+    // tick grow with the circuit (more devices, more events to settle) and
+    // so does the cost of each one, so the product grows as the square.
+    // The complete 4004 was doing ~4,000 solves per tick over ~9,700
+    // devices — 39 million flag writes to settle one clock edge, almost
+    // all of them writing a value that was already there.
+    //
+    // `_lastOn` remembers what each device's flags were set to last time;
+    // a device whose state is unchanged since then costs one comparison.
+    // The first solve after a rebuild writes everything, because
+    // `_lastOn` starts as -1 and nothing matches.
+    const last = this._lastOn;
+    const sws = this.switches, rls = this.relays, trs = this.transistors;
+    for (let i = 0; i < sws.length; i++) {
+      const s = sws[i];
+      const closed = (s.kind === 'push-nc' ? !s.on : s.on) ? 1 : 0;
+      if (last.sw[i] === closed) continue;
+      last.sw[i] = closed;
+      // Something outside the circuit moved a switch — a finger, or a
+      // modelled peripheral answering on the bus. The settle loop's
+      // incremental device visit is driven by nets that changed *between*
+      // solves, and this change did not arrive that way, so the next pass
+      // has to look at every device. The memory machines' 4002 does this
+      // on every access.
+      this._prevValInit = false;
       if (s.to !== null) {
         // changeover: always driving, one throw or the other
         const a = s._e[0], b = s._e[1];
@@ -462,20 +587,30 @@ export class Circuit {
         on[f] = 1; on[f ^ 1] = 1;
         on[o] = 0; on[o ^ 1] = 0;
       } else {
-        const e = s._e[0], v = closed ? 1 : 0;
-        on[e] = v; on[e ^ 1] = v;
+        const e = s._e[0];
+        on[e] = closed; on[e ^ 1] = closed;
       }
     }
-    for (const r of this.relays) {
-      const en = r.energized;
+    for (let i = 0; i < rls.length; i++) {
+      const r = rls[i];
+      const en = r.energized ? 1 : 0;
+      if (last.rl[i] === en) continue;
+      last.rl[i] = en;
       for (const k of r.contacts) {
         const a = k._eNo, b = k._eNc;
-        if (a !== -1) { const v = en ? 1 : 0; on[a] = v; on[a ^ 1] = v; }
+        if (a !== -1) { on[a] = en; on[a ^ 1] = en; }
         if (b !== -1) { const v = en ? 0 : 1; on[b] = v; on[b ^ 1] = v; }
       }
     }
-    for (const t of this.transistors) {
-      const e = t._e, v = t.on ? 1 : 0;
+    // Transistors are the bulk of a machine, so this loop reads the typed
+    // cache directly rather than through a property chain.
+    const lastTr = last.tr;
+    for (let i = 0; i < trs.length; i++) {
+      const t = trs[i];
+      const v = t.on ? 1 : 0;
+      if (lastTr[i] === v) continue;
+      lastTr[i] = v;
+      const e = t._e;
       on[e] = v; on[e ^ 1] = v;
     }
 
@@ -497,9 +632,20 @@ export class Circuit {
       gWL = this._floodWeak(this._wL, seedL, 2, gH, gL);
     }
 
+    // Every net, every solve.
+    //
+    // Resolving only the nets the floods reached was tried and is slower:
+    // in a machine of any size the floods reach about two thirds of all
+    // nets, because everything hangs off the rails through some chain of
+    // conducting channels. Collecting that list costs more than the third
+    // it lets you skip. The straight loop over a typed array is hard to
+    // beat — measure before assuming otherwise.
     const val = this.value, str = this.strength, hot = this.hot;
     const stored = this._stored;
     const sH = this._sH, sL = this._sL, wH = this._wH, wL = this._wL;
+    const ig = this.implicitGround;
+    const pv = this._prevVal, dirty = this._dirty;
+    let dl = 0;
     for (let i = 0; i < n; i++) {
       let v, s;
       const isH = sH[i] === gH, isL = sL[i] === gL;
@@ -509,12 +655,16 @@ export class Circuit {
       else if (wH[i] === gWH && wL[i] === gWL) { v = X; s = WEAK; }  // divider
       else if (wH[i] === gWH) { v = HI; s = WEAK; }
       else if (wL[i] === gWL) { v = LO; s = WEAK; }
-      else if (this.implicitGround) { v = LO; s = NONE; }
+      else if (ig) { v = LO; s = NONE; }
       else if (stored[i] !== Z) { v = stored[i]; s = CHARGE; }
       else { v = Z; s = NONE; }
+      // Record the nets whose value moved, so the settle loop can visit
+      // only the devices watching them rather than every device.
+      if (pv[i] !== v) { pv[i] = v; dirty[dl++] = i; }
       val[i] = v; str[i] = s; hot[i] = v === HI;
       if (s >= WEAK && v <= HI) stored[i] = v;
     }
+    this._dirtyLen = dl;
     // the rails are ideal sources and stay themselves even when shorted
     val[VDD] = HI; str[VDD] = STRONG; hot[VDD] = true;
     val[VSS] = LO; str[VSS] = STRONG; hot[VSS] = false;
@@ -522,20 +672,38 @@ export class Circuit {
   }
 
   // Schedule/apply one device's transition. Returns true if it moved.
-  _advance(d, want, now, key) {
+  // `id` identifies the device for the pending list: a transistor index,
+  // or ~index for a relay. Undefined during the first full pass, which
+  // does not need the list.
+  _advance(d, want, now, key, id) {
     const target = d.pending !== null ? d.pending : d[key];
     if (want !== target) {
       if (want === d[key]) {
         // Control returned to the matching state before the device moved.
+        // Whatever time it had reserved may have been the earliest one.
+        if (d.pending !== null) this._nextStale = true;
         d.pending = null;
       } else {
+        const wasPending = d.pending !== null;
         d.pending = want;
         d.pendingAt = now + this.delayOf(d);
+        // Newly in flight: remember it, so the settle loop can find the
+        // devices with a reservation without scanning all of them.
+        if (!wasPending && id !== undefined) this._pending.push(id);
+        // Keep the "earliest pending" hint current the cheap way: a new
+        // reservation can only lower the minimum, never raise it.
+        if (this._nextAt === null || d.pendingAt < this._nextAt) {
+          this._nextAt = d.pendingAt;
+          this._nextStale = false;
+        }
       }
     }
     if (d.pending !== null && now >= d.pendingAt) {
       d[key] = d.pending;
       d.pending = null;
+      // This device may have been the one holding the minimum, and the
+      // next-earliest is not known without looking.
+      this._nextStale = true;
       return true;
     }
     return false;
@@ -548,23 +716,81 @@ export class Circuit {
   step(now) {
     let clicks = 0;
     let switchings = 0;
+    const trs = this.transistors, rls = this.relays;
+
     for (let guard = 0; guard < 64; guard++) {
+      // solve() builds the static caches on its first call, so they are
+      // read after it rather than before.
       const v = this.solve();
+      const tg = this._tGate, ta = this._tOnAt;
+      const wStart = this._wStart, wDev = this._wDev;
+      const dirty = this._dirty, queued = this._queued;
       let changed = false;
-      for (const r of this.relays) {
-        if (this._advance(r, v[r.coil] === HI, now, 'energized')) {
-          clicks++;
-          changed = true;
+      const qgen = ++this._qgen;
+
+      // Visit the devices whose gate net moved on this solve, plus any
+      // device already holding a reservation — its time may have come
+      // even though nothing about it changed.
+      //
+      // The first pass after a rebuild has no history, so it visits
+      // everything once to give every device its initial state.
+      if (this._prevValInit) {
+        const dl = this._dirtyLen;
+        for (let k = 0; k < dl; k++) {
+          const net = dirty[k];
+          for (let j = wStart[net], je = wStart[net + 1]; j < je; j++) {
+            const d = wDev[j];
+            if (queued[j] === qgen) continue;
+            queued[j] = qgen;
+            if (d >= 0) {
+              if (this._advance(trs[d], v[tg[d]] === ta[d], now, 'on', d)) {
+                switchings++; changed = true;
+              }
+            } else {
+              const r = rls[~d];
+              if (this._advance(r, v[r.coil] === HI, now, 'energized', d)) {
+                clicks++; changed = true;
+              }
+            }
+          }
         }
-      }
-      for (const t of this.transistors) {
-        // An X or Z gate turns the channel off: this is a discrete model
-        // and will not guess at an indeterminate level.
-        const want = t.kind === 'nmos' ? v[t.gate] === HI : v[t.gate] === LO;
-        if (this._advance(t, want, now, 'on')) {
-          switchings++;
-          changed = true;
+        // Devices with a pending transition, whose moment may have
+        // arrived. Kept as a compact list so this is proportional to the
+        // number in flight rather than to the size of the machine.
+        const pend = this._pending;
+        for (let k = pend.length - 1; k >= 0; k--) {
+          const d = pend[k];
+          let moved = false;
+          if (d >= 0) {
+            if (this._advance(trs[d], v[tg[d]] === ta[d], now, 'on', d)) {
+              switchings++; moved = true;
+            }
+          } else {
+            const r = rls[~d];
+            if (this._advance(r, v[r.coil] === HI, now, 'energized', d)) {
+              clicks++; moved = true;
+            }
+          }
+          if (moved) changed = true;
+          // Drop it once it is no longer holding a reservation.
+          const dev = d >= 0 ? trs[d] : rls[~d];
+          if (dev.pending === null) {
+            pend[k] = pend[pend.length - 1];
+            pend.pop();
+          }
         }
+      } else {
+        for (let i = 0; i < rls.length; i++) {
+          if (this._advance(rls[i], v[rls[i].coil] === HI, now, 'energized', ~i)) {
+            clicks++; changed = true;
+          }
+        }
+        for (let i = 0; i < trs.length; i++) {
+          if (this._advance(trs[i], v[tg[i]] === ta[i], now, 'on', i)) {
+            switchings++; changed = true;
+          }
+        }
+        this._prevValInit = true;
       }
       if (!changed) break;
     }
@@ -573,15 +799,31 @@ export class Circuit {
   }
 
   // Earliest scheduled device transition, or null if the circuit is settled.
+  //
+  // Maintained incrementally rather than rescanned. `_advance` records the
+  // earliest pending time it has seen in `_nextAt`, so the common case —
+  // "is anything still moving?" — is a field read. The scan only runs when
+  // that hint has gone stale, which happens when the device that owned the
+  // minimum has since fired: then the true minimum is unknown and has to
+  // be recomputed once.
+  //
+  // Rescanning every call was a third of the settle cost on the complete
+  // 4004. Settling one clock edge there takes about two thousand
+  // event-steps, and each one asked every device in the machine when it
+  // planned to move next.
   nextEventAt() {
+    if (this._nextAt !== null && !this._nextStale) return this._nextAt;
     let t = null;
     const look = d => {
       if (d.pending !== null && (t === null || d.pendingAt < t)) t = d.pendingAt;
     };
     for (const r of this.relays) look(r);
     for (const d of this.transistors) look(d);
+    this._nextAt = t;
+    this._nextStale = false;
     return t;
   }
+
 
   bounds() {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

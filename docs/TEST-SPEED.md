@@ -72,8 +72,8 @@ Two details worth keeping:
 
 ## What is left
 
-The remaining cost is real work: building and clocking large circuits.
-Two things could still move it, in this order.
+The engine work below has landed; the remaining cost is real work,
+building and clocking large circuits.
 
 ### Split the slow blocks
 
@@ -95,40 +95,65 @@ assertions start sharing one trace, so a bug that corrupts the machine
 mid-run could be masked where separate resets would have caught it. Where a
 block resets deliberately *because* it is testing reset, leave it alone.
 
-### Make `settle()` faster
+### ~~Make `settle()` faster~~ — done
 
-**Do last, and separately. Highest value, highest risk.**
+This was the biggest win and it landed. Two things were wrong, and the
+second was not what this file predicted.
 
-The cost is per-tick and it scales worse than the device count does. Every
-`tick()` is two clock edges, and each edge drains the event queue to
-quiescence. Between the smallest machine and the largest, roughly a 5×
-device count costs roughly 10× per tick. That is the wrong direction for a
-solver meant to be near-linear in devices.
+**The settle loop rescanned every device on every pass.** A pass advances
+whichever devices are due, and it did that by asking all of them. Measured
+on the complete 4004: **1.01 devices actually fired per pass**, out of
+9,718 scanned — about 24 million pointless comparisons to settle one clock
+phase. Now each net carries a CSR index of the devices watching it, `solve`
+records which nets changed value, and a pass visits only those devices plus
+the few holding a reservation. `step` went from 20% of runtime to 1.9%.
 
-Two candidates, both unverified:
+**`nextEventAt` rescanned every device too**, to answer "is anything still
+moving?" — thousands of times per phase. It is maintained incrementally
+now: `_advance` keeps the earliest pending time, and the scan only runs
+when the device that owned it has fired.
 
-- **`solve()` re-floods nets that cannot have changed.** The CSR flood is
-  generation-stamped, but if a stamp is bumped too broadly — say once per
-  step rather than per affected net — every edge re-solves the whole graph.
-  Worth profiling before assuming.
-- **The event queue re-settles from scratch each edge.** If the queue
-  drains and refills repeatedly within one edge, the `while` loop in
-  `settle()` is doing several full passes where one would do.
+One trap worth knowing, because it cost a debugging round: a modelled
+peripheral writing to a switch between solves changes a net *without* any
+device having driven it, so the dirty-net list misses it. A switch that
+moved forces one full pass. The 4002 does this on every memory access, and
+the symptom was the memory machines failing while everything else passed.
 
-**Why this is last despite being the biggest win:** it is the only option
-that changes the engine, and the engine is what every test trusts. A subtle
-change to flood or settle order can leave every check passing while making
-the simulation quietly wrong in a case nobody covers — the four-state logic
-(X and Z, drive strengths) is exactly where that hides.
+What did **not** work, both tried and reverted:
 
-If it is attempted:
+- **Resolving only the nets the floods reached.** In a machine of any size
+  the floods reach about two thirds of all nets, because everything hangs
+  off the rails through some chain of conducting channels. Collecting the
+  list costs more than the third it saves.
+- **Skipping unchanged devices when flipping edge flags.** The comparison
+  costs about what the write costs.
 
-1. Profile first (`node --cpu-prof`), and fix what the profile says rather
-   than what looks slow.
-2. Treat any change in a *settled value* as a failure, not just a change in
-   the pass count.
-3. Do it in its own commit with no other changes, so a bisect lands on it
-   cleanly.
+The remaining cost is `solve` and `_flood`, together about 87% of runtime,
+and both are already tight loops over typed arrays. That is the irreducible
+work of resolving a switch-level network — improving further means changing
+what is computed, not how.
+
+### The other half was never the solver
+
+Worth stating plainly, because it is the part that shows up for a *user*
+rather than for the test suite.
+
+Every device gets a slightly different switching delay, which is what stops
+a rank of gates flipping in visible lockstep. It also gives every device a
+*distinct* event time, and the settle advances event by event — so two
+thousand devices with two thousand different times means two thousand
+solves, where identical delays would coalesce into a few dozen groups.
+
+On the complete 4004 that was the difference between about a second per
+clock phase and about ten milliseconds. Not solver cost: scheduling cost,
+bought entirely with visual fidelity nobody can see once the stagger is
+quicker than a frame.
+
+So `Circuit.timeGrid` rounds delays onto a grid, and the app raises it as
+the speed slider goes up — off at slow speeds where the stagger is the
+point, coarse at fast ones where it is not. The slider's range was extended
+to match (its old floor of 30 ms sat above the engine's own 15 ms floor, so
+the fast half of it did nothing on a large machine).
 
 ## Not worth doing
 
