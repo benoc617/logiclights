@@ -233,6 +233,192 @@ footer {
   font-variant-numeric: tabular-nums;
 }
 
+/* The subtitle takes whatever room is left and truncates rather than
+   wrapping — the status row is one line by design. */
+#desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-open {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 10px;
+  height: auto;
+  min-width: 0;
+  font-size: 12px;
+  color: #cdd4e4;
+  background: #232838;
+  border: 1px solid #39415a;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.info-open:hover { background: #2b3145; border-color: #4a5474; }
+
+/* ── info overlay ─────────────────────────────────────────────────────── */
+
+.info {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(9, 11, 17, 0.72);
+}
+.info[hidden] { display: none; }
+
+.info-box {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: 100%;
+  background: #161a24;
+  border: 1px solid #333b52;
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.info-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px 0;
+}
+.info-heading { flex: 1 1 auto; min-width: 0; }
+.info-head h2 {
+  margin: 0;
+  font-size: 19px;
+  color: #f0f3fa;
+}
+.info-head p {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: #ffb340;
+}
+#info-close {
+  flex: 0 0 auto;
+  height: 28px;
+  min-width: 28px;
+  font-size: 18px;
+  line-height: 1;
+  color: #9aa2b6;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+#info-close:hover { color: #f0f3fa; background: #262c3c; }
+
+.info-brief {
+  margin: 12px 18px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #cdd4e4;
+}
+
+.info-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 18px 0;
+  border-bottom: 1px solid #2c3344;
+}
+.info-tabs.single { display: none; }
+.info-tabs [role="tab"] {
+  padding: 7px 12px;
+  height: auto;
+  min-width: 0;
+  font-size: 13px;
+  color: #9aa2b6;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+.info-tabs [role="tab"]:hover { color: #cdd4e4; }
+.info-tabs [role="tab"].active {
+  color: #f0f3fa;
+  border-bottom-color: #ffb340;
+}
+
+.info-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 18px 18px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #b8c0d2;
+}
+.info-body p { margin: 0 0 11px; }
+.info-body p:last-child { margin-bottom: 0; }
+
+.wt-intro, .wt-outro { color: #cdd4e4; }
+.wt-outro {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #262c3c;
+}
+
+.wt-steps {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.wt-steps li {
+  padding: 10px 0 11px;
+  border-top: 1px solid #232838;
+}
+.wt-steps li:first-child { border-top: none; padding-top: 0; }
+
+.wt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+/* The ROM address, so a reader can find the byte in the program listing.
+   Two consecutive rows share an address when an instruction takes two
+   cycles, which is a fact about the chip rather than a rendering slip. */
+.wt-at {
+  min-width: 21px;
+  padding: 1px 5px;
+  font-size: 11px;
+  text-align: center;
+  color: #7f8aa3;
+  background: #1d2230;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.wt-op {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: #ffb340;
+}
+.wt-state {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 11.5px;
+  background: #1b2230;
+  border: 1px solid #29344a;
+  border-radius: 4px;
+}
+.wt-key { color: #7f8aa3; }
+.wt-val {
+  color: #9ad0ff;
+  font-variant-numeric: tabular-nums;
+}
+.wt-text { margin: 0; }
+
 /* ── Binary I/O table ─────────────────────────────────────────────────── */
 
 .panel {
@@ -554,12 +740,18 @@ input.bin:focus {
   .picker-menu { width: 232px; }
   button { height: 29px; min-width: 34px; font-size: 15px; }
   footer { padding: 5px 12px; }
-  #desc {
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  /* #desc already truncates; only the overlay needs resizing down here. */
+  .info { padding: 0; }
+  .info-box {
+    max-height: 100%;
+    border: none;
+    border-radius: 0;
   }
+  .info-head { padding: 12px 14px 0; }
+  .info-head h2 { font-size: 17px; }
+  .info-brief { margin: 10px 14px 0; font-size: 13.5px; }
+  .info-tabs { margin: 12px 14px 0; }
+  .info-body { padding: 12px 14px 16px; }
   .bin { display: none; }
   .bit { min-width: 18px; width: 18px; height: 21px; line-height: 19px; }
   .panel-head { padding: 4px 6px 4px 10px; }

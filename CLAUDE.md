@@ -144,10 +144,17 @@ these layouts want to be wide and short like the rest of the library.
      turns `implicitGround` off, and puts changeover inputs down the left.
      `cmosInv()` builds an inverter column and hands back its gate spine.
 2. Add the catalogue entry to `web/data/circuits.json` with `id`, `group`,
-   `name`, `desc` — the id is what binds the two halves. Optional `hints`,
-   `table` and `state` blocks are documented in `circuits.schema.json`;
-   their function halves (`readout`, `select`, `read`) go in the behaviour
-   map. See [docs/DATA.md](docs/DATA.md).
+   `name`, `title`, `brief` and `desc` — the id is what binds the two
+   halves. The prose fields are split by where the reader sees them:
+   `title` is a few words in the status row, `brief` is the one- or
+   two-sentence opening of the info panel, and `desc` is the engineering
+   detail behind its second tab. Machines also get a `walkthrough`, and
+   every state value it quotes is re-checked against a headless run by
+   the test suite — so run the machine and read the values off it rather
+   than working them out. Optional `hints`, `table` and `state` blocks
+   are documented in `circuits.schema.json`; their function halves
+   (`readout`, `select`, `read`) go in the behaviour map. See
+   [docs/DATA.md](docs/DATA.md).
 3. Add truth-table cases to `test/sim-test.mjs`. For anything with more
    than a couple of inputs, sweep the full input space — the 8-bit adder
    sweeps all 131,072 combinations and it still runs in seconds. For device

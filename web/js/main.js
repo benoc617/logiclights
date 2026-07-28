@@ -6,6 +6,7 @@ import {
 } from './io-panel.js';
 import { Renderer } from './render.js';
 import { RelaySound } from './sound.js';
+import { initInfoPanel } from './info-panel.js';
 
 const canvas = document.getElementById('view');
 const renderer = new Renderer(canvas);
@@ -13,6 +14,10 @@ const sound = new RelaySound();
 
 let circuit = null;
 let cssW = 0, cssH = 0;
+
+// The "more info" overlay. Initialised once; `load` hands it each circuit's
+// catalogue entry so the panel always describes what is on the canvas.
+const setInfoCircuit = initInfoPanel();
 
 // ── controls ─────────────────────────────────────────────────────────────
 
@@ -113,8 +118,13 @@ function load(id) {
   circuit = buildCircuit(id);
   circuit.baseDelay = currentDelay();
   circuit.step(performance.now());
-  document.getElementById('desc').textContent = circuit.desc;
-  document.getElementById('stats').textContent = statsText(circuit.counts());
+  // The status row is one glanceable line: what this is, and what it cost
+  // to build. Everything longer is behind "more info".
+  const entry = CIRCUITS.find(e => e.id === id);
+  document.getElementById('desc').textContent = entry.title ?? '';
+  document.getElementById('stats').textContent =
+    `${entry.name} — ${statsText(circuit.counts())}`;
+  setInfoCircuit(entry);
   clockCtl.hidden = !circuit.clock;
   if (circuit.clock) { applyClockRate(); setRunning(false); }
   buildPanel(circuit);  // sized before fitting — the panel's width is an inset

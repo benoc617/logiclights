@@ -50,7 +50,31 @@
 <footer>
   <span id="stats"></span>
   <span id="desc"></span>
+  <button id="info-open" type="button" class="info-open" aria-haspopup="dialog">more info</button>
 </footer>
+
+<div id="info" class="info" hidden role="dialog" aria-modal="true" aria-labelledby="info-name">
+  <div class="info-box" role="document">
+    <div class="info-head">
+      <div class="info-heading">
+        <h2 id="info-name"></h2>
+        <p id="info-title"></p>
+      </div>
+      <button id="info-close" type="button" title="Close">×</button>
+    </div>
+    <p id="info-brief" class="info-brief"></p>
+    <div id="info-tabs" class="info-tabs" role="tablist">
+      <button type="button" role="tab" data-tab="walkthrough" id="tab-walkthrough"
+              aria-controls="pane-walkthrough">Walkthrough</button>
+      <button type="button" role="tab" data-tab="engineering" id="tab-engineering"
+              aria-controls="pane-engineering">Engineering detail</button>
+    </div>
+    <div class="info-body">
+      <div id="pane-walkthrough" role="tabpanel" aria-labelledby="tab-walkthrough"></div>
+      <div id="pane-engineering" role="tabpanel" aria-labelledby="tab-engineering" hidden></div>
+    </div>
+  </div>
+</div>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

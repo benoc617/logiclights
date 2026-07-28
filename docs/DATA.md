@@ -8,6 +8,33 @@ inert text, or does it need evaluating?
 | **Catalogue** | `web/data/circuits.json` | id, group, name, prose, bus hints, legend rows, state-grid layout |
 | **Behaviour** | `web/js/behaviour/<technology>.js` | `build`, `readout`, `select`, `read` |
 
+## The four kinds of prose
+
+Text about a circuit is split by where the reader is when they want it,
+because one long description served all three badly — it filled the footer,
+and the reader who wanted the idea got the construction details first.
+
+| Field | Where it shows | What belongs there |
+|---|---|---|
+| `title` | the status row, after the name | a few words naming what this demonstrates. Not a sentence; it truncates |
+| `brief` | top of the info panel | one or two sentences: what you are looking at and why it matters |
+| `walkthrough` | info panel, first tab | the program line by line — machines only |
+| `desc` | info panel, "Engineering detail" | how it is built, what it cost, which bug the shape avoids |
+
+The split is worth keeping deliberately. `brief` is the only prose most
+readers see, so it carries the idea rather than the implementation; `desc`
+is where the construction argument lives, and it can be as long as it needs
+to be because nobody reads it by accident.
+
+**Walkthrough values are verified, not asserted.** Each step may quote
+machine state (`ACC`, `CY`, a register), and the test suite re-runs the
+machine headless and checks every quoted value against what the hardware
+actually settles to — including that the named instruction is really the
+byte at that address. This exists because a hand-maintained comment already
+drifted once: the accumulator group's description confidently walked
+through a program that had been replaced. Prose that quotes hardware has to
+be executable, or it is only a claim about hardware.
+
 They are joined in `web/js/circuits.js`, keyed by circuit id, and the join
 is strict in both directions. An entry with no behaviour, or behaviour with
 no entry, throws at load rather than producing a circuit that quietly fails

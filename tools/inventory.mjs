@@ -151,8 +151,14 @@ for (const r of biggest) md += `| ${r.name} | ${r.total} | ${r.nets} |\n`;
 let suite = '(run `node test/sim-test.mjs`)';
 if (!process.argv.includes('--check')) {
   try {
+    // The suite prints one line per failure and nothing per pass, so the
+    // happy path is tiny — but a broken run can print thousands of lines,
+    // and the default 1 MB pipe buffer kills the child with SIGTERM when
+    // it overflows. That looks exactly like "the generator crashed" and
+    // sent one debugging session down the wrong path; 64 MB is plenty.
     const res = execFileSync('node', ['test/sim-test.mjs'],
-      { cwd: new URL('.', root).pathname, encoding: 'utf8' });
+      { cwd: new URL('.', root).pathname, encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024 });
     suite = res.trim().split('\n').pop();
   } catch {
     suite = '(suite failed — fix that before trusting this file)';

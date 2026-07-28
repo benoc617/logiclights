@@ -41,8 +41,66 @@
           "type": "string",
           "minLength": 1
         },
+        "title": {
+          "description": "A few words naming what this circuit demonstrates, shown beside the name in the status row — 'the 4004's real ADD datapath', 'an odd number of inversions never settles'. Not a sentence: it sits inline after an em dash, so it reads as a subtitle rather than prose. Keep it under about 60 characters; the status row is one line and truncates.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 90
+        },
+        "brief": {
+          "description": "One or two sentences opening the info panel: what the reader is looking at and why it is worth looking at. This is the only prose most readers will see, so it carries the idea, not the implementation. The line-by-line story goes in `walkthrough` and the construction details in `engineering`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "walkthrough": {
+          "description": "A line-by-line account of what the circuit does when it runs, shown as the info panel's first tab. Written for machines, whose ROM holds a program worth narrating step by step; circuits with no instruction stream omit it. Every value quoted here is checked against a real headless run by the test suite, so it cannot drift from the hardware the way a hand-maintained comment does.",
+          "type": "object",
+          "required": ["steps"],
+          "additionalProperties": false,
+          "properties": {
+            "intro": {
+              "description": "Optional sentence or two before the steps, framing what the program as a whole is doing.",
+              "type": "string"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["at", "op", "text"],
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "description": "ROM address this step executes, matching the trace's execAddr. Two consecutive steps share an address only when the instruction genuinely takes two instruction cycles, as FIN does.",
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "op": {
+                    "description": "The disassembled instruction, e.g. 'ADD r0'. Checked against the disassembler so it cannot disagree with the ROM's actual bytes.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "state": {
+                    "description": "The machine state after this step, as displayed keys — 'ACC': '14', 'CY': '1'. Asserted against a real run: every key must name a lamp bus the circuit has, and every value must match what the hardware settles to.",
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  },
+                  "text": {
+                    "description": "What is happening and why it matters. The reason this step is in the program rather than a restatement of the opcode.",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "outro": {
+              "description": "Optional closing note — what the program does on its next lap, or what to watch for a second time around.",
+              "type": "string"
+            }
+          }
+        },
         "desc": {
-          "description": "The prose under the canvas. This is the teaching material: say what the circuit is, what to try, and what the interesting failure or trade-off is. Prefer explaining *why* a thing is built this way over restating what the diagram shows.",
+          "description": "Engineering detail: how the thing is actually built, which trade-offs were taken, and which bugs the construction is shaped to avoid. Shown under the info panel's 'Engineering detail' tab, for the reader who wants the construction rather than the idea. The one-line summary lives in `title`, the introduction in `brief`.",
           "type": "string",
           "minLength": 1
         },

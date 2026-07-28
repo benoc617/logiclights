@@ -646,64 +646,6 @@ function buildSequenced() {
 }
 
 
-// P1 — the machine with an accumulator. The first one whose state changes.
-//
-// Everything up to here read a program and understood it. This one acts on
-// what it read: LDM loads its operand nibble into the accumulator, so
-// running the program visibly leaves a number behind.
-//
-// That is a small step and a large one. Small because an accumulator is
-// just a register with a load enable. Large because it closes the loop —
-// decode produces a control line, the control line gates a register, and
-// the register holds the result. Every instruction after this is the same
-// shape with a different destination.
-//
-// The program loads three different values in turn, so the accumulator
-// visibly changes and you can watch each LDM take effect at EXEC and only
-// at EXEC. The NOPs between them are there so the value sits still long
-// enough to read.
-const P1_PROGRAM = [
-  0xD3,   // LDM 3   → ACC = 3
-  0x00,   // NOP
-  0xDC,   // LDM 12  → ACC = 12
-  0x00,   // NOP
-  0xD5,   // LDM 5   → ACC = 5
-  0x00,   // NOP
-  0x00,   // NOP
-  0x00,   // NOP     (then the PC wraps and it runs again)
-];
-
-
-// P1b — jumps take effect. The accumulator machine with a loadable PC.
-//
-// Until now JUN decoded correctly and lit its control line, and then
-// nothing happened: the program counter could only count, so the machine
-// walked off the end of the ROM and wrapped by accident rather than by
-// instruction. Giving the PC a load input is what turns a decoded jump into
-// a taken one.
-//
-// The precedence matters and is easy to get backwards. The PC advances
-// during FETCH so the next address is ready when the instruction finishes
-// — which means a jump discovered at EXEC arrives to find the counter has
-// already moved on. Load therefore has to *overwrite* the incremented
-// value, not combine with it.
-//
-// The program counts the accumulator up by loading three values, then jumps
-// back to the top. With the jump working the machine runs a genuine loop:
-// the PC returns to 0 because an instruction said so, and you can watch
-// pcLoad fire on the edge that does it.
-const P1B_PROGRAM = [
-  0xD3,   // LDM 3   → ACC = 3
-  0x00,   // NOP
-  0xDC,   // LDM 12  → ACC = 12
-  0x00,   // NOP
-  0xD5,   // LDM 5   → ACC = 5
-  0x00,   // NOP
-  0x40,   // JUN 0   → back to the top
-  0x00,   // NOP     (never reached once the jump works)
-];
-
-
 // P2 — the machine adds. The 4004's actual ADD datapath, not a shortcut.
 //
 // ADD on a real 4004 is `ADD r`: the accumulator plus the register the
@@ -1304,34 +1246,35 @@ const P4_PROGRAM = [
 // The accumulator group: thirteen instructions sharing one opcode.
 //
 // Every machine so far has moved values around — load an immediate, add a
-// register, jump. This one is about the accumulator *itself*: incrementing
-// it, complementing it, rotating it through the carry, and setting or
-// clearing the carry directly.
+// register, jump. This one is about the accumulator *itself*, and the
+// program picks the four instructions that are hardest to believe without
+// watching: the BCD adjust, the two carry-to-accumulator transfers, and
+// the keyboard decoder.
 //
-// The program walks through them in an order where each result is visible
-// in the next, so the panel reads as a story rather than a list:
+//   LDM 8   ACC = 8, CY = 0    a BCD digit, as if a sum had landed here
+//   STC     ACC = 8, CY = 1    pretend the previous digit carried
+//   DAA     ACC = 14, CY = 1   carry set, so add 6 — and DAA can SET the
+//                              carry but never resets it, which is why it
+//                              is still 1 here
+//   TCC     ACC = 1, CY = 0    the carry becomes the accumulator, and is
+//                              then cleared: one instruction to turn a
+//                              flag into a number
+//   LDM 4   ACC = 4, CY = 0    0100 — one key down, the third one
+//   KBP     ACC = 3, CY = 0    1-of-n to binary, by table: 0100 → 3
+//   TCS     ACC = 9, CY = 0    carry is 0, so 9 (10 if it were set) —
+//                              the BCD ten's-complement constant
+//   RAR     ACC = 4, CY = 1    rotate right through carry: 1001 shifts
+//                              down to 0100 and the old bit 0 becomes
+//                              the new carry
 //
-//   LDM 5   ACC = 5              start somewhere recognisable
-//   IAC     ACC = 6              increment
-//   CMA     ACC = 9              complement: 0110 → 1001
-//   STC     carry = 1            set the carry by itself
-//   RAL     ACC = 3, carry = 1   rotate left through carry:
-//                                1001 with carry 1 in at the bottom
-//                                becomes 0011, and the old bit 3 (1)
-//                                becomes the new carry
-//   RAR     ACC = 9, carry = 1   rotate back, which is the point — the
-//                                carry makes it a 5-bit rotation, so the
-//                                pair is reversible
-//   CLC     carry = 0            clear it, leaving ACC at 9
-//   DAC     ACC = 8              decrement: add 15, which is −1 at four
-//                                bits and is why there is no subtract here
+// Then the PC wraps to 0 and LDM 8 starts it again, so the loop is the
+// whole eight-byte ROM with no jump instruction in it. The second pass
+// differs from the first, and deliberately: it begins with the carry left
+// set by RAR, so DAA's "carry already set" path is what runs.
 //
-// Then the PC wraps to 0 and LDM 5 starts it again, so the loop is the
-// whole eight-byte ROM with no jump instruction in it.
-//
-// RAL and RAR are the two worth watching. A rotate that dropped the top
-// bit would lose information; routing it through the carry makes the
-// accumulator and carry one 5-bit ring, which is how the 4004 does
+// RAR is the one worth watching bit by bit. A rotate that dropped the
+// bottom bit would lose information; routing it through the carry makes
+// the accumulator and carry one 5-bit ring, which is how the 4004 does
 // multi-nibble shifts on a 4-bit machine.
 const PACC_PROGRAM = [
   0xD8,   // 0  LDM 8      a BCD digit, as if a sum had just landed here

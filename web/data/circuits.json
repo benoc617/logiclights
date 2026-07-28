@@ -24,144 +24,192 @@
       "id": "relay101",
       "group": "Relays · Basics",
       "name": "Meet the Relay",
+      "title": "one relay, and every idea that follows",
+      "brief": "A single relay: energize the coil and the armature snaps over, closing one contact and opening another. Every circuit in this collection — up to a CPU — is this one device repeated.",
       "desc": "One relay: energize the coil and the armature snaps over, closing the normally-open contact and opening the normally-closed one. Everything else here is built from just this."
     },
     {
       "id": "buzzer",
       "group": "Relays · Basics",
       "name": "Buzzer",
+      "title": "a relay that interrupts itself",
+      "brief": "The relay breaks its own coil circuit through its normally-closed contact, so it can never settle: it chatters forever. This is the doorbell buzzer, and the first circuit here that moves on its own.",
       "desc": "The relay interrupts its own coil through its NC contact, so it chatters forever — the classic doorbell buzzer. Hold PRESS and crank the speed up."
     },
     {
       "id": "osc",
       "group": "Relays · Basics",
       "name": "Ring Oscillator",
+      "title": "an odd number of inversions never settles",
+      "brief": "Three inverting relays in a loop. There is no stable state for an odd ring to fall into, so a pulse chases itself around forever at a speed set by the relay delay.",
       "desc": "Three NOT relays in a loop. An odd number of inversions can never settle, so the pulse chases itself around the ring at a speed set by the relay delay."
     },
     {
       "id": "not",
       "group": "Relays · Gates",
       "name": "NOT",
+      "title": "inversion is free with relays",
+      "brief": "The normally-closed contact conducts exactly when the coil is off, so a relay inverts without needing anything extra. In silicon this is the cheapest gate too — which is why NAND and NOR beat AND and OR.",
       "desc": "Inversion is free with relays: the normally-closed contact conducts exactly when the coil is off."
     },
     {
       "id": "and",
       "group": "Relays · Gates",
       "name": "AND",
+      "title": "two contacts in series",
+      "brief": "Current only reaches the lamp when both relays pull in. Series means AND, and that correspondence between wiring shape and logic is the whole of relay design.",
       "desc": "Two normally-open contacts in series — current only gets through when both relays pull in."
     },
     {
       "id": "or",
       "group": "Relays · Gates",
       "name": "OR",
+      "title": "two contacts in parallel",
+      "brief": "Either relay can complete the path on its own. Parallel means OR — the exact dual of the series AND next door.",
       "desc": "Two normally-open contacts in parallel — either relay can complete the path."
     },
     {
       "id": "xor",
       "group": "Relays · Gates",
       "name": "XOR",
+      "title": "the hallway light with two switches",
+      "brief": "Two changeover paths criss-cross, so the lamp lights when the switches disagree. It is the same wiring as a landing light controlled from top and bottom of the stairs.",
       "desc": "Two changeover paths criss-cross like a hallway light with two wall switches: the lamp is on when the switches disagree."
     },
     {
       "id": "nand",
       "group": "Relays · Gates",
       "name": "NAND",
+      "title": "the universal gate, in two relays",
+      "brief": "Parallel normally-closed contacts: on unless both relays pull in. NAND is functionally complete — every other gate here can be built from copies of this one.",
       "desc": "Parallel normally-closed contacts: the light stays on unless both relays pull in. NAND alone is enough to build everything else."
     },
     {
       "id": "nor",
       "group": "Relays · Gates",
       "name": "NOR",
+      "title": "on only when both relays rest",
+      "brief": "Series normally-closed contacts. NOR is the other universal gate, and in NMOS it is the cheap one — which is why 1970s chips are full of them.",
       "desc": "Series normally-closed contacts: on only when both relays are at rest."
     },
     {
       "id": "dec24",
       "group": "Relays · Gates",
       "name": "2-to-4 Decoder",
+      "title": "how an address selects one row",
+      "brief": "A contact tree: the first relay splits the current two ways, the second splits each again, so two inputs light exactly one of four lamps. This is precisely how a memory address reaches a single word.",
       "desc": "A contact tree: relay A splits the current two ways, relay B splits each again. Two inputs select exactly one of four lamps — this is how addresses select memory rows."
     },
     {
       "id": "t101",
       "group": "General",
       "name": "Meet the Transistor",
+      "title": "a relay with no moving parts",
+      "brief": "A MOSFET switches like a relay — the gate is isolated from the channel exactly as a coil is isolated from its contacts — but with no armature to throw. That is the whole reason silicon replaced steel.",
       "desc": "A MOSFET is a relay with no moving parts: the gate is isolated from the channel exactly like a coil is isolated from its contacts. N-channel conducts when the gate is high, P-channel when it is low — the two throws of a relay, split into two devices. Each output needs a resistor to hold it down, because a transistor that is off does not pull anything low; it just lets go."
     },
     {
       "id": "cmosinv",
       "group": "CMOS · Basics",
       "name": "CMOS Inverter",
+      "title": "the whole of CMOS in two transistors",
+      "brief": "A P-channel pulls the output up, an N-channel pulls it down, and the input turns exactly one of them on. Every static CMOS gate is this idea widened.",
       "desc": "Two transistors, and the whole of CMOS in miniature: the P-channel pulls the output up, the N-channel pulls it down, and the input turns exactly one of them on. Slow the clock right down and watch the handover — for a moment both are on (a red X, a dead short through the pair) or both are off (a dashed Z, the output floating on its own charge). Real chips fight both."
     },
     {
       "id": "cmosnand",
       "group": "CMOS · Gates",
       "name": "CMOS NAND",
+      "title": "series pull-down, parallel pull-up",
+      "brief": "The pull-down network is the logic: two N-channels in series, so both inputs must be high to reach ground. The pull-up above it is the exact complement, which is what makes the output always driven.",
       "desc": "Four transistors. The pull-down network is the logic — two N-channels in series, so both inputs must be high to reach ground — and the pull-up is its exact complement, two P-channels in parallel. Every static CMOS gate is built this way, and the pull-up is always the dual of the pull-down."
     },
     {
       "id": "cmosnor",
       "group": "CMOS · Gates",
       "name": "CMOS NOR",
+      "title": "the mirror image of NAND",
+      "brief": "Series P-channels above, parallel N-channels below. Swapping series for parallel in both networks inverts the function — the duality that lets one layout style build every gate.",
       "desc": "The mirror image of NAND: series P-channels above, parallel N-channels below. Swap series for parallel in both networks and the gate inverts — which is why NAND and NOR come in pairs and why either one alone can build a computer."
     },
     {
       "id": "nmosinv",
       "group": "NMOS · Basics",
       "name": "NMOS Inverter",
+      "title": "how the 4004 itself was built",
+      "brief": "One transistor and a resistor load — the pre-CMOS way. It works, but the load only ever pulls up weakly, so the output rises slowly and burns current the whole time it is low.",
       "desc": "How it was done before CMOS, and how the 4004 itself was built: one transistor and a resistor load. It works — but the load only ever drives weakly, so whenever the output is low there is a permanent path from the rail to ground. That static current is why early chips ran hot and why the second transistor was worth adding."
     },
     {
       "id": "diode",
       "group": "General",
       "name": "Diode Logic",
+      "title": "the one directional device here",
+      "brief": "A diode passes current one way and blocks the other. Point a set of them at a pull-down and you get OR; reverse them against a pull-up and you get AND — logic with no transistors at all.",
       "desc": "The one directional device here: a diode passes a 1 forward and a 0 backward, and blocks the other way. Point them one way with a pull-down and you get OR; turn them around under a pull-up and you get AND. No transistors at all — but also no gain, so the output is weaker than the input and these cannot be chained. That is exactly why amplifying devices had to be invented."
     },
     {
       "id": "cmosand",
       "group": "CMOS · Gates",
       "name": "CMOS AND",
+      "title": "there is no such thing as a CMOS AND",
+      "brief": "Only a NAND with an inverter bolted on, which is what you are looking at: six transistors where the NAND alone needs four. Static CMOS always inverts, so the non-inverting gates cost extra.",
       "desc": "There is no such thing as a CMOS AND gate — only a NAND with an inverter bolted on, which is what you are looking at. Six transistors where the NAND alone needs four, and one more gate delay. Compare the relay AND: two contacts in series, and inversion is the thing that costs extra there. Each technology makes a different gate cheap, and that shapes how logic gets written for it."
     },
     {
       "id": "cmosor",
       "group": "CMOS · Gates",
       "name": "CMOS OR",
+      "title": "a NOR plus an inverter, and why",
+      "brief": "The same tax the AND pays. A complementary pull-up network inverts by construction, so OR is built as NOR-then-invert rather than directly.",
       "desc": "A NOR plus an inverter, for the same reason AND is a NAND plus an inverter: the complementary pull-up network of a static CMOS gate always inverts. Nothing in CMOS produces a non-inverted output for free."
     },
     {
       "id": "cmosxor",
       "group": "CMOS · Gates",
       "name": "CMOS XOR",
+      "title": "the gate that costs the most",
+      "brief": "Sixteen transistors from four NANDs, for a function one relay changeover contact gives away for nothing. XOR is where the relay wins outright, and where adders spend most of their silicon.",
       "desc": "Four NAND gates — sixteen transistors for a function a single relay changeover contact gives you for nothing (see the relay XOR). XOR is the gate where relays genuinely beat transistors on device count, and it is why the relay adder is so much smaller than you would guess: its sum output is pure changeover staircase."
     },
     {
       "id": "cmosdec",
       "group": "CMOS · Gates",
       "name": "CMOS 2-to-4 Decoder",
+      "title": "the decoder in front of every memory",
+      "brief": "One-hot decode in complementary CMOS: two address lines, exactly one of four outputs high. This exact circuit sits in front of the ROM array and the register file.",
       "desc": "The same one-hot decode as the relay contact tree and the NMOS version, in complementary CMOS. This is the exact circuit that sits in front of the ROM array and the register file, choosing which row an address refers to — addressing is the operation all memory is built on."
     },
     {
       "id": "cmoslatch",
       "group": "CMOS · Memory",
       "name": "CMOS D Latch",
+      "title": "one bit, held by two inverters",
+      "brief": "Two transmission gates on complementary enables mean exactly one path is ever open: with EN high Q follows D, with EN low the inverter pair holds itself. Storage that actively drives rather than coasting on charge.",
       "desc": "Two inverters and two transmission gates on complementary enables, so exactly one path is ever open: EN high and Q follows D, EN low and the inverter pair closes a loop that holds. NEN must be the complement of EN — drive them the same and you will see the cell contend. Compare the NMOS latch, which cannot use pass gates at all and needs cross-coupled NORs instead."
     },
     {
       "id": "cmosfa",
       "group": "CMOS · Arithmetic",
       "name": "CMOS Full Adder",
+      "title": "sum is parity, carry is majority",
+      "brief": "The same logic as the relay full adder, built from CMOS gate modules — sum is A XOR B XOR Cin, carry is a majority vote of the three.",
       "desc": "Sum is A XOR B XOR Cin, carry is the majority vote — the same logic as the relay full adder, built from CMOS gate modules. The relay version does it in three relays and eleven contacts; this takes 50 transistors, almost all of them spent on the two XORs."
     },
     {
       "id": "tgate",
       "group": "CMOS · Gates",
       "name": "Transmission Gate",
+      "title": "the pair that passes both levels",
+      "brief": "An N-channel and a P-channel in parallel on complementary gates. Each alone degrades one logic level; together they pass a full 0 and a full 1 in either direction.",
       "desc": "An N-channel and a P-channel wired in parallel, driven by complementary gates: together they pass a full 0 and a full 1 in either direction, which neither can do alone. Two of them make a 2-to-1 multiplexer — the building block relays get for free with a changeover contact, and the reason a relay contact is worth two transistors."
     },
     {
       "id": "tristate",
       "group": "CMOS · Buses",
       "name": "Tri-State Bus",
+      "title": "a wire with nothing to arbitrate it",
+      "brief": "Two drivers share one line. Enable one and the bus follows it; enable neither and it floats at Z, holding its last value on stray capacitance; enable both and they fight.",
       "desc": "Two drivers, one shared wire, and nothing to arbitrate. Enable one and the bus follows it. Enable neither and the bus floats — dashed Z, holding its last value on stray capacitance until it leaks away. Enable both with different data and they fight: a red X, a rail-to-rail short. This is the thing relays cannot do, and it is what lets a CPU have buses instead of a multiplexer tree for every destination.",
       "hints": {
         "D": "what each driver would put on the bus (bit 0 = driver 1)",
@@ -198,30 +246,40 @@
       "id": "tech3",
       "group": "General",
       "name": "Three Technologies",
+      "title": "one NAND, three technologies",
+      "brief": "The same gate built from relays, from NMOS, and from CMOS, side by side on the same inputs. Same truth table, three completely different amounts of hardware.",
       "desc": "One NAND gate, built three ways from the same two inputs: two relays, two transistors and a resistor, then four transistors. Same truth table, same lamps, wildly different machines — and the CMOS output lands while the armatures are still travelling."
     },
     {
       "id": "srlatch",
       "group": "Relays · Memory",
       "name": "SR Latch",
+      "title": "a relay that holds itself on",
+      "brief": "Tap SET and the relay feeds its own coil through its own contact, so it stays pulled in after you let go. RESET breaks the hold path. That is one bit of memory.",
       "desc": "Tap SET and the relay feeds its own coil through its own contact — it remembers. RESET breaks the hold path. One bit of memory."
     },
     {
       "id": "dlatch",
       "group": "Relays · Memory",
       "name": "D Latch",
+      "title": "memory with a door on it",
+      "brief": "While EN is on, Q follows D; when EN drops, a second path lets Q hold itself. Flip D with EN off and nothing happens — which is what makes storage controllable.",
       "desc": "While EN is on, Q follows D through one path; when EN drops, a second path lets Q hold itself. Flip D with EN off — nothing happens until you open the gate."
     },
     {
       "id": "reg4",
       "group": "Relays · Memory",
       "name": "4-bit Register",
+      "title": "four bits under one LOAD button",
+      "brief": "Four D latches sharing a load signal through an 8-pole relay. Set a number on the switches, tap LOAD, and the register keeps it.",
       "desc": "Four D latches sharing one LOAD button through an 8-pole relay. Set a number on the D switches, tap LOAD, and the register keeps it."
     },
     {
       "id": "regfile",
       "group": "CMOS · Memory",
       "name": "16×4 Register File",
+      "title": "the 4004’s sixteen index registers",
+      "brief": "Sixteen 4-bit words, written through one address port and read through another. The two ports are what let a single instruction read one register while writing a different one.",
       "desc": "The 4004’s index registers: sixteen 4-bit words, written through one address port and read through another, so the machine can read one register while writing a different one. Every row drives the same four bit lines through tri-state gates — one shared bus, sixteen possible drivers. Set WA and D, raise WE to store, then read any address back. Drop WE before changing the address: these are level-sensitive latches, so moving the address with WE still high walks the word into the next register, exactly as the real part does.",
       "hints": {
         "WA": "write address — which of the 16 registers to store into",
@@ -265,6 +323,8 @@
       "id": "cmospc4",
       "group": "CMOS · Sequential",
       "name": "4-bit Counter",
+      "title": "the first circuit that remembers where it was",
+      "brief": "A clocked counter: each rising edge advances it by one. This is the first circuit here whose output depends on its own history rather than only on its inputs.",
       "desc": "The first circuit here with a clock, and the first that has to remember where it was. Press RUN, then use the clock controls to step it by hand or let it free-run. Each stage is a master-slave flip-flop: two latches on opposite clock phases, so a new value can never reach the output in the same phase it arrived. That is what makes the feedback safe — built from plain latches the incremented value would race straight back through the adder and the count would jump several times per pulse. RST is synchronous, so releasing it costs one edge before counting starts, exactly as a real synchronous reset does.",
       "hints": {
         "CLK": "the clock — use the controls above, or flip it by hand",
@@ -278,6 +338,8 @@
       "id": "cmospc12",
       "group": "CMOS · Sequential",
       "name": "12-bit Program Counter",
+      "title": "twelve bits, 4 KB of program space",
+      "brief": "The 4004’s actual program counter. Structurally the 4-bit counter three times as wide, which is the point — the design does not change with the width.",
       "desc": "The 4004's program counter: twelve bits, addressing 4 KB of program space. Same circuit as the 4-bit counter, three times as wide — which is the point of building it from a module. This is the piece that makes a machine able to run a program rather than compute one answer: something has to say which instruction is next, and advance on its own.",
       "hints": {
         "CLK": "the clock — use the controls above, or flip it by hand",
@@ -291,6 +353,78 @@
       "id": "fetch",
       "group": "CMOS · Machines",
       "name": "Fetch Machine",
+      "title": "a pile of parts becomes a machine",
+      "brief": "The first circuit here that executes rather than computes. Give it a clock and it runs on its own: the counter addresses the ROM, the byte lands in the instruction register, and the decoder lights the line for whatever instruction that is. Nothing acts on the decoded instruction yet — that is the next machine.",
+      "walkthrough": {
+        "intro": "There is no control unit yet, so nothing acts on what is decoded — the program is a tour of instruction shapes rather than a computation. Watch the instruction register and the decoder line change as the counter walks the ROM.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "NOP",
+            "state": {
+              "PC": "1"
+            },
+            "text": "The counter has already advanced to 1 while this byte was being decoded. That one-step offset is not a bug: the address of the *next* fetch has to be ready before the current instruction finishes."
+          },
+          {
+            "at": 1,
+            "op": "LDM 5",
+            "state": {
+              "PC": "2"
+            },
+            "text": "The decoder lights its LDM line and names the operand 5. Nothing loads it anywhere — there is no accumulator in this machine — so the decode is the entire visible effect."
+          },
+          {
+            "at": 2,
+            "op": "INC r0",
+            "state": {
+              "PC": "3"
+            },
+            "text": "A register instruction. The low nibble is the register number, which is exactly how the real encoding works: OPA *is* the operand."
+          },
+          {
+            "at": 3,
+            "op": "XCH r0",
+            "state": {
+              "PC": "4"
+            },
+            "text": "Another OPA-as-register instruction, so the decoder output changes while the operand field stays put — the two halves of the byte are read independently."
+          },
+          {
+            "at": 4,
+            "op": "ADD r0",
+            "state": {
+              "PC": "5"
+            },
+            "text": "Decoded correctly, and completely inert. There is no adder and no accumulator here, which is precisely what the next two machines add."
+          },
+          {
+            "at": 5,
+            "op": "LD r1",
+            "state": {
+              "PC": "6"
+            },
+            "text": "A different register number in the same operand field, to show the decoder reading the low nibble rather than pattern-matching whole bytes."
+          },
+          {
+            "at": 6,
+            "op": "CLC",
+            "state": {
+              "PC": "7"
+            },
+            "text": "An escape-group instruction: opcode 1111 means \"the real instruction is in the low nibble\", so this byte needs a second level of decoding."
+          },
+          {
+            "at": 7,
+            "op": "JUN 0xx",
+            "state": {
+              "PC": "0"
+            },
+            "text": "A two-byte instruction, and the machine has no way to handle one — the `twoByte` line goes high and is ignored. The counter simply wraps to 0, so the next fetch reads the operand byte as though it were an instruction. That gap is real, and the Sequenced Machine is where it gets closed."
+          }
+        ],
+        "outro": "The program then repeats forever. Nothing accumulates between laps, because nothing in this machine can store a result."
+      },
       "desc": "The first circuit here that executes rather than computes. A program counter addresses a ROM, the byte at that address lands in an instruction register on the next clock edge, and a decoder lights the line for whichever instruction that is. Give it a clock and it runs on its own — everything before this needed you to flip a switch. Nothing acts on the decoded instruction yet: that is control sequencing, the next piece. So this is a machine that reads a program and understands it without doing anything about it, which is exactly the first milestone worth reaching. Two-byte instructions light TWO but are not yet honoured — the machine reads the operand byte as if it were an instruction, and watching that go wrong is the argument for building the sequencer next.",
       "hints": {
         "CLK": "the clock — run it, or step one edge at a time",
@@ -310,6 +444,78 @@
       "id": "sequenced",
       "group": "CMOS · Machines",
       "name": "Sequenced Machine",
+      "title": "phases, and a jump that actually jumps",
+      "brief": "The fetch machine with a control unit. A ring counter splits each instruction into phases, and the control unit ANDs a phase with a decoded instruction — \"we are in EXEC\" AND \"this is a JUN\" is exactly the signal that loads the program counter.",
+      "walkthrough": {
+        "intro": "Now each instruction is split into phases by the ring counter, and the control unit ANDs a phase with a decoded instruction to produce a control line. The visible payoff is at the end: a jump that actually jumps.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "NOP",
+            "state": {
+              "PC": "1"
+            },
+            "text": "One full pass of the phase ring per instruction now, rather than one clock edge. Watch the phase lamps walk while the instruction register holds still — that stillness is the point of a hold mux."
+          },
+          {
+            "at": 1,
+            "op": "LDM 5",
+            "state": {
+              "PC": "2"
+            },
+            "text": "Decoded during DECODE, and its control line fires during EXEC. Separating those two is the whole reason a machine needs phases: the datapath can only do one thing at a time."
+          },
+          {
+            "at": 2,
+            "op": "INC r0",
+            "state": {
+              "PC": "3"
+            },
+            "text": "The control unit gates this by phase as well as by opcode, so the same decoded line means different things at different moments in the instruction."
+          },
+          {
+            "at": 3,
+            "op": "XCH r0",
+            "state": {
+              "PC": "4"
+            },
+            "text": "Still no register file to exchange with — this machine is about sequencing, not the datapath."
+          },
+          {
+            "at": 4,
+            "op": "NOP",
+            "state": {
+              "PC": "5"
+            },
+            "text": "Three NOPs pad the middle of the program so the phase ring is easy to watch without instructions changing underneath it."
+          },
+          {
+            "at": 5,
+            "op": "NOP",
+            "state": {
+              "PC": "6"
+            },
+            "text": "Nothing to see, deliberately."
+          },
+          {
+            "at": 6,
+            "op": "NOP",
+            "state": {
+              "PC": "7"
+            },
+            "text": "The last of the padding, and the counter is now one step from the end of the ROM."
+          },
+          {
+            "at": 7,
+            "op": "JUN 0xx",
+            "state": {
+              "PC": "0"
+            },
+            "text": "The jump is taken because a control line said so: \"we are in EXEC\" AND \"this is a JUN\" loads the program counter. Previously the counter reached 0 by running off the end and wrapping; now it goes there because an instruction told it to."
+          }
+        ],
+        "outro": "That distinction — wrapping by accident versus jumping by instruction — is the difference between a circuit that reads a program and one that runs it."
+      },
       "desc": "The fetch machine with a control unit, and the difference is that this one separates the phases of an instruction. A ring counter generates FETCH, DECODE and EXEC, and the control unit ANDs each phase with the decoded instruction lines — that AND is the whole idea of a hardwired control unit: “we are in EXEC” AND “this is a JUN” is exactly the signal that would load the program counter. Step it one edge at a time and watch the ring rotate, the instruction hold still across all three phases, and the control lines fire only in the phase that owns them. The instruction register is the piece that makes this work: it loads only during FETCH, holding its value through DECODE and EXEC. Without that gate it would follow the ROM on every edge — and since the PC has already advanced by then, the control unit would be acting on one instruction while the register showed the next. What is still missing is the datapath. The control lines are generated and visible but nothing is wired to them yet: no accumulator, no register file, and the PC advances by counting rather than being loaded, so the loop you see is the 3-bit counter rolling over rather than the jump taking effect. Wiring those up is the next piece.",
       "hints": {
         "CLK": "the clock — one edge per phase, so three edges per instruction",
@@ -329,6 +535,79 @@
       "id": "addmachine",
       "group": "CMOS · Machines",
       "name": "Adding Machine",
+      "title": "the 4004’s real ADD datapath",
+      "brief": "ADD on the actual chip is `ADD r`: the accumulator, plus the register the instruction names, plus the carry flag, with the result and a new carry written back. Every part of that sentence is hardware here — register file, ripple adder, carry flag, and the first control line that steers rather than enables.",
+      "walkthrough": {
+        "intro": "The full ADD datapath is present: a register file addressed by the instruction, a ripple adder, a carry flag that ADD both reads and writes, and a mux choosing what the accumulator takes. The program builds a running total so you can watch the carry appear.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "LDM 5",
+            "state": {
+              "ACC": "5"
+            },
+            "text": "An immediate into the accumulator. The mux selects the instruction's own low nibble as the source — the simplest of its inputs."
+          },
+          {
+            "at": 1,
+            "op": "XCH r0",
+            "state": {
+              "ACC": "5",
+              "r0": "5"
+            },
+            "text": "Puts 5 into register 0. This machine has no read path back from the register file yet, so its XCH only writes — a genuine exchange arrives with the Subtract and Exchange machine."
+          },
+          {
+            "at": 2,
+            "op": "LDM 9",
+            "state": {
+              "ACC": "9",
+              "r0": "5"
+            },
+            "text": "The accumulator takes 9, and r0 still holds the 5 that is about to be added to it."
+          },
+          {
+            "at": 3,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "14",
+              "CY": "0",
+              "r0": "5"
+            },
+            "text": "9 + 5 = 14, which still fits in four bits, so the carry stays clear. The register number came from the instruction's low nibble and addressed the file directly."
+          },
+          {
+            "at": 4,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "3",
+              "CY": "1",
+              "r0": "5"
+            },
+            "text": "14 + 5 = 19, and four bits cannot hold it: the accumulator keeps 3 and the carry flag lights. This is the same carry the ripple adders show one bit at a time, now surfaced as machine state."
+          },
+          {
+            "at": 5,
+            "op": "NOP",
+            "state": {
+              "ACC": "3",
+              "CY": "1"
+            },
+            "text": "A pause so the result is readable before the jump."
+          },
+          {
+            "at": 6,
+            "op": "JUN 0",
+            "state": {
+              "ACC": "3",
+              "CY": "1",
+              "PC": "0"
+            },
+            "text": "Back to the top. Note that the carry is still set as the jump happens — nothing has cleared it."
+          }
+        ],
+        "outro": "The second lap differs from the first, and deliberately so: ADD includes the carry, so the running total comes out 15 and then 4 rather than 14 and 3. A carry left over from last time is a real hazard in real code, which is why the 4004 has CLC."
+      },
       "desc": "The 4004's real ADD datapath rather than a shortcut. ADD on the actual chip is `ADD r`: the accumulator plus the register the instruction names plus the carry flag, result back in the accumulator, carry updated — and every part of that sentence is a piece of hardware here. The register file is addressed by the instruction's low nibble, which is exactly what OPA means in the real encoding. A 4-bit ripple adder does the arithmetic. A one-bit carry register holds the flag, which ADD both reads and writes, so a chain of ADDs carries across nibbles the way the real machine's multi-digit arithmetic does. The new idea is the source mux: LDM and ADD both write the accumulator, so accLoad says whether to write and accFromAlu says from where. That is the first control line here that steers a datapath rather than simply enabling something, and it is the shape all datapath control eventually takes.",
       "hints": {
         "CLK": "the clock — three edges per instruction",
@@ -350,6 +629,114 @@
       "id": "jcnmachine",
       "group": "CMOS · Machines",
       "name": "Conditional Machine",
+      "title": "the machine decides for itself",
+      "brief": "A countdown loop that exits on its own condition. The JCN condition tree tests the accumulator, the carry and the TEST pin, and sends control backwards while the result is not yet zero — the first machine here that is not running in a straight line.",
+      "walkthrough": {
+        "intro": "A countdown that exits on its own condition. Adding 15 is subtracting 1 — in four bits 1111 is −1 — so the loop steps the accumulator down and JCN tests whether it has reached zero yet.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "LDM 15",
+            "state": {
+              "ACC": "15"
+            },
+            "text": "Load 15, which as a two’s-complement nibble is −1. The 4004 has no subtract-immediate instruction because adding the complement is the same operation with hardware that already exists."
+          },
+          {
+            "at": 1,
+            "op": "XCH r0",
+            "state": {
+              "ACC": "15"
+            },
+            "text": "Park the −1 in r0, where the loop body can reach it as an operand."
+          },
+          {
+            "at": 2,
+            "op": "LDM 4",
+            "state": {
+              "ACC": "4"
+            },
+            "text": "The countdown starts at 4. This is the value the loop will walk down to zero."
+          },
+          {
+            "at": 3,
+            "op": "NOP",
+            "state": {
+              "ACC": "4"
+            },
+            "text": "Padding, so the loop body lands on address 4 — which it must, for the reason the next step explains."
+          },
+          {
+            "at": 4,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "3"
+            },
+            "text": "The loop body: 4 + (−1) = 3. This address is also JCN’s target, and that is not a coincidence — see the next line."
+          },
+          {
+            "at": 5,
+            "op": "JCN 12, 64",
+            "state": {
+              "ACC": "3",
+              "PC": "4"
+            },
+            "text": "Jump taken: the accumulator is not zero. With no two-byte fetch, the jump target has to come from JCN’s own low nibble — but that nibble is *also* the condition mask. Mask 12 is 1100 (\"jump if not zero\"), whose low three bits are 100 = address 4. The mask and the destination are inseparable here; on the real chip they live in different bytes."
+          },
+          {
+            "at": 4,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "2"
+            },
+            "text": "Second time round: 3 − 1 = 2."
+          },
+          {
+            "at": 5,
+            "op": "JCN 12, 64",
+            "state": {
+              "ACC": "2",
+              "PC": "4"
+            },
+            "text": "Still not zero, so the branch is taken again. The condition tree is reading the accumulator live, not a stored flag."
+          },
+          {
+            "at": 4,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "1"
+            },
+            "text": "Third pass: down to 1."
+          },
+          {
+            "at": 5,
+            "op": "JCN 12, 64",
+            "state": {
+              "ACC": "1",
+              "PC": "4"
+            },
+            "text": "One more time. Three iterations so far, which is what \"count down from 4\" should give."
+          },
+          {
+            "at": 4,
+            "op": "ADD r0",
+            "state": {
+              "ACC": "0"
+            },
+            "text": "The accumulator reaches zero. The zero-detect tree sees it immediately — it is combinational, not clocked."
+          },
+          {
+            "at": 5,
+            "op": "JCN 12, 64",
+            "state": {
+              "ACC": "0",
+              "PC": "6"
+            },
+            "text": "Condition false, so the branch is NOT taken and control falls through to address 6. Both directions of the same instruction, in one program."
+          }
+        ],
+        "outro": "The exit test matters more than it looks: 0 + 15 = 15 with no carry, so a countdown that did not stop at zero would wrap around and run forever. Catching zero first is what makes it terminate."
+      },
       "desc": "The last bring-up milestone, and the one that makes the machine loop on its own condition rather than run in a straight line. The program counts down, and the way it does so is worth a second look: r0 holds 15, and adding 15 is how you subtract 1. The accumulator is four bits, so arithmetic is mod 16 — 4 + 15 = 19, which is 16 + 3, and the 16 does not fit so it falls out as the carry, leaving 3. Every pass takes one off. That is two's complement: in four bits the top bit carries weight −8, so 1111 is −8+4+2+1 = −1. It is also why the 4004 has no subtract-immediate instruction, since adding the complement uses hardware that already exists. The JCN sends control back to the ADD while the result is not yet zero, so the loop runs three times and then falls through — you can watch both branches of the same instruction in one pass. JCN's operand is a condition mask, not a code, and that is the character of the instruction: bit 2 tests the accumulator for zero, bit 1 tests the carry, bit 0 tests the TEST pin, and bit 3 inverts the whole result. So JCN 4 jumps when the accumulator is zero and JCN 12 jumps when it is not — one OR over the same three inputs, with one bit deciding whether to take the answer or its complement. One instruction covers what a conventional machine spends four opcodes on. The loop body sits at address 4 because it has to. This machine has no two-byte fetch yet, so a jump's target is the low bits of its own byte — and for JCN that nibble is also the condition mask, which welds the two together: mask 12 is 1100, whose low three bits are 100, so “jump if not zero” and “jump to 4” are the same instruction. On the real chip they live in different bytes and no such coupling exists. It is the most visible consequence of the missing two-byte fetch, left in the open rather than hidden behind a program arranged to avoid it. TEST was a real pin on the chip, an external input a program could branch on, which is how a 4004 polled a keyboard without interrupts; it is a switch here because that is what it was.",
       "hints": {
         "CLK": "the clock — three edges per instruction",
@@ -373,6 +760,57 @@
       "id": "twobyte",
       "group": "CMOS · Machines",
       "name": "Two-Byte Machine",
+      "title": "operands, and somewhere to return to",
+      "brief": "A jump’s destination arrives in a byte of its own, which needs a second fetch phase. That unlocks calls: JMS pushes a return address onto the 4004’s three-deep address stack and BBL pops it.",
+      "walkthrough": {
+        "intro": "A jump’s destination now arrives in a byte of its own, which needs an extra fetch phase. That makes real subroutine calls possible, using the 4004’s three-deep address stack.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "LDM 1",
+            "state": {
+              "ACC": "1"
+            },
+            "text": "Something recognisable in the accumulator, so you can watch what the subroutine does to it."
+          },
+          {
+            "at": 1,
+            "op": "JMS 5",
+            "state": {
+              "ACC": "1",
+              "PC": "5"
+            },
+            "text": "Call. The operand byte at address 2 supplies the destination, so control lands at 5 — and the return address 3 is pushed onto the address stack. The push happens at EXEC, after the counter has already stepped past both bytes."
+          },
+          {
+            "at": 5,
+            "op": "LDM 7",
+            "state": {
+              "ACC": "7"
+            },
+            "text": "Inside the subroutine, which does its work in the accumulator."
+          },
+          {
+            "at": 6,
+            "op": "BBL 9",
+            "state": {
+              "ACC": "9",
+              "PC": "3"
+            },
+            "text": "Return — and watch the accumulator carefully. It held 7 inside the subroutine and holds 9 on the way out, because BBL loads its own immediate as it pops. A 4004 subroutine therefore *cannot* return a value in the accumulator; the return instruction overwrites it. That is why 4004 subroutines hand results back in registers."
+          },
+          {
+            "at": 3,
+            "op": "JUN 0",
+            "state": {
+              "ACC": "9",
+              "PC": "0"
+            },
+            "text": "Control resumed at exactly the address JMS pushed. The stack is three registers on a rotating pointer rather than a shifting stack, so the popped value is still sitting there undisturbed."
+          }
+        ],
+        "outro": "Only three levels of nesting are available, and a fourth call silently overwrites the oldest return address — the real chip has no overflow detection, because there is nowhere to report it."
+      },
       "desc": "A jump's destination comes from a byte of its own, and that one change makes the machine feel like a computer.\n\nEvery earlier machine took a jump target from the low bits of the jump instruction itself, because there was nowhere else to get one. That welded two unrelated things together: JCN's low nibble is its condition mask, so \"jump if not zero\" and \"jump to address 4\" had to be the same four bits.\n\nA real 4004 instruction that needs an address carries a second byte. Honouring that costs a phase — FETCH the opcode, DECODE it, FETCH2 the operand, EXEC — and buys the machine a genuine instruction set. The program counter advancing twice is the structural part: once for the opcode and once to step over the operand. Without that second step the operand byte is simply the next thing fetched, and the machine executes an address as though it were an instruction.\n\nWith a real operand available, three instructions arrive at once.\n\nISZ increments a register and jumps while the result is NOT zero — the name describes the fall-through, not the branch. The incrementer is its own block because the chip's is: sheet 1 of Intel's schematic is titled \"ADDRESS REGISTER, INCREMENTER AND INDEX\", and adding one needs only a half-adder chain rather than four full adders. The hold register beside it breaks a read-increment-write loop that would otherwise free-run while the register file's write latch is open.\n\nJMS calls a subroutine and BBL returns from one, over an address stack that is worth looking at closely. It is not the stack most people picture. Intel's manual asks you to \"visualize the stack as three registers on the surface of a cylinder\" — nothing shifts, a pointer rotates. Writing stores at the pointer and advances it; reading backs the pointer up and leaves the value undisturbed. Two consequences are real 4004 behaviour rather than simplifications: a fourth call silently overwrites the first, and a return does not erase what it read.\n\nWatch the accumulator across BBL. It holds 7 inside the subroutine and 9 on return, because BBL loads its own immediate on the way out. A 4004 subroutine cannot hand a result back in the accumulator — the return instruction overwrites it, which is why they return values in registers.",
       "hints": {
         "CLK": "the clock — four edges per instruction now",
@@ -396,6 +834,87 @@
       "id": "submachine",
       "group": "CMOS · Machines",
       "name": "Subtract and Exchange",
+      "title": "the path back from the registers",
+      "brief": "SUB, LD and a real XCH all need one thing no earlier machine had: a way for a register to reach the accumulator. Adding it makes XCH a true exchange — both values crossing on the same clock edge, with no temporary anywhere.",
+      "walkthrough": {
+        "intro": "The new hardware is a read path from the register file back to the accumulator, which three instructions need. The program computes 9 − 4 and stores the result, exercising all three.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "LDM 9",
+            "state": {
+              "ACC": "9",
+              "CY": "0"
+            },
+            "text": "The first operand, into the accumulator."
+          },
+          {
+            "at": 1,
+            "op": "XCH r0",
+            "state": {
+              "ACC": "0",
+              "r0": "9"
+            },
+            "text": "A true exchange now: 9 goes to r0 and r0’s old contents (zero, after reset) come back to the accumulator. Both moves happen on the same clock edge, with no temporary register anywhere — a swap needing scratch space is a software problem, not a hardware one."
+          },
+          {
+            "at": 2,
+            "op": "LDM 4",
+            "state": {
+              "ACC": "4",
+              "r0": "9"
+            },
+            "text": "The second operand."
+          },
+          {
+            "at": 3,
+            "op": "XCH r1",
+            "state": {
+              "ACC": "9",
+              "r0": "9",
+              "r1": "4"
+            },
+            "text": "Exchange again — and this one proves it. 4 lands in r1 while r1’s previous value comes back the other way. Both registers now hold what the subtraction needs."
+          },
+          {
+            "at": 4,
+            "op": "LD r0",
+            "state": {
+              "ACC": "9",
+              "r0": "9"
+            },
+            "text": "LD copies a register into the accumulator without disturbing it, which is the read path in its simplest form. Contrast with XCH above, which writes in both directions."
+          },
+          {
+            "at": 5,
+            "op": "CLC",
+            "state": {
+              "ACC": "9",
+              "CY": "0"
+            },
+            "text": "Clear the carry before subtracting. On the way *in*, carry set means a borrow — so a subtraction that should not borrow has to start from a cleared carry."
+          },
+          {
+            "at": 6,
+            "op": "SUB r1",
+            "state": {
+              "ACC": "5",
+              "CY": "1"
+            },
+            "text": "9 − 4 = 5, and the carry comes out *set*. The sense flips across the instruction: carry in means borrow, carry out means NO borrow. This is why Intel’s manual tells you to put a CMC between successive SUBs when chaining across nibbles — and why getting it wrong passes every single-digit test and fails only on multi-digit arithmetic."
+          },
+          {
+            "at": 7,
+            "op": "XCH r2",
+            "state": {
+              "ACC": "4",
+              "r2": "5"
+            },
+            "text": "Park the result in r2. The accumulator picks up r2’s old value in exchange, as it should."
+          }
+        ],
+        "outro": "On the next lap the carry is still set from the SUB, so the same program produces a different answer — exactly the multi-nibble hazard the manual warns about."
+      },
       "desc": "SUB, LD and a real XCH — three instructions that all need one thing no earlier machine had: a path from the register file back into the accumulator.\n\nSUB is the cheap one, and it is cheap for a reason worth seeing. The adder is already there, and subtracting is adding the complement, so SUB and ADD are the same hardware with one XOR per bit deciding whether the operand is inverted. Nothing else is added.\n\nThe carry convention is where the 4004 gets strange, and it is worth reading twice. On the way in, carry=1 means a borrow happened. On the way out, carry=1 means a borrow did NOT happen. The sense flips across the instruction — Intel's own manual tells you to put a CMC between successive SUBs when chaining them across nibbles. A machine that used the carry directly would still pass every single-digit test and fail only on multi-digit subtraction. The same XOR that inverts the operand also inverts the carry, so the odd convention costs exactly nothing in gates.\n\nXCH is the one worth stepping through. On the 4004 it is the only way to write a register at all — the chip has no store instruction — so it has to be a genuine exchange, both directions in one instruction. The obvious implementation does not work: the register file's cells are transparent while being written, so writing a row while reading the same row means the read port shows the value going in, and the swap collapses into a one-way copy.\n\nThe fix here is the one the real chip uses. A two-phase clock splits the execute phase in two: the accumulator samples the register file while the clock is high, and the register file's write lands while it is low. Read first, write second, no scratch register anywhere. Intel's schematic shows the same separation done with the chip's φ1/φ2 pins, and an ADB register on the adder's second input doing the holding — which already existed to feed the adder for ADD.\n\nThe program computes 9 − 4 = 5 and parks it in a register. Watch the carry after SUB: it is set, which on this machine means the subtraction did not borrow.",
       "hints": {
         "CLK": "the clock — four phases per instruction",
@@ -418,6 +937,86 @@
       "id": "accgroup",
       "group": "CMOS · Machines",
       "name": "Accumulator Group",
+      "title": "thirteen instructions, one opcode",
+      "brief": "The 1111 escape decoded a second time, feeding an eight-way source mux. The lesson is how little silicon it costs: only the increments need arithmetic, while complement, rotate and clear are wiring.",
+      "walkthrough": {
+        "intro": "The accumulator group is thirteen instructions hiding behind one opcode. This program picks the four that are hardest to believe without watching: the BCD adjust, both carry transfers, and the keyboard decoder.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "LDM 8",
+            "state": {
+              "ACC": "8",
+              "CY": "0"
+            },
+            "text": "A BCD digit, as though a sum had just landed here."
+          },
+          {
+            "at": 1,
+            "op": "STC",
+            "state": {
+              "ACC": "8",
+              "CY": "1"
+            },
+            "text": "Set the carry on its own, pretending the previous digit of a multi-digit addition carried out."
+          },
+          {
+            "at": 2,
+            "op": "DAA",
+            "state": {
+              "ACC": "14",
+              "CY": "1"
+            },
+            "text": "Decimal adjust: the carry is set, so it adds 6 to correct a BCD digit that has gone out of range. Note the carry is still 1 afterwards — DAA can *set* the carry but never resets it, an asymmetry that matters when adjusting a chain of digits."
+          },
+          {
+            "at": 3,
+            "op": "TCC",
+            "state": {
+              "ACC": "1",
+              "CY": "0"
+            },
+            "text": "Transfer carry and clear: the carry becomes the accumulator’s value (1 here) and is then cleared. One instruction turns a flag into a number you can do arithmetic on."
+          },
+          {
+            "at": 4,
+            "op": "LDM 4",
+            "state": {
+              "ACC": "4",
+              "CY": "0"
+            },
+            "text": "0100 — one key held down, the third one, as a keyboard scanner would deliver it."
+          },
+          {
+            "at": 5,
+            "op": "KBP",
+            "state": {
+              "ACC": "3",
+              "CY": "0"
+            },
+            "text": "Keyboard process converts 1-of-n to binary by table lookup: 0100 becomes 3. Press more than one key and the encoding is ambiguous, so it returns 1111 rather than guessing — an error code built into the instruction."
+          },
+          {
+            "at": 6,
+            "op": "TCS",
+            "state": {
+              "ACC": "9",
+              "CY": "0"
+            },
+            "text": "Transfer carry subtract: the accumulator takes 9 when the carry is clear, or 10 when set. Those are the ten’s-complement constants for BCD subtraction, so one instruction replaces a conditional."
+          },
+          {
+            "at": 7,
+            "op": "RAR",
+            "state": {
+              "ACC": "4",
+              "CY": "1"
+            },
+            "text": "Rotate right through carry: 1001 shifts down to 0100 and the old bit 0 becomes the new carry. Routing the bit through the carry rather than dropping it makes the accumulator and carry a single 5-bit ring — which is how a 4-bit machine does multi-nibble shifts."
+          }
+        ],
+        "outro": "The program then wraps to address 0 with no jump instruction at all — the ROM is exactly eight bytes, so the counter loops by itself. The second lap begins with the carry still set by RAR, so DAA takes its carry-already-set path."
+      },
       "desc": "Thirteen instructions sharing a single opcode, and a lesson in how an instruction set grows faster than the silicon under it.\n\nThe 4004 has sixteen opcodes, which is not many. Two of them are escapes: opcode 1111 puts a second opcode in its low nibble, and that is where thirteen accumulator instructions live. This machine decodes that second nibble with the same 4-to-16 decoder used for ROM row select, register file addressing and the first-level instruction decode — the same block, wearing a fourth hat.\n\nWatch the source mux. Every machine before this one could write the accumulator from two places. This one has eight, and most of them need no arithmetic at all.\n\nIAC and DAC are the adder fed a constant. Increment adds 1; decrement adds 15, because at four bits 15 is −1, so there is no borrow network anywhere in this machine. CMA is four inverters. RAL and RAR are wires — a rotate left reads each bit from the one below it, right from the one above — with the carry spliced in to close the ring, which is what makes the pair reversible and how a four-bit machine shifts values wider than four bits. CLB is nothing at all: select no source and the mux drives zero.\n\nFour of them are here because this was a calculator chip. DAA is decimal adjust: after a binary add, a BCD digit can land in the illegal 10–15 range or can have carried, and adding 6 fixes both. Its carry rule is the subtle one — Intel's manual underlines that DAA may set the carry but never resets it, so a digit that adjusts without carrying out leaves an existing carry alone. Implemented as an ordinary add it would pass every single-digit test and fail only on multi-digit BCD.\n\nKBP is the keyboard scanner's helper: a one-of-n code from a row of key contacts becomes the binary position of the key. Two keys at once gives 1111 rather than a wrong answer — a real thing on a real keyboard, reported distinctly instead of silently resolved, which is what separates it from the priority encoder you would reach for by instinct.\n\nTCC moves the carry into the accumulator and clears it; TCS writes 9 or 10 depending on the carry and then clears it too. Both exist for multi-digit decimal arithmetic, and both are pure wiring.\n\nThe program walks a BCD adjustment, a keyboard decode and a rotate, then falls off the end of the eight-byte ROM and wraps. There is no jump instruction in it — the program counter wrapping is the loop.",
       "hints": {
         "CLK": "the clock — four edges per instruction",
@@ -439,6 +1038,150 @@
       "id": "memmachine",
       "group": "CMOS · Machines",
       "name": "Memory Machine",
+      "title": "the CPU talks to another chip",
+      "brief": "The CPU drives a 4002 RAM across a bus, sending an address as two nibbles because the register file has one read port. It is also the one machine here with a modelled part in it — the CPU is real transistors, the RAM behind the bus is a model.",
+      "walkthrough": {
+        "intro": "A full memory session: build an address in a register pair, send it, write and read data and status characters, drive both output ports, and finish with the two indirect instructions. The 4002 behind the bus is a model; everything on the CPU side is transistors.",
+        "steps": [
+          {
+            "at": 0,
+            "op": "FIM 0P, 21",
+            "state": {
+              "r0": "1",
+              "r1": "5",
+              "PC": "2"
+            },
+            "text": "Load a register pair from the operand byte 0x15. The even register takes the high nibble and the odd one the low, which is the manual’s convention and what makes a pair a consistent 8-bit quantity. The counter jumps to 2 because it stepped over the operand."
+          },
+          {
+            "at": 2,
+            "op": "SRC 0P",
+            "state": {
+              "SRC": "0x15"
+            },
+            "text": "Send the pair as an address. The register file has one 4-bit read port, so the eight bits take two phases — the even register during READ1, the odd during READ2. This is why the machine has five phases rather than four, and the real chip has the same problem for the same reason."
+          },
+          {
+            "at": 3,
+            "op": "LDM 7",
+            "state": {
+              "ACC": "7"
+            },
+            "text": "A value to store."
+          },
+          {
+            "at": 4,
+            "op": "WRM",
+            "state": {
+              "ACC": "7",
+              "SRC": "0x15"
+            },
+            "text": "Write the accumulator to the addressed main character. The address splits as chip 0, register 1, character 5 — the diagram on page 3-51 of the manual."
+          },
+          {
+            "at": 5,
+            "op": "LDM 10",
+            "state": {
+              "ACC": "10"
+            },
+            "text": "Set up Intel’s own worked example from page 3-60."
+          },
+          {
+            "at": 6,
+            "op": "ADM",
+            "state": {
+              "ACC": "1",
+              "CY": "1"
+            },
+            "text": "Add the addressed memory character to the accumulator: 10 + 7 = 17, which is 1 with a carry out. ADM shares the adder with ADD rather than having one of its own — only the operand source differs."
+          },
+          {
+            "at": 7,
+            "op": "WMP",
+            "state": {
+              "ACC": "1"
+            },
+            "text": "Write the accumulator to the RAM chip’s output port. Ports hold their value until overwritten, so this stays put for the rest of the program."
+          },
+          {
+            "at": 8,
+            "op": "LDM 3",
+            "state": {
+              "ACC": "3"
+            },
+            "text": "A value for the status characters."
+          },
+          {
+            "at": 9,
+            "op": "WR0",
+            "state": {
+              "ACC": "3"
+            },
+            "text": "Write status character 0. Note which character it writes: status characters are addressed by *which opcode ran*, not by the character SRC selected. The SRC address picked character 5, and WR0 still writes status 0 — an asymmetry the manual draws explicitly."
+          },
+          {
+            "at": 10,
+            "op": "RD0",
+            "state": {
+              "ACC": "3"
+            },
+            "text": "Read it straight back, confirming the write landed where the opcode said."
+          },
+          {
+            "at": 11,
+            "op": "WRR",
+            "state": {
+              "ACC": "3"
+            },
+            "text": "Drive the ROM chip’s output port — a different port on a different chip from WMP’s, reached by a different instruction."
+          },
+          {
+            "at": 12,
+            "op": "RDR",
+            "state": {
+              "ACC": "3"
+            },
+            "text": "And read that port back."
+          },
+          {
+            "at": 13,
+            "op": "RDM",
+            "state": {
+              "ACC": "7"
+            },
+            "text": "Read main memory again and the original 7 is still there, thirteen instructions after WRM wrote it. The SRC address has not been touched since — the manual says it \"remains in effect until changed by a subsequent SRC\", and that persistence is why SRC is a separate instruction."
+          },
+          {
+            "at": 14,
+            "op": "FIN 1P",
+            "state": {
+              "XCY": "1",
+              "PC": "15"
+            },
+            "text": "FIN, first cycle. It is one byte but takes TWO instruction cycles — the only instruction in the set that does. This pass reads r0:r1 and latches the ROM address they form; the XCY lamp lights to mark that a second cycle is coming, and the counter has already made its single step."
+          },
+          {
+            "at": 14,
+            "op": "FIN 1P",
+            "state": {
+              "XCY": "0",
+              "r2": "13",
+              "r3": "10",
+              "PC": "15"
+            },
+            "text": "FIN, second cycle — same address, same instruction, because the instruction register is deliberately not reloaded while the ROM is emitting FIN’s data byte. The ROM is steered to the latched address (word 5, holding 0xDA) and the byte lands in r2:r3 as 13 and 10. The counter has not moved: one byte, one net step, two cycles."
+          },
+          {
+            "at": 15,
+            "op": "JIN 0P",
+            "state": {
+              "PC": "5"
+            },
+            "text": "Jump indirect to the address r0:r1 holds. Those still read 1 and 5 — FIN took its address from pair 0 but wrote its result to pair 1, exactly as the manual specifies — so the target is 0x15, truncated to address 5 in this sixteen-word ROM."
+          }
+        ],
+        "outro": "Control lands back in the middle of the program, so the second lap re-runs the arithmetic with the carry left set — and the ADM comes out one higher."
+      },
       "desc": "The CPU talking to a 4002 RAM — and the one machine here with a modelled part in it, which is worth saying plainly.\n\nEverything on the CPU side is real: registers, decoder, control unit, the address path, all built from transistors like every other circuit. The 4002 behind the bus is not. It is a JavaScript object, because 320 bits of storage costs about 7,400 transistors to simulate — three times the whole CPU — to demonstrate nothing the register file has not already shown. The line is the package boundary: a 4002 is a separate chip the CPU reaches over a bus. What stays real is the interface; what is modelled is the array behind it.\n\nSRC is why this machine has five phases rather than four. It sends the eight bits of a register pair to the memory bus, and the index register file has one 4-bit read port — as the real chip's does — so a pair takes two reads, one per phase. FETCH, DECODE, READ1, READ2, EXEC. The 4004 has the same problem for the same reason and solves it the same way, across its X1/X2/X3 execute phases. This is a case where dropping the multiplexed bus does not remove the extra phases, because the narrowness is the register file's rather than the pin count's.\n\nWatch the address latch fill. In READ1 it takes the pair's even register — the chip and register select — and in READ2 the odd one, the character within that register. That split is exactly the diagram on page 3-51 of Intel's manual. Then it holds, and that persistence is the whole reason SRC exists as its own instruction: the manual says the address \"remains in effect until changed by a subsequent SRC\", so one SRC can serve many accesses.\n\nThe rest of the group hangs off that address. ADM and SBM are ADD and SUB with the RAM as the operand, so they share the adder rather than needing one of their own. WRM and RDM move a character; WR0-3 and RD0-3 reach the four status characters each register carries alongside its sixteen main ones — and those are addressed by which opcode ran, not by the character SRC selected, an asymmetry the manual draws explicitly. WMP and WRR drive the output ports and hold their value until overwritten. DCL picks the RAM bank from the accumulator's low three bits, and a reset returns to bank 0.\n\nRegister pairs are the other idea here, and four instructions use them. SRC reads a pair and sends it to the bus. FIM loads a pair from an immediate byte — the even register takes the high nibble, which is the same convention SRC reads with, and is what makes a pair a consistent 8-bit quantity across the whole instruction set. JIN jumps to the address a pair holds, so the target is not in the instruction at all and a program can compute where to go. And FIN fetches the ROM byte a pair points at — an indirect load from program memory, which is how 4004 programs walk tables.\n\nFIM is also the first two-byte instruction this machine has met. It has no FETCH2 phase, because everything before FIM was one byte, so the program counter has to step over the operand during DECODE — otherwise the operand is fetched as the next opcode and everything after it runs one address early.\n\nFIN is the strangest instruction here: one byte, but TWO instruction cycles — sixteen clock periods, the only instruction in the 4004 set that needs them. It reads r0:r1, addresses the ROM with it, and writes the fetched byte into the pair it names, which does not fit in one pass of a five-phase ring. So a cycle flip-flop stretches it across two — the real chip has one for exactly this job, labelled SINGLE CYCLE F/F on its schematic, and the XCY lamp shows this machine's. First pass: read the pair, latch the address. Second pass: steer the ROM to the latch, write the result. On that second pass the instruction register is deliberately not reloaded — the ROM is emitting FIN's data byte then, and fetching it would replace the instruction with its own result — and the program counter sits still, so a one-byte instruction advances the program by exactly one. The address is latched rather than read live, and that is not a convenience: it is what lets FIN 0P overwrite its own address source and still work.\n\nThe program walks the rest: load a pair with FIM, send it as address 0x15, write 7, add it to 10 to get 1 with a carry — Intel's own worked example — then out to a port, through a status character, FIN pulling the byte at word 5 into r2:r3 with the XCY lamp marking its extra cycle, and finally JIN back to where the pair points.",
       "hints": {
         "CLK": "the clock — five phases per instruction",
@@ -462,42 +1205,56 @@
       "id": "nmosring",
       "group": "NMOS · Basics",
       "name": "NMOS Ring Oscillator",
+      "title": "the lopsided waveform of NMOS",
+      "brief": "The same never-settling ring as the relay oscillator, in silicon. Watch the asymmetry: each stage snaps down hard through its transistor and drifts up slowly through its load resistor.",
       "desc": "The same trick as the relay Ring Oscillator — an odd number of inversions in a loop can never settle — but in silicon. Two inverters plus the run/stop NAND makes three, so raising RUN closes the ring and it never stops. Watch the asymmetry the relay version cannot show you: each stage snaps down hard through its transistor and drifts up slowly through its load resistor, so the waveform is lopsided. That is the NMOS pull-up being weak, and it is half of why CMOS won."
     },
     {
       "id": "cmosring",
       "group": "CMOS · Basics",
       "name": "CMOS Ring Oscillator",
+      "title": "both edges driven hard",
+      "brief": "The same ring in complementary CMOS. The P-channel pulls up as strongly as the N-channel pulls down, so the waveform is symmetric — the other half of why CMOS won.",
       "desc": "The same ring in complementary CMOS. Both edges are now driven hard — the P-channel pulls up as strongly as the N-channel pulls down — so the waveform is symmetric where the NMOS one drifts. Ring oscillators are how you actually measure a fabrication process: build one, count its frequency, and you know how fast the transistors came out."
     },
     {
       "id": "nmosxor",
       "group": "NMOS · Gates",
       "name": "NMOS XOR",
+      "title": "the cheapest XOR of the three",
+      "brief": "Eight transistors and four load resistors. Set it beside the CMOS XOR at sixteen transistors and the relay XOR at two contacts, and you have the whole technology trade-off in one gate.",
       "desc": "Four NAND gates: 8 transistors and 4 load resistors. Set it beside the CMOS XOR (16 transistors) and the relay XOR (two changeover contacts) and you have the clearest device-count comparison in the library. XOR is the function that punishes transistor logic — every technology pays for it, and the relay pays least."
     },
     {
       "id": "nmosdec",
       "group": "NMOS · Gates",
       "name": "NMOS 2-to-4 Decoder",
+      "title": "one-hot select, NMOS style",
+      "brief": "Two address lines select exactly one of four outputs — the same job the relay contact tree does, and the same operation a memory row decoder performs.",
       "desc": "Two address lines select exactly one of four outputs — the same job the relay contact tree does, and the same operation a memory row decoder performs. Every AND here is a NAND plus an inverter, so a decoder is one of the places the non-inverting tax gets paid four times over."
     },
     {
       "id": "nmoslatch",
       "group": "NMOS · Memory",
       "name": "NMOS D Latch",
+      "title": "storage without a complementary pair",
+      "brief": "Cross-coupled NORs with steering rather than the transmission-gate latch CMOS uses, because a pass gate needs a P-channel and NMOS has none.",
       "desc": "Cross-coupled NORs with steering, not the transmission-gate latch CMOS uses — a pass gate needs a complementary pair, and NMOS has no P-channel. Watch the strengths: a held 1 is only weakly driven by the load resistor while a held 0 is pulled hard to ground. The CMOS latch holds both hard."
     },
     {
       "id": "nmosadd4",
       "group": "NMOS · Arithmetic",
       "name": "NMOS 4-bit Adder",
+      "title": "four bits, 100 transistors, 56 resistors",
+      "brief": "Four full adders chained carry to carry — the same topology as the relay ripple adder, in NMOS. The resistor count is the story: every gate burns current continuously.",
       "desc": "Four full adders chained carry to carry — the same topology as the relay ripple adder, built from NMOS gates. 100 transistors and 56 resistors. Set A=1111 and flip B0 to watch the carry ripple the whole length of the chain, exactly as the relay version does but far faster."
     },
     {
       "id": "nmosalu",
       "group": "NMOS · Arithmetic",
       "name": "NMOS 4-bit ALU",
+      "title": "four functions, and why not six",
+      "brief": "The CMOS ALU steers its result onto a shared bus with transmission gates. NMOS has no complementary pair to build one with, so this version muxes in logic instead — and pays for it.",
       "desc": "Four functions instead of the CMOS ALU’s six, and the difference is the whole lesson. The CMOS version steers its result onto a shared bus with transmission gates — which need a complementary pair. NMOS has no P-channel, so no pass gate, no tri-state, and no shared bus: every function must be AND-ed with its select line and the results OR-ed back together. That mux tree is what a machine without tri-state costs, and it is precisely what the Tri-State Bus circuit exists to explain.",
       "hints": {
         "A": "first operand",
@@ -536,30 +1293,40 @@
       "id": "nmosnand",
       "group": "NMOS · Gates",
       "name": "NMOS NAND",
+      "title": "the same pull-down, half the transistors",
+      "brief": "Two N-channels in series under a resistor load. Compare it with the CMOS NAND: identical pull-down network, but no complementary pull-up above it.",
       "desc": "Two N-channels in series under a resistor load. Compare it with the CMOS NAND: same pull-down network, but no complementary pull-up above it — half the transistors, and the output is only ever pulled high weakly. Whenever the output is low there is a permanent path from the rail to ground through the load, which is the static current that made NMOS chips run hot."
     },
     {
       "id": "nmosnor",
       "group": "NMOS · Gates",
       "name": "NMOS NOR",
+      "title": "the cheap gate in NMOS",
+      "brief": "Two N-channels in parallel — either input pulls the output down. Parallel transistors do not stack their resistances, which is why 1970s NMOS logic is built out of NORs.",
       "desc": "Two N-channels in parallel: either input high pulls the output down. In NMOS the NOR is the cheap gate — parallel transistors do not stack their resistance the way a series chain does, so NOR was the workhorse where CMOS designers prefer NAND."
     },
     {
       "id": "nmosand",
       "group": "NMOS · Gates",
       "name": "NMOS AND",
+      "title": "AND costs a whole second stage",
+      "brief": "A NAND followed by an inverter, and you can see the price: a second load resistor burning current in a second place, for a function CMOS also cannot do in one stage.",
       "desc": "A NAND followed by an inverter, and you can see the cost: AND needs a whole second stage with its own load resistor, so it burns current in two places instead of one. This is why the primitive gate of any technology is the inverting one, and why designers rewrite logic to avoid the non-inverted forms."
     },
     {
       "id": "nmosor",
       "group": "NMOS · Gates",
       "name": "NMOS OR",
+      "title": "the same tax, one gate over",
+      "brief": "A NOR plus an inverter. The extra stage doubles the static current and adds a full gate delay, which is why a designer works to consume the NOR directly.",
       "desc": "A NOR plus an inverter. Same story as AND: the extra stage doubles the static current and adds a full gate delay, for an output that a NOR feeding the next stage could often have given you for free."
     },
     {
       "id": "rom8",
       "group": "NMOS · Arrays",
       "name": "Program ROM",
+      "title": "a stored 1 is literally nothing",
+      "brief": "A real mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down to store a 0, and a site storing a 1 is empty silicon — the pattern of presence and absence is the program.",
       "desc": "A real NMOS mask ROM: 8 words of 8 bits. A transistor at a site pulls its bit line down, so it stores a 0 — and a site storing 1 is literally empty silicon, which you can see on the canvas. Resistors pull every line up, so the array is a wired-AND. A bare switch matrix would sneak-path here (the selected row backfeeds through an unselected one and lights bits that are not stored); isolated gates make that structurally impossible, which is why ROM is built this way and why diode matrices existed before it.",
       "hints": {
         "A": "address — which of the 8 stored words to read",
@@ -575,6 +1342,8 @@
       "id": "romcmos",
       "group": "CMOS · Memory",
       "name": "CMOS Program ROM",
+      "title": "precharge, then evaluate",
+      "brief": "The same 8 × 8 array with a P-channel per bit line instead of resistors. It reads in two phases: precharge every line high, then let the selected row pull down whichever lines hold zeros.",
       "desc": "The same 8 × 8 array with no resistors anywhere — a P-channel per bit line instead. It reads in two phases: with PRE low the pull-ups charge every line high, then PRE goes high, the pull-ups switch off, and the selected row discharges only the lines that have a transistor. Nothing ever fights, so unlike the NMOS version there is no path from rail to ground and no static current — which is the whole reason CMOS replaced NMOS. The cost is that a line reading 1 is only floating on its own charge (dashed, Z), so the reading is valid until the charge leaks away. That is dynamic logic, and it is why such chips have a minimum clock speed as well as a maximum.",
       "hints": {
         "A": "address — which of the 8 stored words to read",
@@ -606,6 +1375,8 @@
       "id": "alu4",
       "group": "CMOS · Arithmetic",
       "name": "4-bit ALU",
+      "title": "compute everything, then choose",
+      "brief": "Six functions over two nibbles. Every one is computed at once and a transmission gate steers the selected result onto a shared bus — cheaper than gating the inputs, and the reason the bus can float.",
       "desc": "Six functions over two nibbles, chosen by F. Every function is computed at once and a transmission gate steers the selected one onto a shared result bus — one wire with six possible drivers, the way a CPU does it, not a mux tree per destination. 538 transistors, composed from gate modules rather than placed by hand. Codes 6 and 7 select nothing, and the bus floats.",
       "hints": {
         "A": "first operand",
@@ -664,30 +1435,40 @@
       "id": "halfadd",
       "group": "Relays · Arithmetic",
       "name": "Half Adder",
+      "title": "the smallest thing that adds",
+      "brief": "XOR gives the sum bit and a series pair gives the carry, so 1 + 1 = 10. Five contacts on two relays.",
       "desc": "XOR gives the sum bit, a series pair gives the carry: 1+1=10. Five contacts on two relays."
     },
     {
       "id": "fulladd",
       "group": "Relays · Arithmetic",
       "name": "Full Adder",
+      "title": "three bits in, two bits out",
+      "brief": "A changeover staircase computes parity for the sum while three series pairs vote on the majority for the carry. This is the block every wider adder is made of.",
       "desc": "Three relays add three bits: a changeover staircase computes the parity (sum) and three series pairs vote on the majority (carry). The building block of every adder."
     },
     {
       "id": "add4",
       "group": "Relays · Arithmetic",
       "name": "4-bit Ripple Adder",
+      "title": "watch the carry ripple",
+      "brief": "Four full adders chained carry to carry. Set A = 1111, flip B0 on, and watch the carry travel the whole row — this is what a critical path looks like.",
       "desc": "Four full adders chained carry-to-carry. Set A=1111 then flip B0 on and watch the carry ripple down the whole row — this is why adders have a \"critical path\"."
     },
     {
       "id": "add8",
       "group": "Relays · Arithmetic",
       "name": "8-bit Ripple Adder",
+      "title": "numbers to 255, in 24 relays",
+      "brief": "Eighty-eight contacts adding two bytes. Zoom out to see the machine as a machine; zoom in to watch any single contact do its part. Try 11111111 + 1.",
       "desc": "24 relays, 88 contacts, numbers up to 255. Zoom out to see the machine, zoom in to watch any single contact. Try 11111111 + 1."
     },
     {
       "id": "addsub4",
       "group": "Relays · Arithmetic",
       "name": "4-bit Adder / Subtractor",
+      "title": "two’s complement in hardware",
+      "brief": "Flip SUB and a relay bank inverts every B bit while the same signal injects a carry-in, making A − B out of A + (~B) + 1. One control line turns an adder into a subtractor.",
       "desc": "Flip SUB and a relay bank inverts every B bit while the same signal injects a carry-in: two’s complement, A−B = A+(~B)+1, in hardware. The seed of an ALU."
     }
   ]

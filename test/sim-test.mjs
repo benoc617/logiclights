@@ -1240,6 +1240,121 @@ function flipAndStep(c, label, on) {
   for (const e of cat.circuits) scan(e, e.id);
   expect(ctx, 'no literal escape sequences in catalogue prose',
     escapes.join(', '), '');
+
+  // The status row shows `name — title` on one line, so a title long
+  // enough to wrap defeats the point of having a short one.
+  for (const e of cat.circuits) {
+    expect(ctx, `${e.id}: title is short enough for the status row`,
+      e.title.length <= 90, true);
+    expect(ctx, `${e.id}: brief says something`, e.brief.length > 40, true);
+  }
+}
+
+// ── walkthroughs must match the hardware they narrate ────────────────────
+// The info panel's walkthrough quotes machine state at each step: "ACC=14,
+// carry still set". Those numbers are written by hand, because prose that
+// explains *why* cannot be generated — but hand-written numbers drift, and
+// this project has already been bitten. An accumulator-group comment
+// described a program that had been replaced, confidently and in detail,
+// and nothing caught it because comments are not executable.
+//
+// So the walkthrough is executable. Each machine is run headless, and every
+// value the prose quotes is checked against what the hardware actually
+// settles to. Rewrite a program and the walkthrough fails until it is
+// brought back into line.
+{
+  const cat = JSON.parse(
+    readFileSync(new URL('../web/data/circuits.json', import.meta.url), 'utf8'));
+
+  for (const entry of cat.circuits) {
+    if (!entry.walkthrough) continue;
+    const c = buildCircuit(entry.id);
+    const ctx = { name: `${entry.id} walkthrough` };
+    const beh = cmos[entry.id];
+    const stepModel = beh && beh.step;
+    const settleAll = () => {
+      settle(c);
+      if (stepModel) { stepModel(c); c.solve(); }
+    };
+    const tick = () => {
+      c.stepClock(); settleAll(); c.stepClock(); settleAll();
+    };
+    // Look lamps up by the name the I/O table shows — the `short` when a
+    // lamp has one. The adding machine's carry is labelled CARRY and shown
+    // as CY, and matching on the label alone reports it missing.
+    const lampNamed = name =>
+      c.lamps.find(m => (m.short ?? m.label) === name);
+    // A bus is present either as a single lamp (CY) or as numbered bits
+    // (ACC0..ACC3) — the I/O table groups the latter under one name.
+    const has = name => !!lampNamed(name) || !!lampNamed(`${name}0`);
+    const valueOf = name => c.value[lampNamed(name).net];
+    const rd = (p, n) => {
+      let v = 0;
+      for (let i = 0; i < n; i++) if (valueOf(`${p}${i}`) === HI) v |= 1 << i;
+      return v;
+    };
+    const reg = i => {
+      if (!c.cells || !c.cells[i]) return null;
+      const bits = c.cells[i].map(n => VALUE_CHAR[c.value[n]]);
+      return bits.every(b => b === '0' || b === '1')
+        ? parseInt(bits.slice().reverse().join(''), 2) : null;
+    };
+    // Bus widths come from the lamps the circuit actually has, not from a
+    // table here. The fetch machine's ROM is eight words, so its counter is
+    // three bits wide where every later machine's is four — assuming a
+    // width is how this block first crashed.
+    const widthOf = name => {
+      let n = 0;
+      while (has(`${name}${n}`)) n++;
+      return n;
+    };
+
+    expect(ctx, 'the machine has a program to narrate',
+      Array.isArray(c.program), true);
+    expect(ctx, 'the machine reports which address is executing',
+      typeof c.execAddr, 'function');
+
+    sw(c, 'RST', true); settleAll(); tick();
+    sw(c, 'RST', false); settleAll();
+    if (c.switches.some(s => s.label === 'RUN')) { sw(c, 'RUN', true); settleAll(); }
+
+    const nph = c.phases ? c.phases.length : 1;
+    const steps = entry.walkthrough.steps;
+    for (let k = 0; k < steps.length; k++) {
+      const step = steps[k];
+      for (let p = 0; p < nph; p++) tick();
+
+      // The address the walkthrough claims this step runs at, and the
+      // instruction it claims is there — checked against the disassembler
+      // so the prose cannot disagree with the ROM's actual bytes.
+      expect(ctx, `step ${k}: executes at address ${step.at}`,
+        c.execAddr(), step.at);
+      const byte = c.program[step.at];
+      expect(ctx, `step ${k}: "${step.op}" is what address ${step.at} holds`,
+        disassemble(byte, c.program[step.at + 1]).text, step.op);
+
+      for (const [key, want] of Object.entries(step.state ?? {})) {
+        // Register values are named r0..r3 and read from the file's cells;
+        // everything else is a lamp bus.
+        const m = /^r(\d+)$/.exec(key);
+        if (m) {
+          expect(ctx, `step ${k}: ${key} is ${want}`,
+            String(reg(Number(m[1]))), want);
+          continue;
+        }
+        expect(ctx, `step ${k}: this machine has a ${key} readout`,
+          has(key), true);
+        const width = widthOf(key);
+        const got = width === 0
+          ? (valueOf(key) === HI ? '1' : '0')
+          : String(rd(key, width));
+        // A hex-quoted value ("0x15") is compared as written.
+        const shown = want.startsWith('0x')
+          ? '0x' + Number(got).toString(16) : got;
+        expect(ctx, `step ${k}: ${key} is ${want}`, shown, want);
+      }
+    }
+  }
 }
 
 // ── clocked state: flip-flops and counters ───────────────────────────────
