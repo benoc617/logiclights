@@ -1215,6 +1215,10 @@ export function buildJcnMachine(program = P3_PROGRAM) {
 
   c.decoded = Array.from({ length: 16 }, (_, i) => dec.nets[`op${i}`]);
   c.phases = [ring.nets.p0, ring.nets.p1, ring.nets.p2];
+  // This machine builds a register file like the others and simply never
+  // published it, so the panel had nothing to show. Its countdown lives in
+  // r0, which makes it one of the more interesting files to watch.
+  c.cells = rf.stored;
   c.control = {
     pcLoad: ctrl.nets.pcLoad, accLoad: ctrl.nets.accLoad,
     accFromAlu: ctrl.nets.accFromAlu, regWrite: ctrl.nets.regWrite,
@@ -4591,15 +4595,22 @@ export const cmos = {
         + `  ·  ACC ${v.ACC}  R ${v.R}`
         + `${v.CY ? '  carry — no borrow' : ''}${v.Z ? '  zero' : ''}`;
     },
-    read: (c, v) => c.cells.map((nets, i) => {
-      const bits = nets.map(n => VALUE_CHAR[c.value[n]]);
-      const settled = bits.every(b => b === '0' || b === '1');
-      return {
-        label: `r${i}`,
-        text: settled ? String(parseInt(bits.slice().reverse().join(''), 2)) : '–',
-        mark: i === (v.IR & 15) ? 'read' : null,
-      };
-    }),
+    // The registers used to be this machine's state grid. They now have
+    // their own line, in the same place on every machine, so this shows
+    // what the others show — the phases and the control lines, which is
+    // where XCH's two-phase discipline is actually visible.
+    read: (c) => {
+      const on = n => VALUE_CHAR[c.value[n]] === '1';
+      const rows = PHASES4.map((p, i) => ({
+        label: p, text: on(c.phases[i]) ? '◀' : '·',
+        mark: on(c.phases[i]) ? 'read' : null,
+      }));
+      for (const [k, net] of Object.entries(c.control)) {
+        rows.push({ label: k, text: on(net) ? '1' : '·',
+                    mark: on(net) ? 'write' : null });
+      }
+      return rows;
+    },
   },
   accgroup: {
     build: buildAccGroupMachine,

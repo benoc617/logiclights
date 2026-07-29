@@ -928,9 +928,9 @@
         "Z": "the accumulator is zero"
       },
       "state": {
-        "title": "Registers",
-        "columns": 4,
-        "key": "amber = the register this instruction addresses"
+        "title": "Phases and control lines",
+        "columns": 5,
+        "key": "amber = the active phase · blue = a control line firing"
       }
     },
     {

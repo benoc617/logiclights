@@ -26,6 +26,7 @@ let tableRows = null;     // selector-legend rows, if the circuit has a table
 let legendSelect = null;  // picks the live row index from the bus values
 let stateCells = null;    // live internal-state cells, if the circuit has any
 let stateRead = null;     // reads that state off the circuit each frame
+let regCells = null;      // the index registers, one line, for machines
 let progRows = null;      // program listing rows, for machines that run one
 
 // Called by main when the panel is shown or hidden, so the canvas can refit
@@ -208,9 +209,54 @@ export function buildPanel(c) {
     legendSelect = t.select;
   }
 
-  // Live internal state. A register file's stored words are invisible
-  // otherwise — the read port shows one at a time, so you would have to
-  // walk RA through all sixteen addresses to learn what the file holds.
+  // The index registers, on one line.
+  //
+  // A register file's stored words are invisible from outside: the read
+  // port shows one at a time, so without this you would have to walk the
+  // read address through all sixteen to learn what the file holds. Every
+  // machine with a register file gets the same line, in the same place,
+  // reading the same way — following a program means watching these
+  // numbers, and having to look somewhere different on each machine is
+  // what makes that hard.
+  //
+  // A never-written cell is genuinely floating, and says so with a dash
+  // rather than a zero: "unknown" and "zero" are different claims, and on
+  // a machine that has only just been reset most of the file is the first.
+  // Eight columns, two rows — which is one column per register PAIR, not
+  // an arbitrary fold to fit the panel. Pairs are architectural on the
+  // 4004: FIM loads one, SRC sends one to the memory bus, FIN reads ROM
+  // through one and JIN jumps through one, always r0:r1, r2:r3 and so on
+  // with the even register holding the high nibble. Stacking r0 above r1
+  // puts each pair in a column, so an eight-bit quantity reads down rather
+  // than being scattered across a square.
+  //
+  // Skipped when the circuit's own state grid is already the registers —
+  // the standalone register file's grid IS the circuit, showing each word
+  // with the addressed row highlighted, and a second copy of the same
+  // sixteen numbers above it would be noise.
+  regCells = null;
+  const stateIsRegisters = circuit.state
+    && /^register/i.test(circuit.state.title);
+  if (circuit.cells && circuit.cells.length && !stateIsRegisters) {
+    panelBody.appendChild(el('div', 'sec-title', 'Registers'));
+    const grid = el('div', 'reg-grid');
+    // Column-major: r0 and r1 share a column, then r2 and r3, and so on.
+    const order = [];
+    for (let half = 0; half < 2; half++) {
+      for (let i = half; i < circuit.cells.length; i += 2) order.push(i);
+    }
+    regCells = order.map(i => {
+      const cell = el('div', 'reg-cell');
+      cell.appendChild(el('span', 'reg-label', `r${i}`));
+      const val = el('span', 'reg-val', '\u2013');
+      cell.appendChild(val);
+      grid.appendChild(cell);
+      return { nets: circuit.cells[i], val, shown: null };
+    });
+    panelBody.appendChild(grid);
+  }
+
+  // Live internal state, for circuits that declare a state grid.
   stateCells = null;
   if (circuit.state) {
     const st = circuit.state;
@@ -236,6 +282,25 @@ export function buildPanel(c) {
 export function updatePanel() {
   if (!circuit) return;
   if (isPanelHidden()) return;
+
+  if (regCells) {
+    for (const r of regCells) {
+      let n = 0, settled = true;
+      // cells are LSB-first; a single unsettled bit makes the word unknown
+      for (let b = r.nets.length - 1; b >= 0; b--) {
+        const ch = VALUE_CHAR[circuit.value[r.nets[b]]];
+        if (ch === '1') n = n * 2 + 1;
+        else if (ch === '0') n *= 2;
+        else { settled = false; break; }
+      }
+      const text = settled ? String(n) : '\u2013';
+      if (r.shown !== text) {
+        r.shown = text;
+        r.val.textContent = text;
+        r.val.classList.toggle('unset', !settled);
+      }
+    }
+  }
   const vals = {};
   for (const r of rows) {
     let bits = '';                       // cells are stored MSB-first
